@@ -1,0 +1,15 @@
+[workspace]
+members = ["cli", "gui"]
+
+[workspace.package]
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+edition = "2024"
+
+[package]
+name = "viking-vision"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
