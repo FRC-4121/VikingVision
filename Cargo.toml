@@ -13,3 +13,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+disqualified = "1.0.0"
+image = "0.25.6"
+polonius-the-crab = "0.4.2"
+rayon = "1.10.0"
+serde = { version = "1.0.219", features = ["derive"] }
+tracing = "0.1.41"
+typetag = "0.2.20"
