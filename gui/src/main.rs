@@ -2,43 +2,32 @@ use eframe::{App, CreationContext, egui};
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use tracing::error;
-use v4l::FourCC;
+use v4l::Device;
 use viking_vision::camera::Camera;
-use viking_vision::camera::capture::{CaptureCameraConfig, V4lPath};
-use viking_vision::camera::config::{BasicConfig, Config};
+use viking_vision::camera::capture::CaptureCamera;
 use viking_vision::pipeline::daemon::DaemonHandle;
 
 mod camera;
 
-#[derive(Debug)]
-struct CameraState {}
-
 fn open_from_path(
-    cameras: &mut Vec<(String, DaemonHandle<camera::Context>, CameraState)>,
+    cameras: &mut Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
 ) -> impl FnMut(&PathBuf) -> bool {
     move |path| {
-        let res = CaptureCameraConfig {
-            basic: BasicConfig {
-                width: 640,
-                height: 480,
-                fov: None,
-                max_fps: None,
-            },
-            fourcc: FourCC::new(b"YUYV"),
-            source: std::sync::Arc::new(V4lPath(path.clone())),
-        }
-        .build_camera();
+        let res = Device::with_path(path).and_then(CaptureCamera::from_device);
         match res {
             Ok(inner) => {
-                let name = camera::dev_name(path).unwrap_or_else(|| "<unknown>".to_string());
+                let mut name = camera::dev_name(path).unwrap_or_else(|| "<unknown>".to_string());
+                if let Some(index) = camera::path_index(path) {
+                    use std::fmt::Write;
+                    let _ = write!(name, " (ID {index})");
+                }
                 let res = DaemonHandle::new(
                     Default::default(),
-                    camera::CameraWorker::new(Camera::new(name.clone(), inner)),
+                    camera::CameraWorker::new(Camera::new(name.clone(), Box::new(inner))),
                 );
                 if let Ok(handle) = res {
-                    cameras.push((name, handle, CameraState {}));
+                    cameras.push((name, handle, camera::State {}));
                     true
                 } else {
                     false
@@ -55,7 +44,7 @@ fn open_from_path(
 #[derive(Debug)]
 struct VikingVision {
     open_caps: Vec<PathBuf>,
-    cameras: Vec<(String, DaemonHandle<camera::Context>, CameraState)>,
+    cameras: Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext) -> io::Result<Self> {
@@ -94,57 +83,13 @@ impl App for VikingVision {
                 }
             }
         }
-        self.cameras.retain_mut(|(name, handle, _cam_state)| {
-            egui::Window::new(&*name)
-                .id(egui::Id::new(handle as *const _))
-                .show(ctx, |ui| {
-                    use viking_vision::pipeline::daemon::states::*;
-                    let state = handle.context().run_state.load(Ordering::Relaxed);
-                    let lock = handle.context().context.locked.lock().unwrap();
-                    ui.horizontal(|ui| {
-                        if state == SHUTDOWN {
-                            ui.label("Closing...");
-                            ui.spinner();
-                        } else {
-                            #[allow(clippy::collapsible_if)]
-                            if state == RUNNING {
-                                if ui.button("Pause").clicked() {
-                                    handle.pause();
-                                }
-                            } else if state == PAUSED {
-                                if ui.button("Start").clicked() {
-                                    handle.start();
-                                }
-                            }
-                            if ui.button("Close").clicked() {
-                                handle.shutdown();
-                            }
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                            let [min, max] = lock.fps.minmax().unwrap_or_default();
-                            let avg = lock.fps.fps();
-                            ui.label(format!("{min:.2}/{max:.2}/{avg:.2} FPS"));
-                        });
-                    });
-                    ui.collapsing("Image", |ui| {
-                        let new_frames =
-                            handle.context().context.counter.swap(0, Ordering::Relaxed);
-                        if new_frames > 0 {
-                            ctx.request_repaint();
-                        }
-                        let buffer = &lock.frame;
-                        let img = egui::ColorImage::from_rgb(
-                            [buffer.width as _, buffer.height as _],
-                            &buffer.data,
-                        );
-                        let texture =
-                            ui.ctx()
-                                .load_texture(format!("{handle:p}"), img, Default::default());
-                        ui.image(&texture);
-                    });
-                    drop(lock);
-                    ui.collapsing("Controls", |ui| {});
-                });
+        self.cameras.retain_mut(|(name, handle, state)| {
+            egui::Window::new(format!("{name}- Image"))
+                .id(egui::Id::new((handle as *const _, 1)))
+                .show(ctx, camera::show_image(handle));
+            egui::Window::new(format!("{name}- Controls"))
+                .id(egui::Id::new((handle as *const _, 2)))
+                .show(ctx, camera::show_controls(handle, state));
             !handle.is_finished()
         });
     }

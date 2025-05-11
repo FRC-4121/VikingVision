@@ -1,6 +1,7 @@
 use crate::buffer::Buffer;
 use config::Config;
 use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
+use std::any::Any;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::time::Instant;
@@ -10,7 +11,7 @@ pub mod capture;
 pub mod config;
 pub mod frame;
 
-pub trait CameraImpl: Send + Sync {
+pub trait CameraImpl: Any + Send + Sync {
     fn config(&self) -> &dyn Config;
     fn read_frame(&mut self) -> io::Result<Buffer<'_>>;
 
@@ -38,6 +39,7 @@ pub struct Camera {
     last_frame: Instant,
 }
 impl Camera {
+    /// Create a new camera from a name and an implementation.
     pub fn new(name: String, inner: Box<dyn CameraImpl>) -> Self {
         Self {
             name,
@@ -47,12 +49,33 @@ impl Camera {
             last_frame: Instant::now(),
         }
     }
+    /// Get the config associated with the camera.
     pub fn config(&self) -> &dyn Config {
         self.inner.config()
     }
+    /// Get the name of the camera.
     pub fn name(&self) -> &str {
         &self.name
     }
+    /// Get a reference to the implementation.
+    pub fn inner(&self) -> &dyn CameraImpl {
+        &*self.inner
+    }
+    /// Get a mutable reference to the implementation.
+    pub fn inner_mut(&mut self) -> &mut dyn CameraImpl {
+        &mut *self.inner
+    }
+    /// Attempt to downcast the implementation to a concrete type.
+    pub fn downcast_ref<T: CameraImpl>(&self) -> Option<&T> {
+        let any = self.inner() as &dyn Any;
+        any.downcast_ref()
+    }
+    /// Attempt to mutably downcast the implementation to a concrete type.
+    pub fn downcast_mut<T: CameraImpl>(&mut self) -> Option<&mut T> {
+        let any = self.inner_mut() as &mut dyn Any;
+        any.downcast_mut()
+    }
+    /// Read a frame, reloading the camera if necessary.
     pub fn read(&mut self) -> io::Result<Buffer<'_>> {
         let _guard = info_span!("reading frame", name = self.name);
         let now = Instant::now();

@@ -2,6 +2,7 @@ use super::CameraImpl;
 use super::config::{BasicConfig, Config};
 use crate::buffer::{Buffer, PixelFormat};
 use crate::delegate_camera_config;
+use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Formatter};
 use std::io;
@@ -9,9 +10,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
 use v4l::buffer::Type;
-use v4l::io::traits::{CaptureStream, Stream};
+use v4l::control::{Control, Value};
+use v4l::io::traits::CaptureStream;
 use v4l::prelude::MmapStream;
-use v4l::{Device, FourCC};
+use v4l::video::Capture;
+use v4l::video::capture::Parameters;
+use v4l::{Device, FourCC, Fraction};
 
 mod fourcc_serde {
     use serde::de::{Deserializer, Error, Unexpected, Visitor};
@@ -72,6 +76,69 @@ mod fourcc_serde {
         deserializer.deserialize_bytes(FourCCVisitor)
     }
 }
+mod interval_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use v4l::Fraction;
+
+    #[derive(Serialize, Deserialize)]
+    struct FrameInterval {
+        top: u32,
+        bottom: u32,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    enum FrameIntervalShim {
+        #[serde(rename = "fps")]
+        Fps(u32),
+        #[serde(rename = "interval")]
+        Interval(FrameInterval),
+    }
+
+    pub fn serialize<S: Serializer>(
+        fraction: &Option<Fraction>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        fraction
+            .map(|f| {
+                FrameIntervalShim::Interval(FrameInterval {
+                    top: f.numerator,
+                    bottom: f.denominator,
+                })
+            })
+            .serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Fraction>, D::Error> {
+        Option::<FrameIntervalShim>::deserialize(deserializer).map(|o| {
+            o.map(|i| match i {
+                FrameIntervalShim::Fps(denominator) => Fraction {
+                    numerator: 1,
+                    denominator,
+                },
+                FrameIntervalShim::Interval(i) => Fraction {
+                    numerator: i.top,
+                    denominator: i.bottom,
+                },
+            })
+        })
+    }
+}
+
+pub mod control_ids {
+    pub const BRIGHTNESS: u32 = 0x00980900;
+    pub const CONTRAST: u32 = 0x00980901;
+    pub const SATURATION: u32 = 0x00980902;
+    pub const WHITE_BALANCE_AUTOMATIC: u32 = 0x0098090c;
+    pub const GAIN: u32 = 0x00980913;
+    pub const POWER_LINE_FREQUENCY: u32 = 0x00980918;
+    pub const WHITE_BALANCE_TEMPERATURE: u32 = 0x0098091a;
+    pub const SHARPNESS: u32 = 0x0098091b;
+    pub const BACKLIGHT_COMPENSATION: u32 = 0x0098091c;
+    pub const AUTO_EXPOSURE: u32 = 0x009a0901;
+    pub const EXPOSURE_TIME_ABSOLUTE: u32 = 0x009a0902;
+    pub const EXPOSURE_DYNAMIC_FRAMERATE: u32 = 0x009a0903;
+}
 
 #[typetag::serde]
 pub trait CameraSource: Debug + Send + Sync {
@@ -95,6 +162,15 @@ impl CameraSource for V4lIndex {
         Device::new(self.0)
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct NoSource;
+#[typetag::serde(name = "unknown")]
+impl CameraSource for NoSource {
+    fn resolve(&self) -> io::Result<Device> {
+        error!("unknown source");
+        Err(io::Error::new(io::ErrorKind::Other, "unknown source type"))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureCameraConfig {
@@ -102,6 +178,9 @@ pub struct CaptureCameraConfig {
     pub basic: BasicConfig,
     #[serde(with = "fourcc_serde")]
     pub fourcc: FourCC,
+    pub exposure: Option<i64>,
+    #[serde(with = "interval_serde", flatten)]
+    pub interval: Option<Fraction>,
     #[serde(flatten)]
     pub source: Arc<dyn CameraSource>,
 }
@@ -118,7 +197,7 @@ impl Config for CaptureCameraConfig {
         let device = self.source.resolve()?;
         let mut cam = CaptureCamera {
             config: self.clone(),
-            stream: MmapStream::with_buffers(&device, Type::VideoCapture, 4)?,
+            stream: None,
             device,
         };
         cam.config_device()?;
@@ -129,12 +208,128 @@ impl Config for CaptureCameraConfig {
 pub struct CaptureCamera {
     pub config: CaptureCameraConfig,
     pub device: Device,
-    pub stream: MmapStream<'static>,
+    pub stream: Option<MmapStream<'static>>,
 }
 impl CaptureCamera {
+    pub fn from_device(device: Device) -> io::Result<Self> {
+        let format = device.format()?;
+        let config = CaptureCameraConfig {
+            basic: BasicConfig {
+                width: format.width,
+                height: format.height,
+                fov: None,
+                max_fps: None,
+            },
+            fourcc: format.fourcc,
+            interval: None,
+            exposure: None,
+            source: Arc::new(NoSource),
+        };
+        Ok(Self {
+            config,
+            device,
+            stream: None,
+        })
+    }
     /// Configure the device based on the configuration.
     pub fn config_device(&mut self) -> io::Result<()> {
+        self.stream = None;
+        if let Some(exposure) = self.config.exposure {
+            self.device.set_control(Control {
+                id: control_ids::AUTO_EXPOSURE,
+                value: Value::Integer(1),
+            })?;
+            self.device.set_control(Control {
+                id: control_ids::EXPOSURE_DYNAMIC_FRAMERATE,
+                value: Value::Boolean(false),
+            })?;
+            self.device.set_control(Control {
+                id: control_ids::EXPOSURE_TIME_ABSOLUTE,
+                value: Value::Integer(exposure),
+            })?;
+        } else {
+            self.device.set_control(Control {
+                id: control_ids::AUTO_EXPOSURE,
+                value: Value::Integer(3),
+            })?;
+            self.device.set_control(Control {
+                id: control_ids::EXPOSURE_DYNAMIC_FRAMERATE,
+                value: Value::Boolean(true),
+            })?;
+        }
+        self.device.set_format(&v4l::Format::new(
+            self.config.width(),
+            self.config.height(),
+            self.config.fourcc,
+        ))?;
+        let interval = self.interval_mut()?;
+        self.device.set_params(&Parameters::new(interval))?;
         Ok(())
+    }
+    pub fn stream(&mut self) -> io::Result<&mut MmapStream<'static>> {
+        let res =
+            polonius::<_, _, ForLt!(&'_ mut MmapStream<'static>)>(&mut self.stream, |stream| {
+                if let Some(stream) = stream {
+                    PoloniusResult::Borrowing(stream)
+                } else {
+                    PoloniusResult::Owned {
+                        value: (),
+                        input_borrow: Placeholder,
+                    }
+                }
+            });
+        match res {
+            PoloniusResult::Borrowing(stream) => Ok(stream),
+            PoloniusResult::Owned {
+                value: _,
+                input_borrow,
+            } => {
+                *input_borrow = Some(MmapStream::with_buffers(
+                    &self.device,
+                    Type::VideoCapture,
+                    4,
+                )?);
+                Ok(input_borrow.as_mut().unwrap())
+            }
+        }
+    }
+    /// Set the width and height. Changes won't take effect until `config_device` is called.
+    pub const fn set_resolution(&mut self, width: u32, height: u32) {
+        self.config.basic.width = width;
+        self.config.basic.height = height;
+    }
+    /// Set the FourCC. Changes won't take effect until `config_device` is called.
+    pub const fn set_fourcc(&mut self, fourcc: FourCC) {
+        self.config.fourcc = fourcc;
+    }
+    /// Set the frame interval. Changes won't take effect until `config_device` is called.
+    pub const fn set_interval(&mut self, interval: Fraction) {
+        self.config.interval = Some(interval);
+    }
+    /// Get the configured width.
+    pub const fn width(&self) -> u32 {
+        self.config.basic.width
+    }
+    /// Get the configured height.
+    pub const fn height(&self) -> u32 {
+        self.config.basic.height
+    }
+    /// Get the configured FourCC.
+    pub const fn fourcc(&self) -> FourCC {
+        self.config.fourcc
+    }
+    /// Get the configured frame interval.
+    pub const fn interval(&self) -> Option<Fraction> {
+        self.config.interval
+    }
+    /// Get the frame interval, or figure it out if not configured.
+    pub fn interval_mut(&mut self) -> io::Result<Fraction> {
+        if let Some(int) = self.config.interval {
+            return Ok(int);
+        }
+        let int = self.device.params()?.interval;
+        self.config.interval = Some(int);
+        Ok(int)
     }
 }
 impl Debug for CaptureCamera {
@@ -142,7 +337,7 @@ impl Debug for CaptureCamera {
         f.debug_struct("CaptureCamera")
             .field("config", &self.config)
             .field("device_fd", &self.device.handle().fd())
-            .field("stream_fd", &self.stream.handle().fd())
+            .field("stream_fd", &self.stream.as_ref().map(|s| s.handle().fd()))
             .finish()
     }
 }
@@ -151,13 +346,15 @@ impl CameraImpl for CaptureCamera {
         &self.config
     }
     fn read_frame(&mut self) -> io::Result<Buffer<'_>> {
+        let width = self.width();
+        let height = self.height();
         let (frame, _meta) = self
-            .stream
+            .stream()?
             .next()
             .inspect_err(|err| error!(%err, "failed to read from stream"))?;
         Ok(Buffer {
-            width: 640,
-            height: 480,
+            width,
+            height,
             format: PixelFormat::Yuyv,
             data: frame.into(),
         })
@@ -173,14 +370,6 @@ impl CameraImpl for CaptureCamera {
         if let Err(err) = self.config_device() {
             error!(%err, "failed to configure the device");
             return true;
-        }
-        if let Err(err) = self.stream.stop() {
-            error!(%err, "failed to close camera stream");
-            return true;
-        }
-        match MmapStream::new(&self.device, Type::VideoCapture) {
-            Ok(stream) => self.stream = stream,
-            Err(err) => error!(%err, "failed to resolve v4l device"),
         }
         true
     }

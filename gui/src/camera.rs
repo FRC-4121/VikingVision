@@ -5,9 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::error;
+use v4l::FourCC;
+use v4l::video::Capture;
 use viking_vision::buffer::Buffer;
 use viking_vision::camera::Camera;
-use viking_vision::pipeline::daemon::Worker;
+use viking_vision::camera::capture::CaptureCamera;
+use viking_vision::pipeline::daemon::{DaemonHandle, Worker};
 use viking_vision::utils::FpsCounter;
 
 fn enum_cams() -> Vec<PathBuf> {
@@ -17,7 +20,7 @@ fn enum_cams() -> Vec<PathBuf> {
         .collect()
 }
 
-fn path_index(path: &Path) -> Option<usize> {
+pub fn path_index(path: &Path) -> Option<usize> {
     let name = path.file_name()?.to_str()?;
     if let Ok(dev) = path.strip_prefix("/dev/") {
         if dev.parent().is_none_or(|p| p == Path::new("")) {
@@ -42,7 +45,7 @@ pub fn dev_name(path: &Path) -> Option<String> {
     Some(name)
 }
 
-pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnMut(&mut egui::Ui) {
+pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnOnce(&mut egui::Ui) {
     move |ui| {
         let refresh = ui.button("Refresh").clicked();
         let rows = ui.memory_mut(|mem| {
@@ -98,11 +101,121 @@ pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnMut(&mut egui::Ui) {
             });
     }
 }
+pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) {
+    move |ui| {
+        use viking_vision::pipeline::daemon::states::*;
+        let state = handle.context().run_state.load(Ordering::Relaxed);
+        let lock = handle.context().context.locked.lock().unwrap();
+        ui.horizontal(|ui| {
+            if state == SHUTDOWN {
+                ui.label("Closing...");
+                ui.spinner();
+            } else {
+                #[allow(clippy::collapsible_if)]
+                if state == RUNNING {
+                    if ui.button("Pause").clicked() {
+                        handle.pause();
+                    }
+                } else if state == PAUSED {
+                    if ui.button("Start").clicked() {
+                        handle.start();
+                    }
+                }
+                if ui.button("Close").clicked() {
+                    handle.shutdown();
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                let [min, max] = lock.fps.minmax().unwrap_or_default();
+                let avg = lock.fps.fps();
+                ui.label(format!("{min:.2}/{max:.2}/{avg:.2} FPS"));
+            });
+        });
+        let new_frames = handle.context().context.counter.swap(0, Ordering::Relaxed);
+        if new_frames > 0 {
+            ui.ctx().request_repaint();
+        }
+        let buffer = &lock.frame;
+        let img = egui::ColorImage::from_rgb([buffer.width as _, buffer.height as _], &buffer.data);
+        let texture = ui
+            .ctx()
+            .load_texture(format!("{handle:p}"), img, Default::default());
+        ui.image(&texture);
+    }
+}
+pub fn show_controls(
+    handle: &DaemonHandle<Context>,
+    _state: &mut State,
+) -> impl FnOnce(&mut egui::Ui) {
+    move |ui| {
+        let mut lock = handle.context().context.locked.lock().unwrap();
+        if let Some(opts) = &mut lock.cap {
+            {
+                let (cc_idx, cc_desc) = opts
+                    .formats
+                    .iter()
+                    .enumerate()
+                    .find_map(|(n, (fourcc, desc))| (*fourcc == opts.fourcc).then_some((n, desc)))
+                    .unwrap();
+                let mut index = cc_idx;
+                egui::ComboBox::from_label("FourCC")
+                    .selected_text(cc_desc)
+                    .show_index(ui, &mut index, opts.formats.len(), |i| &opts.formats[i].1);
+                if index != cc_idx {
+                    opts.selected_format = Some(index);
+                }
+            }
+            {
+                let mut index = opts.size_idx;
+                let [w, h] = opts.sizes[index];
+                egui::ComboBox::from_label("Resolution")
+                    .selected_text(format!("{w}x{h}"))
+                    .show_index(ui, &mut index, opts.sizes.len(), |i| {
+                        let [w, h] = opts.sizes[i];
+                        format!("{w}x{h}")
+                    });
+                if index != opts.size_idx {
+                    opts.selected_size = Some(index);
+                }
+            }
+            {
+                let mut index = opts.interval_idx;
+                egui::ComboBox::from_label("Interval")
+                    .selected_text(opts.intervals[index].to_string())
+                    .show_index(ui, &mut index, opts.intervals.len(), |i| {
+                        opts.intervals[i].to_string()
+                    });
+                if index != opts.interval_idx {
+                    opts.selected_interval = Some(index);
+                }
+            }
+        } else {
+            ui.label("This camera is not a V4L capture");
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct State {}
+
+#[derive(Debug, Default)]
+pub struct CapOptions {
+    pub fourcc: FourCC,
+    pub size_idx: usize,
+    pub interval_idx: usize,
+    pub formats: Vec<(FourCC, String)>,
+    pub selected_format: Option<usize>,
+    pub sizes: Vec<[u32; 2]>,
+    pub selected_size: Option<usize>,
+    pub intervals: Vec<v4l::Fraction>,
+    pub selected_interval: Option<usize>,
+}
 
 #[derive(Debug, Default)]
 pub struct LockedState {
     pub frame: Buffer<'static>,
     pub fps: FpsCounter,
+    pub cap: Option<CapOptions>,
 }
 
 #[derive(Debug, Default)]
@@ -141,6 +254,112 @@ impl Worker<Context> for CameraWorker {
                 };
                 frame.convert_into(&mut state.frame);
                 state.fps.tick();
+                if let Some(capture) = camera.downcast_mut::<CaptureCamera>() {
+                    let opts = state.cap.get_or_insert_default();
+                    let dev = &capture.device;
+                    'config: {
+                        let Ok(formats) = dev
+                            .enum_formats()
+                            .inspect_err(|err| error!(%err, "failed to read available formats"))
+                        else {
+                            break 'config;
+                        };
+                        let mut changed = false;
+                        if let Some(desc) =
+                            opts.selected_format.take().and_then(|idx| formats.get(idx))
+                        {
+                            if desc.fourcc != capture.config.fourcc {
+                                capture.set_fourcc(desc.fourcc);
+                                changed = true;
+                            }
+                        } else {
+                            opts.formats = formats
+                                .into_iter()
+                                .map(|f| (f.fourcc, f.description))
+                                .collect();
+                            if let Some(&[width, height]) = opts
+                                .selected_size
+                                .take()
+                                .and_then(|idx| opts.sizes.get(idx))
+                            {
+                                capture.set_resolution(width, height);
+                                changed = true;
+                            } else {
+                                let Ok(sizes) = dev.enum_framesizes(capture.fourcc()).inspect_err(
+                                    |err| error!(%err, "failed to read available sizes"),
+                                ) else {
+                                    break 'config;
+                                };
+                                opts.sizes = sizes
+                                    .into_iter()
+                                    .flat_map(|s| s.size.to_discrete())
+                                    .map(|s| [s.width, s.height])
+                                    .collect::<Vec<_>>();
+                                opts.size_idx = opts
+                                    .sizes
+                                    .iter()
+                                    .position(|&[w, h]| {
+                                        w == capture.width() && h == capture.height()
+                                    })
+                                    .unwrap();
+                                if let Some(interval) = opts
+                                    .selected_interval
+                                    .take()
+                                    .and_then(|idx| opts.intervals.get(idx))
+                                {
+                                    capture.set_interval(*interval);
+                                    changed = true;
+                                } else {
+                                    let Ok(intervals) = dev
+                                        .enum_frameintervals(
+                                            capture.fourcc(),
+                                            capture.width(),
+                                            capture.height(),
+                                        )
+                                        .inspect_err(
+                                            |err| error!(%err, "failed to read available intervals"),
+                                        )
+                                    else {
+                                        break 'config;
+                                    };
+                                    opts.intervals = intervals
+                                        .into_iter()
+                                        .flat_map(|i| match i.interval {
+                                            v4l::frameinterval::FrameIntervalEnum::Discrete(f) => {
+                                                vec![f]
+                                            }
+                                            v4l::frameinterval::FrameIntervalEnum::Stepwise(s) => {
+                                                vec![s.min, s.max]
+                                            }
+                                        })
+                                        .collect();
+                                    let Ok(v4l::Fraction {
+                                        numerator: n,
+                                        denominator: d,
+                                    }) = capture.interval_mut().inspect_err(
+                                        |err| error!(%err, "failed to get current interval"),
+                                    )
+                                    else {
+                                        break 'config;
+                                    };
+                                    opts.interval_idx = opts
+                                        .intervals
+                                        .iter()
+                                        .position(|i| i.numerator == n && i.denominator == d)
+                                        .unwrap();
+                                }
+                            }
+                        }
+                        opts.fourcc = capture.fourcc();
+                        if changed {
+                            if let Err(err) = capture.config_device() {
+                                error!(%err, "failed to set format");
+                            }
+                        }
+                    }
+                } else {
+                    state.cap = None;
+                }
                 context.counter.fetch_add(1, Ordering::Relaxed);
             }
             Err(reported) => {
