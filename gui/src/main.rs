@@ -12,8 +12,11 @@ use viking_vision::pipeline::daemon::DaemonHandle;
 
 mod camera;
 
+#[derive(Debug)]
+struct CameraState {}
+
 fn open_from_path(
-    cameras: &mut Vec<(String, DaemonHandle<camera::Context>)>,
+    cameras: &mut Vec<(String, DaemonHandle<camera::Context>, CameraState)>,
 ) -> impl FnMut(&PathBuf) -> bool {
     move |path| {
         let res = CaptureCameraConfig {
@@ -35,7 +38,7 @@ fn open_from_path(
                     camera::CameraWorker::new(Camera::new(name.clone(), inner)),
                 );
                 if let Ok(handle) = res {
-                    cameras.push((name, handle));
+                    cameras.push((name, handle, CameraState {}));
                     true
                 } else {
                     false
@@ -52,8 +55,7 @@ fn open_from_path(
 #[derive(Debug)]
 struct VikingVision {
     open_caps: Vec<PathBuf>,
-    cameras: Vec<(String, DaemonHandle<camera::Context>)>,
-    counter: usize,
+    cameras: Vec<(String, DaemonHandle<camera::Context>, CameraState)>,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext) -> io::Result<Self> {
@@ -63,11 +65,7 @@ impl VikingVision {
             .map_or_else(Vec::new, |s| s.split('\0').map(PathBuf::from).collect());
         let mut cameras = Vec::new();
         open_caps.retain(open_from_path(&mut cameras));
-        Ok(Self {
-            open_caps,
-            cameras,
-            counter: 0,
-        })
+        Ok(Self { open_caps, cameras })
     }
     fn new_boxed(ctx: &CreationContext) -> Result<Box<dyn App>, Box<dyn Error + Send + Sync>> {
         Self::new(ctx)
@@ -77,8 +75,6 @@ impl VikingVision {
 }
 impl App for VikingVision {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        println!("frame {}", self.counter);
-        self.counter += 1;
         egui::Window::new("Egui Debug")
             .default_open(false)
             .show(ctx, |ui| {
@@ -98,16 +94,13 @@ impl App for VikingVision {
                 }
             }
         }
-        self.cameras.retain(|(name, handle)| {
-            egui::Window::new(name)
+        self.cameras.retain_mut(|(name, handle, _cam_state)| {
+            egui::Window::new(&*name)
                 .id(egui::Id::new(handle as *const _))
                 .show(ctx, |ui| {
                     use viking_vision::pipeline::daemon::states::*;
                     let state = handle.context().run_state.load(Ordering::Relaxed);
-                    let new_frames = handle.context().context.counter.swap(0, Ordering::Relaxed);
-                    if state == RUNNING && new_frames > 0 {
-                        ctx.request_repaint();
-                    }
+                    let lock = handle.context().context.locked.lock().unwrap();
                     ui.horizontal(|ui| {
                         if state == SHUTDOWN {
                             ui.label("Closing...");
@@ -127,17 +120,30 @@ impl App for VikingVision {
                                 handle.shutdown();
                             }
                         }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            let [min, max] = lock.fps.minmax().unwrap_or_default();
+                            let avg = lock.fps.fps();
+                            ui.label(format!("{min:.2}/{max:.2}/{avg:.2} FPS"));
+                        });
                     });
-                    let buffer = handle.context().context.frame.lock().unwrap();
-                    let img = egui::ColorImage::from_rgb(
-                        [buffer.width as _, buffer.height as _],
-                        &buffer.data,
-                    );
-                    drop(buffer);
-                    let texture =
-                        ui.ctx()
-                            .load_texture(format!("{handle:p}"), img, Default::default());
-                    ui.image(&texture);
+                    ui.collapsing("Image", |ui| {
+                        let new_frames =
+                            handle.context().context.counter.swap(0, Ordering::Relaxed);
+                        if new_frames > 0 {
+                            ctx.request_repaint();
+                        }
+                        let buffer = &lock.frame;
+                        let img = egui::ColorImage::from_rgb(
+                            [buffer.width as _, buffer.height as _],
+                            &buffer.data,
+                        );
+                        let texture =
+                            ui.ctx()
+                                .load_texture(format!("{handle:p}"), img, Default::default());
+                        ui.image(&texture);
+                    });
+                    drop(lock);
+                    ui.collapsing("Controls", |ui| {});
                 });
             !handle.is_finished()
         });

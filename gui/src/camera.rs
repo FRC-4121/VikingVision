@@ -8,6 +8,7 @@ use tracing::error;
 use viking_vision::buffer::Buffer;
 use viking_vision::camera::Camera;
 use viking_vision::pipeline::daemon::Worker;
+use viking_vision::utils::FpsCounter;
 
 fn enum_cams() -> Vec<PathBuf> {
     v4l::context::enum_devices()
@@ -99,8 +100,14 @@ pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnMut(&mut egui::Ui) {
 }
 
 #[derive(Debug, Default)]
+pub struct LockedState {
+    pub frame: Buffer<'static>,
+    pub fps: FpsCounter,
+}
+
+#[derive(Debug, Default)]
 pub struct Context {
-    pub frame: Mutex<Buffer<'static>>,
+    pub locked: Mutex<LockedState>,
     pub counter: AtomicUsize,
 }
 
@@ -129,10 +136,11 @@ impl Worker<Context> for CameraWorker {
         match &mut self.camera {
             Ok(camera) => {
                 let Ok(frame) = camera.read() else { return };
-                let Ok(mut buffer) = context.frame.lock() else {
+                let Ok(mut state) = context.locked.lock() else {
                     return;
                 };
-                frame.convert_into(&mut buffer);
+                frame.convert_into(&mut state.frame);
+                state.fps.tick();
                 context.counter.fetch_add(1, Ordering::Relaxed);
             }
             Err(reported) => {
