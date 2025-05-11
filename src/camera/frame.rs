@@ -124,7 +124,7 @@ impl super::Config for FrameCameraConfig {
                     _ => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "Invalid image type",
+                            "invalid image type",
                         ));
                     }
                 };

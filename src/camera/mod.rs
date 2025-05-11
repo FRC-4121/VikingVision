@@ -6,8 +6,8 @@ use std::io;
 use std::time::Instant;
 use tracing::{debug, error, info, info_span};
 
+pub mod capture;
 pub mod config;
-
 pub mod frame;
 
 pub trait CameraImpl: Send + Sync {
