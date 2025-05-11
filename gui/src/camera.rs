@@ -3,6 +3,7 @@ use egui_extras::{Column, TableBuilder};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::error;
 use viking_vision::buffer::Buffer;
 use viking_vision::camera::Camera;
@@ -97,6 +98,12 @@ pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnMut(&mut egui::Ui) {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Context {
+    pub frame: Mutex<Buffer<'static>>,
+    pub counter: AtomicUsize,
+}
+
 #[derive(Debug)]
 pub struct CameraWorker {
     pub camera: Result<Camera, Cell<bool>>,
@@ -106,7 +113,7 @@ impl CameraWorker {
         Self { camera: Ok(camera) }
     }
 }
-impl Worker<Mutex<Buffer<'static>>> for CameraWorker {
+impl Worker<Context> for CameraWorker {
     fn name(&self) -> String {
         match &self.camera {
             Ok(camera) => format!("{}-worker", camera.name()),
@@ -118,14 +125,15 @@ impl Worker<Mutex<Buffer<'static>>> for CameraWorker {
             }
         }
     }
-    fn work(&mut self, context: &Mutex<Buffer<'static>>) {
+    fn work(&mut self, context: &Context) {
         match &mut self.camera {
             Ok(camera) => {
                 let Ok(frame) = camera.read() else { return };
-                let Ok(mut buffer) = context.lock() else {
+                let Ok(mut buffer) = context.frame.lock() else {
                     return;
                 };
                 frame.convert_into(&mut buffer);
+                context.counter.fetch_add(1, Ordering::Relaxed);
             }
             Err(reported) => {
                 if !std::mem::replace(reported.get_mut(), true) {
@@ -134,7 +142,7 @@ impl Worker<Mutex<Buffer<'static>>> for CameraWorker {
             }
         }
     }
-    fn cleanup(&mut self, _context: &Mutex<Buffer<'static>>) {
+    fn cleanup(&mut self, _context: &Context) {
         if let Err(reported) = &mut self.camera {
             if !std::mem::replace(reported.get_mut(), true) {
                 error!("attempted to use a camera worker that has already been shut down");

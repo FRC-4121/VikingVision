@@ -2,10 +2,9 @@ use eframe::{App, CreationContext, egui};
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use tracing::error;
 use v4l::FourCC;
-use viking_vision::buffer::Buffer;
 use viking_vision::camera::Camera;
 use viking_vision::camera::capture::{CaptureCameraConfig, V4lPath};
 use viking_vision::camera::config::{BasicConfig, Config};
@@ -14,7 +13,7 @@ use viking_vision::pipeline::daemon::DaemonHandle;
 mod camera;
 
 fn open_from_path(
-    cameras: &mut Vec<(String, DaemonHandle<Mutex<Buffer<'static>>>)>,
+    cameras: &mut Vec<(String, DaemonHandle<camera::Context>)>,
 ) -> impl FnMut(&PathBuf) -> bool {
     move |path| {
         let res = CaptureCameraConfig {
@@ -53,7 +52,8 @@ fn open_from_path(
 #[derive(Debug)]
 struct VikingVision {
     open_caps: Vec<PathBuf>,
-    cameras: Vec<(String, DaemonHandle<Mutex<Buffer<'static>>>)>,
+    cameras: Vec<(String, DaemonHandle<camera::Context>)>,
+    counter: usize,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext) -> io::Result<Self> {
@@ -63,7 +63,11 @@ impl VikingVision {
             .map_or_else(Vec::new, |s| s.split('\0').map(PathBuf::from).collect());
         let mut cameras = Vec::new();
         open_caps.retain(open_from_path(&mut cameras));
-        Ok(Self { open_caps, cameras })
+        Ok(Self {
+            open_caps,
+            cameras,
+            counter: 0,
+        })
     }
     fn new_boxed(ctx: &CreationContext) -> Result<Box<dyn App>, Box<dyn Error + Send + Sync>> {
         Self::new(ctx)
@@ -73,6 +77,8 @@ impl VikingVision {
 }
 impl App for VikingVision {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        println!("frame {}", self.counter);
+        self.counter += 1;
         egui::Window::new("Egui Debug")
             .default_open(false)
             .show(ctx, |ui| {
@@ -97,10 +103,11 @@ impl App for VikingVision {
                 .id(egui::Id::new(handle as *const _))
                 .show(ctx, |ui| {
                     use viking_vision::pipeline::daemon::states::*;
-                    let state = handle
-                        .context()
-                        .run_state
-                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let state = handle.context().run_state.load(Ordering::Relaxed);
+                    let new_frames = handle.context().context.counter.swap(0, Ordering::Relaxed);
+                    if state == RUNNING && new_frames > 0 {
+                        ctx.request_repaint();
+                    }
                     ui.horizontal(|ui| {
                         if state == SHUTDOWN {
                             ui.label("Closing...");
@@ -121,7 +128,7 @@ impl App for VikingVision {
                             }
                         }
                     });
-                    let buffer = handle.context().context.lock().unwrap();
+                    let buffer = handle.context().context.frame.lock().unwrap();
                     let img = egui::ColorImage::from_rgb(
                         [buffer.width as _, buffer.height as _],
                         &buffer.data,
