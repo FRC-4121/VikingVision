@@ -56,9 +56,10 @@ impl Camera {
     pub fn read(&mut self) -> io::Result<Buffer<'_>> {
         let _guard = info_span!("reading frame", name = self.name);
         let now = Instant::now();
-        if let Some(to_sleep) = (now - self.last_frame).checked_sub(self.config().min_frame()) {
+        if let Some(to_sleep) = self.config().min_frame().checked_sub(now - self.last_frame) {
             debug!(?to_sleep, "sleeping to throttle framerate");
             std::thread::sleep(to_sleep);
+            self.last_frame = now;
         }
         // dirty hack because Rust's borrow checker doesn't quite support non-lexical lifetimes
         match polonius::<_, _, ForLt!(Buffer<'_>)>(&mut self.inner, |inner| {

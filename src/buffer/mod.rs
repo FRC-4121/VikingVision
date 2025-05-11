@@ -92,6 +92,11 @@ impl Display for Buffer<'_> {
         )
     }
 }
+impl Default for Buffer<'_> {
+    fn default() -> Self {
+        Self::empty_rgb()
+    }
+}
 impl Buffer<'_> {
     /// Create an empty buffer with the given format.
     pub const fn empty(format: PixelFormat) -> Self {
@@ -174,6 +179,7 @@ impl Buffer<'_> {
     pub fn convert_into(&self, out: &mut Buffer<'_>) {
         use PixelFormat::*;
         use conv::*;
+        use par_broadcast2 as pb;
         use std::convert::identity;
         macro_rules! maybe {
             (true => $($body:tt)*) => {
@@ -183,6 +189,19 @@ impl Buffer<'_> {
         }
         macro_rules! base_impl {
             ($tr:expr, $from:expr => $to:expr, $yuyv_in:tt $yuyv_out:tt) => {
+                maybe!($yuyv_in => {
+                    if $from == Yuyv {
+                        match $to {
+                            YCbCr => pb($tr(yuyv::ycc), self, out),
+                            Luma => pb($tr(yuyv::luma), self, out),
+                            Rgb => pb($tr(compose(yuyv::ycc, double(ycc::rgb))), self, out),
+                            _ => {
+                                base_impl!(@from_rgb (|conv| compose(yuyv::ycc, double($tr(compose(ycc::rgb, conv))))), $to, false);
+                            }
+                        }
+                        return;
+                    }
+                });
                 match $from {
                     Luma => match $to {
                         YCbCr => pb($tr(luma::ycc), self, out),
@@ -206,7 +225,7 @@ impl Buffer<'_> {
                     YCbCr => {
                         base_impl!(@to_rgb $tr => ycc::rgb, $to, $yuyv_out);
                     }
-                    _ => unreachable!(),
+                    _ => unreachable!("attempted to convert {} to {}", $from, $to),
                 }
             };
             (@to_rgb $tr:expr => $conv:expr, $to:expr, $yuyv_out:tt) => {
@@ -232,9 +251,12 @@ impl Buffer<'_> {
                 }
             };
         }
-        use par_broadcast2 as pb;
-        assert_eq!(self.width, out.width);
-        assert_eq!(self.height, out.height);
+        out.data.to_mut().resize(
+            self.width as usize * self.height as usize * out.format.pixel_size() as usize,
+            0,
+        );
+        out.width = self.width;
+        out.height = self.height;
         if self.format == out.format {
             out.data.to_mut().copy_from_slice(&self.data);
             return;
@@ -244,7 +266,7 @@ impl Buffer<'_> {
                 match sd.pixel_size() {
                     1 => pb(drop_alpha::<1>, self, out),
                     3 => pb(drop_alpha::<3>, self, out),
-                    _ => unreachable!(),
+                    _ => unreachable!("attempted to convert {} to {}", sd, out.format),
                 }
                 return;
             }
@@ -254,6 +276,14 @@ impl Buffer<'_> {
                 base_impl!(|conv| compose(drop_alpha, conv), sd => out.format, false true);
             }
         } else if let Some(od) = out.format.drop_alpha() {
+            if self.format == od {
+                match od.pixel_size() {
+                    1 => pb(add_alpha::<1>, self, out),
+                    3 => pb(add_alpha::<3>, self, out),
+                    _ => unreachable!("attempted to convert {} to {}", self.format, od),
+                }
+                return;
+            }
             base_impl!(|conv| compose(conv, add_alpha), self.format => od, true false);
         } else {
             base_impl!(identity, self.format => out.format, true true);
@@ -308,7 +338,7 @@ impl Buffer<'_> {
                 ),
                 (Luma, Gray) => par_broadcast1(to_inplace(compose(luma::rgb, rgb::gray)), self),
                 (Gray, Luma) => par_broadcast1(to_inplace(compose(gray::rgb, rgb::luma)), self),
-                _ => unreachable!(),
+                _ => unreachable!("attempted to convert {} to {}", self.format, to),
             }
         } else {
             warn!(from = %self.format, %to, "in-place pixel sizes don't match");
@@ -320,5 +350,35 @@ impl Buffer<'_> {
         let mut out = Buffer::zeroed(self.width, self.height, format);
         self.convert_into(&mut out);
         out
+    }
+    /// Copy the contents of another buffer into this one, taking ownership of the current buffer.
+    pub fn copy_from(&mut self, src: Buffer<'_>) {
+        self.height = src.height;
+        self.width = src.width;
+        self.format = src.format;
+        if let Cow::Owned(data) = src.data {
+            self.data = Cow::Owned(data);
+            return;
+        }
+        if let Cow::Owned(data) = &mut self.data {
+            if data.capacity() >= src.data.len() {
+                if data.len() >= src.data.len() {
+                    data.truncate(src.data.len());
+                    data.copy_from_slice(&src.data);
+                } else {
+                    let (head, tail) = src.data.split_at(data.len());
+                    data.copy_from_slice(head);
+                    data.extend_from_slice(tail);
+                }
+                return;
+            }
+        }
+        match &mut self.data {
+            Cow::Borrowed(_) => self.data = Cow::Owned(src.data.to_vec()),
+            Cow::Owned(data) => {
+                data.resize(src.data.len(), 0);
+                data.copy_from_slice(&src.data);
+            }
+        }
     }
 }

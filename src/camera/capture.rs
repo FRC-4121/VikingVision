@@ -99,11 +99,11 @@ impl CameraSource for V4lIndex {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureCameraConfig {
     #[serde(flatten)]
-    basic: BasicConfig,
+    pub basic: BasicConfig,
     #[serde(with = "fourcc_serde")]
-    fourcc: FourCC,
+    pub fourcc: FourCC,
     #[serde(flatten)]
-    source: Arc<dyn CameraSource>,
+    pub source: Arc<dyn CameraSource>,
 }
 impl CaptureCameraConfig {
     #[inline(always)]
@@ -118,7 +118,7 @@ impl Config for CaptureCameraConfig {
         let device = self.source.resolve()?;
         let mut cam = CaptureCamera {
             config: self.clone(),
-            stream: MmapStream::new(&device, Type::VideoCapture)?,
+            stream: MmapStream::with_buffers(&device, Type::VideoCapture, 4)?,
             device,
         };
         cam.config_device()?;
@@ -151,7 +151,10 @@ impl CameraImpl for CaptureCamera {
         &self.config
     }
     fn read_frame(&mut self) -> io::Result<Buffer<'_>> {
-        let (frame, _meta) = self.stream.next()?;
+        let (frame, _meta) = self
+            .stream
+            .next()
+            .inspect_err(|err| error!(%err, "failed to read from stream"))?;
         Ok(Buffer {
             width: 640,
             height: 480,

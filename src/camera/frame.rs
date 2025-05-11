@@ -8,20 +8,6 @@ use std::io;
 use std::path::PathBuf;
 use tracing::{error, info_span};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FrameCameraConfig {
-    #[serde(flatten)]
-    basic: BasicConfig,
-    #[serde(flatten)]
-    source: ImageSource,
-}
-impl FrameCameraConfig {
-    #[inline(always)]
-    fn basic(&self) -> &BasicConfig {
-        &self.basic
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ImageSource {
     #[serde(rename = "path")]
@@ -61,6 +47,20 @@ impl TryFrom<ColorShim> for Color {
             }
             ColorShim::String(_s) => Err("Color string parsing isn't yet supported".to_string()),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameCameraConfig {
+    #[serde(flatten)]
+    pub basic: BasicConfig,
+    #[serde(flatten)]
+    pub source: ImageSource,
+}
+impl FrameCameraConfig {
+    #[inline(always)]
+    fn basic(&self) -> &BasicConfig {
+        &self.basic
     }
 }
 

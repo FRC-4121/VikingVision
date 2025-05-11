@@ -9,6 +9,9 @@ pub mod rgb;
 pub mod ycc;
 pub mod yuyv;
 
+#[cfg(test)]
+mod tests;
+
 #[inline(always)]
 fn first<const N: usize, T>(buf: &[T]) -> &[T; N] {
     buf[..N].try_into().unwrap()

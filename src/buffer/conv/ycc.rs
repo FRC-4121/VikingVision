@@ -1,9 +1,9 @@
 pub fn rgb(from: &[u8; 3], to: &mut [u8; 3]) {
     let [y, cb, cr] = from.map(|c| c as i32);
     let [r, g, b] = to;
-    *r = (y + 359 * cr / 256).clamp(0, 255) as u8;
-    *g = (y - (88 * cb + 183 * cr) / 256).clamp(0, 255) as u8;
-    *b = (y + 454 * cb / 256).clamp(0, 256) as u8;
+    *r = ((256 * y + 359 * (cr - 128)) / 256).clamp(0, 255) as u8;
+    *g = ((256 * y - (88 * (cb - 128) + 183 * (cr - 128))) / 256).clamp(0, 255) as u8;
+    *b = ((256 * y + 454 * (cb - 128)) / 256).clamp(0, 255) as u8;
 }
 #[inline(always)]
 pub fn luma(from: &[u8; 3], to: &mut [u8; 1]) {
