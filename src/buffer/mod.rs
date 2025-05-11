@@ -93,6 +93,20 @@ impl Display for Buffer<'_> {
     }
 }
 impl Buffer<'_> {
+    /// Create an empty buffer with the given format.
+    pub const fn empty(format: PixelFormat) -> Self {
+        Self {
+            width: 0,
+            height: 0,
+            format,
+            data: Cow::Owned(Vec::new()),
+        }
+    }
+    /// Convenience alias for `Buffer::empty(Rgb)`.
+    pub const fn empty_rgb() -> Self {
+        Self::empty(PixelFormat::Rgb)
+    }
+    /// Create a buffer of the given size filled with zeroes.
     pub fn zeroed(width: u32, height: u32, format: PixelFormat) -> Self {
         Self {
             width,
@@ -101,6 +115,7 @@ impl Buffer<'_> {
             data: vec![0; width as usize * height as usize * format.pixel_size() as usize].into(),
         }
     }
+    /// Create a buffer of a single repeated color. `color` must equal `format.pixel_size()`.
     pub fn monochrome(width: u32, height: u32, format: PixelFormat, color: &[u8]) -> Self {
         assert_eq!(format.pixel_size() as usize, color.len());
         Self {
@@ -251,6 +266,7 @@ impl Buffer<'_> {
             return;
         }
         if self.format.pixel_size() == to.pixel_size() {
+            self.format = to;
             match (self.format, to) {
                 (Rgb, Hsv) => par_broadcast1(to_inplace(rgb::hsv), self),
                 (Rgb, YCbCr) => par_broadcast1(to_inplace(rgb::ycc), self),
@@ -258,16 +274,46 @@ impl Buffer<'_> {
                 (Hsv, YCbCr) => par_broadcast1(to_inplace(compose(hsv::rgb, rgb::ycc)), self),
                 (YCbCr, Rgb) => par_broadcast1(to_inplace(ycc::rgb), self),
                 (YCbCr, Hsv) => par_broadcast1(to_inplace(compose(ycc::rgb, rgb::hsv)), self),
-                (Rgba, Hsva) => par_broadcast1(to_inplace(rgb::hsv), self),
-                (Rgba, YCbCrA) => par_broadcast1(to_inplace(rgb::ycc), self),
-                (Hsva, Rgba) => par_broadcast1(to_inplace(hsv::rgb), self),
-                (Hsva, YCbCrA) => par_broadcast1(to_inplace(compose(hsv::rgb, rgb::ycc)), self),
-                (YCbCrA, Rgba) => par_broadcast1(to_inplace(ycc::rgb), self),
-                (YCbCrA, Hsva) => par_broadcast1(to_inplace(compose(ycc::rgb, rgb::hsv)), self),
+                (Rgba, Hsva) => par_broadcast1(to_inplace(lift_alpha(rgb::hsv)), self),
+                (Rgba, YCbCrA) => par_broadcast1(to_inplace(lift_alpha(rgb::ycc)), self),
+                (Hsva, Rgba) => par_broadcast1(to_inplace(lift_alpha(hsv::rgb)), self),
+                (Hsva, YCbCrA) => {
+                    par_broadcast1(to_inplace(lift_alpha(compose(hsv::rgb, rgb::ycc))), self)
+                }
+                (YCbCrA, Rgba) => par_broadcast1(to_inplace(lift_alpha(ycc::rgb)), self),
+                (YCbCrA, Hsva) => {
+                    par_broadcast1(to_inplace(lift_alpha(compose(ycc::rgb, rgb::hsv))), self)
+                }
+                (Yuyv, LumaA) => par_broadcast1(yuyv::ilumaa, self),
+                (Yuyv, GrayA) => par_broadcast1(
+                    to_inplace(compose(
+                        yuyv::ycc,
+                        double(compose(compose(ycc::rgb, rgb::gray), add_alpha)),
+                    )),
+                    self,
+                ),
+                (LumaA, Yuyv) => par_broadcast1(lumaa::iyuyv, self),
+                (LumaA, GrayA) => {
+                    par_broadcast1(to_inplace(lift_alpha(compose(luma::rgb, rgb::gray))), self)
+                }
+                (GrayA, LumaA) => {
+                    par_broadcast1(to_inplace(lift_alpha(compose(gray::rgb, rgb::luma))), self)
+                }
+                (GrayA, Yuyv) => par_broadcast1(
+                    to_inplace(compose(
+                        double(compose(drop_alpha, compose(gray::rgb, rgb::ycc))),
+                        ycc::yuyv,
+                    )),
+                    self,
+                ),
+                (Luma, Gray) => par_broadcast1(to_inplace(compose(luma::rgb, rgb::gray)), self),
+                (Gray, Luma) => par_broadcast1(to_inplace(compose(gray::rgb, rgb::luma)), self),
                 _ => unreachable!(),
             }
         } else {
             warn!(from = %self.format, %to, "in-place pixel sizes don't match");
+            let buf = self.convert(to);
+            *self = buf;
         }
     }
     pub fn convert(&self, format: PixelFormat) -> Buffer<'static> {

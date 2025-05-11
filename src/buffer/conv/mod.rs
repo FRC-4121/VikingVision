@@ -113,3 +113,10 @@ where
         op(first_mut(buf));
     }
 }
+
+pub mod lumaa {
+    pub fn iyuyv(buf: &mut [u8; 4]) {
+        buf[1] = 128;
+        buf[3] = 128;
+    }
+}
