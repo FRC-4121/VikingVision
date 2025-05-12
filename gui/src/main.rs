@@ -51,6 +51,8 @@ fn open_from_path(
 struct VikingVision {
     open_caps: Vec<PathBuf>,
     cameras: Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
+    text_buffers: Vec<(String, String, usize)>,
+    buffer_id: usize,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext) -> io::Result<Self> {
@@ -60,7 +62,22 @@ impl VikingVision {
             .map_or_else(Vec::new, |s| s.split('\0').map(PathBuf::from).collect());
         let mut cameras = Vec::new();
         open_caps.retain(open_from_path(&mut cameras));
-        Ok(Self { open_caps, cameras })
+        let text_buffers = ctx
+            .storage
+            .and_then(|s| s.get_string("text_buffers"))
+            .and_then(|s| ron::from_str(&s).ok())
+            .unwrap_or_default();
+        let buffer_id = ctx
+            .storage
+            .and_then(|s| s.get_string("buffer_id"))
+            .and_then(|s| ron::from_str(&s).ok())
+            .unwrap_or_default();
+        Ok(Self {
+            open_caps,
+            cameras,
+            text_buffers,
+            buffer_id,
+        })
     }
     fn new_boxed(ctx: &CreationContext) -> Result<Box<dyn App>, Box<dyn Error + Send + Sync>> {
         Self::new(ctx)
@@ -80,7 +97,7 @@ impl App for VikingVision {
             });
         {
             let mut i = self.open_caps.len();
-            egui::Window::new("Cameras").show(ctx, camera::show_cams(&mut self.open_caps));
+            egui::Window::new("V4L Cameras").show(ctx, camera::show_cams(&mut self.open_caps));
             while i < self.open_caps.len() {
                 if open_from_path(&mut self.cameras)(&self.open_caps[i]) {
                     i += 1;
@@ -89,6 +106,13 @@ impl App for VikingVision {
                 }
             }
         }
+        egui::Window::new("Utilities").show(ctx, |ui| {
+            if ui.button("Text Buffer").clicked() {
+                self.text_buffers
+                    .push(("New Buffer".to_string(), String::new(), self.buffer_id));
+                self.buffer_id += 1;
+            }
+        });
         self.cameras.retain_mut(|(name, handle, state)| {
             egui::Window::new(format!("{name}- Image"))
                 .id(egui::Id::new((handle as *const _, 1)))
@@ -102,6 +126,37 @@ impl App for VikingVision {
                 }
             }
             !handle.is_finished()
+        });
+        self.text_buffers.retain_mut(|(title, body, id)| {
+            let res = egui::Window::new(&*title)
+                .id(egui::Id::new(("buffer", *id)))
+                .show(ctx, |ui| {
+                    let mut keep = true;
+                    ui.horizontal(|ui| {
+                        let rename = ui.button("Rename");
+                        let rename_id = egui::Id::new(("buffer-rename", *id));
+                        if rename.clicked() {
+                            ui.memory_mut(|mem| mem.open_popup(rename_id));
+                        }
+                        if ui.button("Delete").clicked() {
+                            keep = false;
+                        }
+                        egui::popup_above_or_below_widget(
+                            ui,
+                            rename_id,
+                            &rename,
+                            egui::AboveOrBelow::Below,
+                            egui::PopupCloseBehavior::CloseOnClickOutside,
+                            |ui| {
+                                ui.set_min_width(100.0);
+                                ui.text_edit_singleline(title);
+                            },
+                        );
+                    });
+                    ui.code_editor(body);
+                    keep
+                });
+            res.is_none_or(|res| res.inner.unwrap_or(true))
         });
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -118,6 +173,10 @@ impl App for VikingVision {
                 },
             ),
         );
+        if let Ok(s) = ron::to_string(&self.text_buffers) {
+            storage.set_string("text_buffers", s);
+        }
+        storage.set_string("buffer_id", self.buffer_id.to_string());
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {}
 }
