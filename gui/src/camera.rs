@@ -198,7 +198,9 @@ pub fn show_controls(
 }
 
 #[derive(Debug)]
-pub struct State {}
+pub struct State {
+    pub v4l_path: Option<PathBuf>,
+}
 
 #[derive(Debug, Default)]
 pub struct CapOptions {

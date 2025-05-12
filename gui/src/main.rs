@@ -27,7 +27,13 @@ fn open_from_path(
                     camera::CameraWorker::new(Camera::new(name.clone(), Box::new(inner))),
                 );
                 if let Ok(handle) = res {
-                    cameras.push((name, handle, camera::State {}));
+                    cameras.push((
+                        name,
+                        handle,
+                        camera::State {
+                            v4l_path: Some(path.clone()),
+                        },
+                    ));
                     true
                 } else {
                     false
@@ -90,6 +96,11 @@ impl App for VikingVision {
             egui::Window::new(format!("{name}- Controls"))
                 .id(egui::Id::new((handle as *const _, 2)))
                 .show(ctx, camera::show_controls(handle, state));
+            if handle.is_finished() {
+                if let Some(path) = &state.v4l_path {
+                    self.open_caps.retain(|p| p != path);
+                }
+            }
             !handle.is_finished()
         });
     }
