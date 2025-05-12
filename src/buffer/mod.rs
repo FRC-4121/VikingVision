@@ -180,7 +180,6 @@ impl Buffer<'_> {
         use PixelFormat::*;
         use conv::*;
         use par_broadcast2 as pb;
-        use std::convert::identity;
         macro_rules! maybe {
             (true => $($body:tt)*) => {
                 $($body)*
@@ -188,15 +187,15 @@ impl Buffer<'_> {
             (false => $($body:tt)*) => {};
         }
         macro_rules! base_impl {
-            ($tr:expr, $from:expr => $to:expr, $yuyv_in:tt $yuyv_out:tt) => {
+            (($tr:expr, $iadd:expr, $oadd:expr), $from:expr => $to:expr, $yuyv_in:tt $yuyv_out:tt) => {
                 maybe!($yuyv_in => {
                     if $from == Yuyv {
                         match $to {
-                            YCbCr => pb($tr(yuyv::ycc), self, out),
-                            Luma => pb($tr(yuyv::luma), self, out),
-                            Rgb => pb($tr(compose(yuyv::ycc, double(ycc::rgb))), self, out),
+                            YCbCr => pb::<4, { (3 + $oadd) * 2 }, _, _>(compose(yuyv::ycc, double($tr(iden))), self, out),
+                            Luma => pb::<4, { (1 + $oadd) * 2 }, _, _>(compose(yuyv::luma, double($tr(iden))), self, out),
+                            Rgb => pb::<4, { (3 + $oadd) * 2 }, _, _>(compose(yuyv::ycc, double($tr(ycc::rgb))), self, out),
                             _ => {
-                                base_impl!(@from_rgb (|conv| compose(yuyv::ycc, double($tr(compose(ycc::rgb, conv))))), $to, false);
+                                base_impl!(@from_rgb (|conv| compose(yuyv::ycc, double($tr(compose(ycc::rgb, conv)))), 4, $oadd, 2), $to, false);
                             }
                         }
                         return;
@@ -204,47 +203,47 @@ impl Buffer<'_> {
                 });
                 match $from {
                     Luma => match $to {
-                        YCbCr => pb($tr(luma::ycc), self, out),
-                        Rgb => pb($tr(luma::rgb), self, out),
+                        YCbCr => pb::<{ 1 + $iadd }, { 3 + $oadd }, _, _>($tr(luma::ycc), self, out),
+                        Rgb => pb::<{ 1 + $iadd }, { 3 + $oadd }, _, _>($tr(luma::rgb), self, out),
                         _ => {
                             maybe!($yuyv_out => {
                                 if $to == Yuyv {
-                                    pb($tr(luma::yuyv), self, out);
+                                    pb::<{ (1 + $iadd) * 2 }, 4, _, _>(compose(double($tr(iden)), luma::yuyv), self, out);
                                     return;
                                 }
                             });
-                            base_impl!(@from_rgb (|conv| $tr(compose(luma::rgb, conv))), $to, false);
+                            base_impl!(@from_rgb ((|conv| $tr(compose(luma::rgb, conv))), 1 + $iadd, $oadd, 1), $to, false);
                         }
                     },
                     Gray => {
-                        base_impl!(@to_rgb $tr => gray::rgb, $to, $yuyv_out);
+                        base_impl!(@to_rgb ($tr => gray::rgb, 1 + $iadd, $oadd), $to, $yuyv_out);
                     }
                     Hsv => {
-                        base_impl!(@to_rgb $tr => luma::rgb, $to, $yuyv_out);
+                        base_impl!(@to_rgb ($tr => hsv::rgb, 3 + $iadd, $oadd), $to, $yuyv_out);
                     }
                     YCbCr => {
-                        base_impl!(@to_rgb $tr => ycc::rgb, $to, $yuyv_out);
+                        base_impl!(@to_rgb ($tr => ycc::rgb, 3 + $iadd, $oadd), $to, $yuyv_out);
                     }
                     _ => unreachable!("attempted to convert {} to {}", $from, $to),
                 }
             };
-            (@to_rgb $tr:expr => $conv:expr, $to:expr, $yuyv_out:tt) => {
+            (@to_rgb ($tr:expr => $conv:expr, $i:expr, $oadd:expr), $to:expr, $yuyv_out:tt) => {
                 if $to == Rgb {
-                    pb($tr($conv), self, out)
+                    pb::<{ $i }, { 3 + $oadd }, _, _>($tr($conv), self, out)
                 } else {
-                    base_impl!(@from_rgb (|conv| $tr(compose($conv, conv))), $to, $yuyv_out);
+                    base_impl!(@from_rgb ((|conv| $tr(compose($conv, conv))), $i, $oadd, 1), $to, $yuyv_out);
                 }
             };
-            (@from_rgb $tr:expr, $to:expr, $yuyv_out:tt) => {
+            (@from_rgb ($tr:expr, $i:expr, $oadd:expr, $omul:expr), $to:expr, $yuyv_out:tt) => {
                 match $to {
-                    Hsv => pb($tr(rgb::hsv), self, out),
-                    YCbCr => pb($tr(rgb::ycc), self, out),
-                    Luma => pb($tr(rgb::luma), self, out),
-                    Gray => pb($tr(rgb::gray), self, out),
+                    Hsv => pb::<{ $i }, { (3 + $oadd) * $omul }, _, _>($tr(rgb::hsv), self, out),
+                    YCbCr => pb::<{ $i }, { (3 + $oadd) * $omul }, _, _>($tr(rgb::ycc), self, out),
+                    Luma => pb::<{ $i }, { (1 + $oadd) * $omul }, _, _>($tr(rgb::luma), self, out),
+                    Gray => pb::<{ $i }, { (1 + $oadd) * $omul }, _, _>($tr(rgb::gray), self, out),
                     _ => {
                         maybe!($yuyv_out => {
                             if $to == Yuyv {
-                                pb(compose(double($tr(rgb::ycc)), ycc::yuyv), self, out);
+                                pb::<{ $i * 2 }, 4, _, _>(compose(double($tr(rgb::ycc)), ycc::yuyv), self, out);
                             }
                         });
                     }
@@ -264,29 +263,29 @@ impl Buffer<'_> {
         if let Some(sd) = self.format.drop_alpha() {
             if sd == out.format {
                 match sd.pixel_size() {
-                    1 => pb(drop_alpha::<1>, self, out),
-                    3 => pb(drop_alpha::<3>, self, out),
+                    1 => pb(drop_alpha::<[u8; 2]>, self, out),
+                    3 => pb(drop_alpha::<[u8; 4]>, self, out),
                     _ => unreachable!("attempted to convert {} to {}", sd, out.format),
                 }
                 return;
             }
             if let Some(od) = self.format.drop_alpha() {
-                base_impl!(lift_alpha, sd => od, false false);
+                base_impl!((lift_alpha, 1, 1), sd => od, false false);
             } else {
-                base_impl!(|conv| compose(drop_alpha, conv), sd => out.format, false true);
+                base_impl!((|conv| compose(drop_alpha, conv), 1, 0), sd => out.format, false true);
             }
         } else if let Some(od) = out.format.drop_alpha() {
             if self.format == od {
                 match od.pixel_size() {
-                    1 => pb(add_alpha::<1>, self, out),
-                    3 => pb(add_alpha::<3>, self, out),
+                    1 => pb(add_alpha::<[u8; 1]>, self, out),
+                    3 => pb(add_alpha::<[u8; 3]>, self, out),
                     _ => unreachable!("attempted to convert {} to {}", self.format, od),
                 }
                 return;
             }
-            base_impl!(|conv| compose(conv, add_alpha), self.format => od, true false);
+            base_impl!(((|conv| compose(conv, add_alpha)), 0, 1), self.format => od, true false);
         } else {
-            base_impl!(identity, self.format => out.format, true true);
+            base_impl!((|conv| conv, 0, 0), self.format => out.format, true true);
         }
     }
     pub fn convert_inplace(&mut self, to: PixelFormat) {
@@ -304,16 +303,18 @@ impl Buffer<'_> {
                 (Hsv, YCbCr) => par_broadcast1(to_inplace(compose(hsv::rgb, rgb::ycc)), self),
                 (YCbCr, Rgb) => par_broadcast1(to_inplace(ycc::rgb), self),
                 (YCbCr, Hsv) => par_broadcast1(to_inplace(compose(ycc::rgb, rgb::hsv)), self),
-                (Rgba, Hsva) => par_broadcast1(to_inplace(lift_alpha(rgb::hsv)), self),
-                (Rgba, YCbCrA) => par_broadcast1(to_inplace(lift_alpha(rgb::ycc)), self),
-                (Hsva, Rgba) => par_broadcast1(to_inplace(lift_alpha(hsv::rgb)), self),
-                (Hsva, YCbCrA) => {
-                    par_broadcast1(to_inplace(lift_alpha(compose(hsv::rgb, rgb::ycc))), self)
-                }
-                (YCbCrA, Rgba) => par_broadcast1(to_inplace(lift_alpha(ycc::rgb)), self),
-                (YCbCrA, Hsva) => {
-                    par_broadcast1(to_inplace(lift_alpha(compose(ycc::rgb, rgb::hsv))), self)
-                }
+                (Rgba, Hsva) => par_broadcast1::<4, _>(to_inplace(lift_alpha(rgb::hsv)), self),
+                (Rgba, YCbCrA) => par_broadcast1::<4, _>(to_inplace(lift_alpha(rgb::ycc)), self),
+                (Hsva, Rgba) => par_broadcast1::<4, _>(to_inplace(lift_alpha(hsv::rgb)), self),
+                (Hsva, YCbCrA) => par_broadcast1::<4, _>(
+                    to_inplace(lift_alpha(compose(hsv::rgb, rgb::ycc))),
+                    self,
+                ),
+                (YCbCrA, Rgba) => par_broadcast1::<4, _>(to_inplace(lift_alpha(ycc::rgb)), self),
+                (YCbCrA, Hsva) => par_broadcast1::<4, _>(
+                    to_inplace(lift_alpha(compose(ycc::rgb, rgb::hsv))),
+                    self,
+                ),
                 (Yuyv, LumaA) => par_broadcast1(yuyv::ilumaa, self),
                 (Yuyv, GrayA) => par_broadcast1(
                     to_inplace(compose(
@@ -323,12 +324,14 @@ impl Buffer<'_> {
                     self,
                 ),
                 (LumaA, Yuyv) => par_broadcast1(lumaa::iyuyv, self),
-                (LumaA, GrayA) => {
-                    par_broadcast1(to_inplace(lift_alpha(compose(luma::rgb, rgb::gray))), self)
-                }
-                (GrayA, LumaA) => {
-                    par_broadcast1(to_inplace(lift_alpha(compose(gray::rgb, rgb::luma))), self)
-                }
+                (LumaA, GrayA) => par_broadcast1::<2, _>(
+                    to_inplace(lift_alpha(compose(luma::rgb, rgb::gray))),
+                    self,
+                ),
+                (GrayA, LumaA) => par_broadcast1::<2, _>(
+                    to_inplace(lift_alpha(compose(gray::rgb, rgb::luma))),
+                    self,
+                ),
                 (GrayA, Yuyv) => par_broadcast1(
                     to_inplace(compose(
                         double(compose(drop_alpha, compose(gray::rgb, rgb::ycc))),
