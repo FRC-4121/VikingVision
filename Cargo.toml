@@ -17,13 +17,14 @@ disqualified = "1.0.0"
 image = "0.25.6"
 polonius-the-crab = "0.4.2"
 rayon = "1.10.0"
-serde = { version = "1.0.219", features = ["derive", "rc"] }
+serde.workspace = true
 tracing.workspace = true
 triomphe = "0.1.14"
 typetag = "0.2.20"
 v4l.workspace = true
 
 [workspace.dependencies]
+serde = { version = "1.0.219", features = ["derive", "rc"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 v4l = "0.14.0"

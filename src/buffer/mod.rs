@@ -250,14 +250,12 @@ impl Buffer<'_> {
                 }
             };
         }
-        out.data.to_mut().resize(
-            self.width as usize * self.height as usize * out.format.pixel_size() as usize,
-            0,
-        );
+        let len = self.width as usize * self.height as usize * out.format.pixel_size() as usize;
+        out.data.to_mut().resize(len, 0);
         out.width = self.width;
         out.height = self.height;
         if self.format == out.format {
-            out.data.to_mut().copy_from_slice(&self.data);
+            out.data.to_mut()[..len].copy_from_slice(&self.data);
             return;
         }
         if let Some(sd) = self.format.drop_alpha() {

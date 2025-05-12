@@ -4,6 +4,7 @@ use crate::buffer::{Buffer, PixelFormat};
 use crate::delegate_camera_config;
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::io;
 use std::path::PathBuf;
 use tracing::{error, info_span};
@@ -69,10 +70,10 @@ impl super::Config for FrameCameraConfig {
     delegate_camera_config!(FrameCameraConfig::basic);
 
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>> {
-        let width = self.width();
-        let height = self.height();
         let buffer = match &self.source {
             ImageSource::Color(Color { format, bytes }) => {
+                let width = self.width();
+                let height = self.height();
                 Buffer::monochrome(width, height, *format, bytes)
             }
             ImageSource::Path(path) => {
@@ -86,6 +87,8 @@ impl super::Config for FrameCameraConfig {
                         error!(%err, "error decoding image");
                         io::Error::new(io::ErrorKind::InvalidData, err)
                     })?;
+                let width = image.width();
+                let height = image.height();
                 let (format, data) = match image {
                     DynamicImage::ImageLuma8(img) => (PixelFormat::Luma, img.into_raw()),
                     DynamicImage::ImageLumaA8(img) => (PixelFormat::LumaA, img.into_raw()),
@@ -108,14 +111,14 @@ impl super::Config for FrameCameraConfig {
                         img.into_raw().into_iter().map(|p| (p >> 8) as u8).collect(),
                     ),
                     DynamicImage::ImageRgb32F(img) => (
-                        PixelFormat::Luma,
+                        PixelFormat::Rgb,
                         img.into_raw()
                             .into_iter()
                             .map(|p| (p * 256.0).min(255.0) as u8)
                             .collect(),
                     ),
                     DynamicImage::ImageRgba32F(img) => (
-                        PixelFormat::LumaA,
+                        PixelFormat::Rgba,
                         img.into_raw()
                             .into_iter()
                             .map(|p| (p * 256.0).min(255.0) as u8)
@@ -136,10 +139,10 @@ impl super::Config for FrameCameraConfig {
                 }
             }
         };
-        Ok(Box::new(FrameCamera {
-            config: self.clone(),
-            buffer,
-        }))
+        let mut config = self.clone();
+        config.basic.width = buffer.width;
+        config.basic.height = buffer.height;
+        Ok(Box::new(FrameCamera { config, buffer }))
     }
 }
 
@@ -154,5 +157,42 @@ impl CameraImpl for FrameCamera {
     }
     fn read_frame(&mut self) -> io::Result<Buffer<'_>> {
         Ok(self.buffer.borrow())
+    }
+}
+impl FrameCamera {
+    /// Get whether this frame has a monochrome source.
+    pub fn is_monochrome(&self) -> bool {
+        matches!(self.config.source, ImageSource::Color(_))
+    }
+    /// If this image has a monochrome source, reshape it to a new width and height.
+    #[allow(clippy::result_unit_err)]
+    pub fn reshape_monochrome(&mut self, width: u32, height: u32) -> Result<(), ()> {
+        if let ImageSource::Color(Color { format, ref bytes }) = self.config.source {
+            if self.buffer.width == width && self.buffer.height == height {
+                return Ok(());
+            }
+            let new_len = width as usize * height as usize * format.pixel_size() as usize;
+            if new_len < self.buffer.data.len() {
+                match &mut self.buffer.data {
+                    Cow::Borrowed(slice) => *slice = &slice[..new_len],
+                    Cow::Owned(vec) => vec.truncate(new_len),
+                }
+            } else {
+                let vec = self.buffer.data.to_mut();
+                let len_diff = new_len - vec.len();
+                vec.reserve(len_diff);
+                let px_diff = len_diff / format.pixel_size() as usize;
+                for _ in 0..px_diff {
+                    vec.extend_from_slice(bytes);
+                }
+            }
+            self.buffer.width = width;
+            self.buffer.height = height;
+            self.config.basic.width = width;
+            self.config.basic.height = height;
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 }

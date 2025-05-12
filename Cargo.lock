@@ -3843,6 +3843,7 @@ dependencies = [
  "eframe",
  "egui_extras",
  "ron 0.10.1",
+ "serde",
  "tracing",
  "tracing-subscriber",
  "v4l",

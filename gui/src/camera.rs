@@ -7,9 +7,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::error;
 use v4l::FourCC;
 use v4l::video::Capture;
-use viking_vision::buffer::Buffer;
+use viking_vision::broadcast::par_broadcast1;
+use viking_vision::buffer::{Buffer, PixelFormat};
 use viking_vision::camera::Camera;
 use viking_vision::camera::capture::CaptureCamera;
+use viking_vision::camera::frame::{Color, FrameCamera, ImageSource};
 use viking_vision::pipeline::daemon::{DaemonHandle, Worker};
 use viking_vision::utils::FpsCounter;
 
@@ -147,59 +149,107 @@ pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) 
 }
 pub fn show_controls(
     handle: &DaemonHandle<Context>,
-    _state: &mut State,
-) -> impl FnOnce(&mut egui::Ui) {
+    state: &mut State,
+) -> impl FnOnce(&mut egui::Ui) -> Option<super::Monochrome> {
     move |ui| {
+        let mut ret = None;
         let mut lock = handle.context().context.locked.lock().unwrap();
         if let Some(opts) = &mut lock.cap {
-            {
-                let (cc_idx, cc_desc) = opts
-                    .formats
-                    .iter()
-                    .enumerate()
-                    .find_map(|(n, (fourcc, desc))| (*fourcc == opts.fourcc).then_some((n, desc)))
-                    .unwrap();
-                let mut index = cc_idx;
-                egui::ComboBox::from_label("FourCC")
-                    .selected_text(cc_desc)
-                    .show_index(ui, &mut index, opts.formats.len(), |i| &opts.formats[i].1);
-                if index != cc_idx {
-                    opts.selected_format = Some(index);
+            ui.collapsing("V4L Options", |ui| {
+                {
+                    let (cc_idx, cc_desc) = opts
+                        .formats
+                        .iter()
+                        .enumerate()
+                        .find_map(|(n, (fourcc, desc))| {
+                            (*fourcc == opts.fourcc).then_some((n, desc))
+                        })
+                        .unwrap();
+                    let mut index = cc_idx;
+                    egui::ComboBox::from_label("FourCC")
+                        .selected_text(cc_desc)
+                        .show_index(ui, &mut index, opts.formats.len(), |i| &opts.formats[i].1);
+                    if index != cc_idx {
+                        opts.selected_format = Some(index);
+                    }
                 }
-            }
-            {
-                let mut index = opts.size_idx;
-                let [w, h] = opts.sizes[index];
-                egui::ComboBox::from_label("Resolution")
-                    .selected_text(format!("{w}x{h}"))
-                    .show_index(ui, &mut index, opts.sizes.len(), |i| {
-                        let [w, h] = opts.sizes[i];
-                        format!("{w}x{h}")
-                    });
-                if index != opts.size_idx {
-                    opts.selected_size = Some(index);
+                {
+                    let mut index = opts.size_idx;
+                    let [w, h] = opts.sizes[index];
+                    egui::ComboBox::from_label("Resolution")
+                        .selected_text(format!("{w}x{h}"))
+                        .show_index(ui, &mut index, opts.sizes.len(), |i| {
+                            let [w, h] = opts.sizes[i];
+                            format!("{w}x{h}")
+                        });
+                    if index != opts.size_idx {
+                        opts.selected_size = Some(index);
+                    }
                 }
-            }
-            {
-                let mut index = opts.interval_idx;
-                egui::ComboBox::from_label("Interval")
-                    .selected_text(opts.intervals[index].to_string())
-                    .show_index(ui, &mut index, opts.intervals.len(), |i| {
-                        opts.intervals[i].to_string()
-                    });
-                if index != opts.interval_idx {
-                    opts.selected_interval = Some(index);
+                {
+                    let mut index = opts.interval_idx;
+                    egui::ComboBox::from_label("Interval")
+                        .selected_text(opts.intervals[index].to_string())
+                        .show_index(ui, &mut index, opts.intervals.len(), |i| {
+                            opts.intervals[i].to_string()
+                        });
+                    if index != opts.interval_idx {
+                        opts.selected_interval = Some(index);
+                    }
                 }
-            }
-        } else {
-            ui.label("This camera is not a V4L capture");
+            });
         }
+        if let Some(opts) = &mut lock.mono {
+            ui.collapsing("Monochrome", |ui| {
+                if ui
+                    .add(
+                        egui::Slider::new(&mut opts.width, 0..=1000)
+                            .clamping(egui::SliderClamping::Never)
+                            .text("Width"),
+                    )
+                    .changed()
+                {
+                    opts.reshape = true;
+                }
+                if ui
+                    .add(
+                        egui::Slider::new(&mut opts.height, 0..=1000)
+                            .clamping(egui::SliderClamping::Never)
+                            .text("Height"),
+                    )
+                    .changed()
+                {
+                    opts.reshape = true;
+                }
+                if ui.color_edit_button_srgb(&mut opts.color).changed() {
+                    opts.recolor = true;
+                }
+            });
+            if opts.reshape || opts.recolor {
+                if let Ident::Mono(id) = state.ident {
+                    ret = Some(super::Monochrome {
+                        width: opts.width,
+                        height: opts.height,
+                        color: opts.color,
+                        id,
+                    });
+                }
+            }
+        }
+        ret
     }
 }
 
 #[derive(Debug)]
+pub enum Ident {
+    V4l(PathBuf),
+    Img(PathBuf),
+    Mono(usize),
+}
+
+#[derive(Debug)]
 pub struct State {
-    pub v4l_path: Option<PathBuf>,
+    pub ident: Ident,
 }
 
 #[derive(Debug, Default)]
@@ -216,10 +266,20 @@ pub struct CapOptions {
 }
 
 #[derive(Debug, Default)]
+pub struct MonochromeOptions {
+    pub width: u32,
+    pub height: u32,
+    pub color: [u8; 3],
+    pub reshape: bool,
+    pub recolor: bool,
+}
+
+#[derive(Debug, Default)]
 pub struct LockedState {
     pub frame: Buffer<'static>,
     pub fps: FpsCounter,
     pub cap: Option<CapOptions>,
+    pub mono: Option<MonochromeOptions>,
 }
 
 #[derive(Debug, Default)]
@@ -363,6 +423,30 @@ impl Worker<Context> for CameraWorker {
                     }
                 } else {
                     state.cap = None;
+                }
+                if let Some(mono) = camera.downcast_mut::<FrameCamera>() {
+                    if let ImageSource::Color(Color {
+                        format: PixelFormat::Rgb,
+                        ref bytes,
+                    }) = mono.config.source
+                    {
+                        let opts = state.mono.get_or_insert_default();
+                        if opts.recolor {
+                            par_broadcast1(|c| *c = opts.color, &mut mono.buffer);
+                        } else {
+                            opts.color.copy_from_slice(bytes);
+                        }
+                        if opts.reshape {
+                            let _ = mono.reshape_monochrome(opts.width, opts.height);
+                        } else {
+                            opts.width = mono.buffer.width;
+                            opts.height = mono.buffer.height;
+                        }
+                    } else {
+                        state.mono = None;
+                    }
+                } else {
+                    state.mono = None;
                 }
                 context.counter.fetch_add(1, Ordering::Relaxed);
             }
