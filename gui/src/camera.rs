@@ -134,6 +134,8 @@ pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) 
         let new_frames = handle.context().context.counter.swap(0, Ordering::Relaxed);
         if new_frames > 0 {
             ui.ctx().request_repaint();
+        } else {
+            ui.ctx().request_repaint_after_secs(0.05);
         }
         let buffer = &lock.frame;
         let img = egui::ColorImage::from_rgb([buffer.width as _, buffer.height as _], &buffer.data);
