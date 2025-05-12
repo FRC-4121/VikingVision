@@ -100,6 +100,7 @@ impl<T: Send + Sync + 'static> DaemonHandle<T> {
         self.context
             .run_state
             .store(states::SHUTDOWN, Ordering::Release);
+        self.handle.thread().unpark();
     }
     /// Return whether or not the thread has completely finished.
     pub fn is_finished(&self) -> bool {
