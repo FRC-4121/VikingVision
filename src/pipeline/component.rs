@@ -1,8 +1,6 @@
 use super::runner::ComponentContext;
 use crate::buffer::Buffer;
-use serde::{Deserialize, Serialize};
 use std::any::Any;
-use std::collections::HashMap;
 use std::fmt::{self, Debug, Display, Formatter};
 
 /// Some kind of data that can be passed between components.
@@ -75,31 +73,10 @@ macro_rules! impl_for_tuple {
 }
 impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
-/// Which inputs to use for the given component
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum InputConfig {
-    /// No pre-configured input; instead an input will be passed externally
-    #[default]
-    None,
-    /// One input, on the default channel
-    Single(String),
-    /// Multiple named inputs
-    Multiple(HashMap<String, String>),
-}
-
 /// A serializable factory that can build a component
 #[typetag::serde]
 pub trait ComponentFactory {
     fn build(&self, name: &str) -> Box<dyn Component>;
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ComponentConfig {
-    /// Inputs for this component
-    input: InputConfig,
-    #[serde(flatten)]
-    factory: Box<dyn ComponentFactory>,
 }
 
 /// Kind of an output stream

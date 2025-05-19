@@ -236,7 +236,7 @@ impl PipelineRunner {
         if name.is_empty() {
             return Err(AddComponentError::EmptyName);
         }
-        if let Some((index, _)) = name.char_indices().find(|(_, c)| c.is_alphanumeric()) {
+        if let Some((index, _)) = name.char_indices().find(|(_, c)| !c.is_alphanumeric()) {
             return Err(AddComponentError::InvalidName { name, index });
         }
         match self.lookup.entry(name) {
