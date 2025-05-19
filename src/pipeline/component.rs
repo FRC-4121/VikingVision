@@ -13,6 +13,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 /// - [`Vec`]s of data
 /// - tuples with up to 12 elements
 pub trait Data: Any + Send + Sync {
+    fn as_any(&self) -> &dyn Any;
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Display::fmt(&disqualified::ShortName::of::<Self>(), f)
     }
@@ -26,6 +27,9 @@ macro_rules! impl_via_debug {
     () => {};
     ($ty:ty $(, $rest:ty)*) => {
         impl Data for $ty {
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
             fn debug(&self, f: &mut Formatter) -> fmt::Result {
                 Debug::fmt(self, f)
             }
@@ -49,6 +53,9 @@ impl_via_debug!(
     Buffer<'static>
 );
 impl<T: Data> Data for Vec<T> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_list()
             .entries(self.iter().map(|e| e as &dyn Data))
@@ -59,6 +66,9 @@ macro_rules! impl_for_tuple {
     () => {};
     ($head:ident $(, $tail:ident)*) => {
         impl<$head: Data, $($tail: Data,)*> Data for ($head, $($tail,)*) {
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
             #[allow(non_snake_case)]
             fn debug(&self, f: &mut Formatter) -> fmt::Result {
                 let mut tuple = f.debug_tuple("");

@@ -3829,6 +3829,7 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.12",
  "tracing",
+ "tracing-subscriber",
  "triomphe",
  "typetag",
  "v4l",

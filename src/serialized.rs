@@ -47,7 +47,10 @@ impl TryFrom<&str> for Source {
             if channel.is_empty() {
                 return Err(ParseSourceError::EmptyChannel);
             }
-            if let Some((n, _)) = component.char_indices().find(|x| !x.1.is_alphanumeric()) {
+            if let Some((n, _)) = component
+                .char_indices()
+                .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
+            {
                 return Err(ParseSourceError::NonAlphaNumComponent(n));
             }
             Ok(Source {
@@ -55,7 +58,10 @@ impl TryFrom<&str> for Source {
                 stream: Some(channel.to_string()),
             })
         } else {
-            if let Some((n, _)) = value.char_indices().find(|x| !x.1.is_alphanumeric()) {
+            if let Some((n, _)) = value
+                .char_indices()
+                .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
+            {
                 return Err(ParseSourceError::NonAlphaNumComponent(n));
             }
             Ok(Source {
@@ -131,13 +137,13 @@ impl ConfigFile {
             if config.input == InputConfig::None {
                 continue;
             }
-            let sub_id = runner.components()[name];
+            let sub_id = runner.components()[name.as_str()];
             match &config.input {
                 InputConfig::None => unreachable!(),
                 InputConfig::Single(s) => {
                     let pub_id = *runner
                         .components()
-                        .get(&s.component)
+                        .get(s.component.as_str())
                         .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                     runner
                         .add_dependency(pub_id, s.stream.as_deref(), sub_id, None)
@@ -147,7 +153,7 @@ impl ConfigFile {
                     for (stream, s) in m {
                         let pub_id = *runner
                             .components()
-                            .get(&s.component)
+                            .get(s.component.as_str())
                             .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                         runner
                             .add_dependency(pub_id, s.stream.as_deref(), sub_id, Some(stream))

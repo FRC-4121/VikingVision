@@ -2,7 +2,7 @@ use super::component::{Component, Data};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -11,6 +11,11 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct ComponentId(pub usize);
+impl Display for ComponentId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunId {
@@ -28,7 +33,24 @@ impl RunId {
         self.tree.push(vals);
     }
 }
+impl Display for RunId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.invoc)?;
+        for row in &self.tree {
+            f.write_str(":")?;
+            let Some((head, tail)) = row.split_first() else {
+                continue;
+            };
+            write!(f, "{head}")?;
+            for elem in tail {
+                write!(f, ".{elem}")?;
+            }
+        }
+        Ok(())
+    }
+}
 
+#[derive(Debug)]
 struct PartialData {
     /// A vector of partial data. This should be chunked by the number of inputs
     data: Vec<Option<Arc<dyn Data>>>,
@@ -77,10 +99,25 @@ struct ComponentData {
     in_lookup: HashMap<String, usize>,
     /// Locked partial data
     partial: Mutex<PartialData>,
+    /// Name of this component
+    name: triomphe::Arc<str>,
     /// This is true if we need to add a row to our run-id.
     multi_input: bool,
     /// This is true if a primary input has already been registered.
     has_single: bool,
+}
+impl Debug for ComponentData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ComponentData")
+            .field("primary_dependents", &self.primary_dependents)
+            .field("dependents", &self.dependents)
+            .field("in_lookup", &self.in_lookup)
+            .field("partial", &self.partial)
+            .field("name", &self.name)
+            .field("multi_input", &self.multi_input)
+            .field("has_single", &self.has_single)
+            .finish_non_exhaustive()
+    }
 }
 
 struct DecrementRunCount<'a>(&'a PipelineRunner);
@@ -97,7 +134,10 @@ pub enum AddComponentError {
     #[error("Empty component name")]
     EmptyName,
     #[error("Non-alphanumeric character in character {index} of {name:?}")]
-    InvalidName { name: String, index: usize },
+    InvalidName {
+        name: triomphe::Arc<str>,
+        index: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -136,22 +176,22 @@ pub enum AddDependencyError<'a> {
 /// });
 /// // By the time the call to `scope` returns, all of the pipelines will have run.
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct PipelineRunner {
     components: Vec<ComponentData>,
-    lookup: HashMap<String, ComponentId>,
+    lookup: HashMap<triomphe::Arc<str>, ComponentId>,
     running: AtomicUsize,
     run_id: AtomicU32,
 }
-impl Debug for PipelineRunner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PipelineRunner")
-            .field("lookup", &self.lookup)
-            .field("running", &self.running)
-            .field("run_id", &self.run_id)
-            .finish_non_exhaustive()
-    }
-}
+// impl Debug for PipelineRunner {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+//         f.debug_struct("PipelineRunner")
+//             .field("lookup", &self.lookup)
+//             .field("running", &self.running)
+//             .field("run_id", &self.run_id)
+//             .finish_non_exhaustive()
+//     }
+// }
 impl PipelineRunner {
     /// Create a new runner with no components.
     #[inline(always)]
@@ -165,7 +205,7 @@ impl PipelineRunner {
     }
     /// Get a map from the registered component names to their IDs.
     #[inline(always)]
-    pub fn components(&self) -> &HashMap<String, ComponentId> {
+    pub fn components(&self) -> &HashMap<triomphe::Arc<str>, ComponentId> {
         &self.lookup
     }
     /// Get the number of running pipelines.
@@ -216,7 +256,7 @@ impl PipelineRunner {
             tree: Vec::new(),
         };
         scope.spawn(move |scope| {
-            self.components[id.0].component.run(ComponentContext {
+            ComponentContext {
                 runner: self,
                 comp_id: id,
                 input: InputKind::Single(data),
@@ -224,22 +264,27 @@ impl PipelineRunner {
                 decr,
                 run_id,
                 invoc: AtomicU32::new(0),
-            });
+            }
+            .run(&*self.components[id.0].component);
         });
     }
     /// Try to add a new component, returning the ID of one with the same name if there's a conflict
     pub fn add_component(
         &mut self,
-        name: String,
+        name: impl Into<triomphe::Arc<str>>,
         component: Arc<dyn Component>,
     ) -> Result<ComponentId, AddComponentError> {
+        let name = name.into();
         if name.is_empty() {
             return Err(AddComponentError::EmptyName);
         }
-        if let Some((index, _)) = name.char_indices().find(|(_, c)| !c.is_alphanumeric()) {
+        if let Some((index, _)) = name
+            .char_indices()
+            .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
+        {
             return Err(AddComponentError::InvalidName { name, index });
         }
-        match self.lookup.entry(name) {
+        match self.lookup.entry(name.clone()) {
             Entry::Occupied(e) => Err(AddComponentError::AlreadyExists(*e.get())),
             Entry::Vacant(e) => {
                 let value = ComponentId(self.components.len());
@@ -253,6 +298,7 @@ impl PipelineRunner {
                         ids: Vec::new(),
                         first: 0,
                     }),
+                    name,
                     multi_input: false,
                     has_single: false,
                 });
@@ -269,10 +315,10 @@ impl PipelineRunner {
         sub_id: ComponentId,
         sub_stream: Option<&'a str>,
     ) -> Result<(), AddDependencyError<'a>> {
-        if pub_id.0 < self.components.len() {
+        if pub_id.0 >= self.components.len() {
             return Err(AddDependencyError::NoPublisher(pub_id));
         }
-        if sub_id.0 < self.components.len() {
+        if sub_id.0 >= self.components.len() {
             return Err(AddDependencyError::NoSubscriber(pub_id));
         }
         if pub_id == sub_id {
@@ -369,6 +415,10 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
     pub fn runner(&self) -> &'r PipelineRunner {
         self.runner
     }
+    /// Get the name of the current component.
+    pub fn name(&self) -> &'r triomphe::Arc<str> {
+        &self.runner.components[self.comp_id.0].name
+    }
     /// Get the current result from a given stream.
     pub fn get<'b>(&self, stream: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
         match (stream.into(), &self.input) {
@@ -434,7 +484,7 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
                         in_data[stream] = Some(data.clone());
                         if in_data.iter().all(Option::is_some) {
                             self.spawn_next(
-                                component,
+                                next_comp,
                                 comp_id,
                                 InputKind::Multiple(n),
                                 Some(last_row.clone()),
@@ -454,11 +504,13 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
                     let last = id.tree.last().unwrap().clone();
                     *id_ref = Some(id);
                     data_ref.clone_from_slice(data);
-                    self.spawn_next(component, comp_id, InputKind::Multiple(n), Some(last));
+                    if data.iter().all(Option::is_some) {
+                        self.spawn_next(next_comp, comp_id, InputKind::Multiple(n), Some(last));
+                    }
                 }
             } else {
                 self.spawn_next(
-                    component,
+                    next_comp,
                     comp_id,
                     InputKind::Single(data.clone()),
                     next_comp.multi_input.then_some(smallvec::smallvec![run]),
@@ -487,7 +539,7 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
         }
         self.scope.spawn(move |scope| {
             let cleanup_id = run_id.clone();
-            inner.run(ComponentContext {
+            ComponentContext {
                 input,
                 runner,
                 comp_id,
@@ -495,7 +547,8 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
                 decr,
                 run_id,
                 invoc: AtomicU32::new(0),
-            });
+            }
+            .run(&*inner);
             if let Some(idx) = cleanup_idx {
                 component
                     .partial
@@ -503,22 +556,32 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
                     .unwrap_or_else(|e| e.into_inner())
                     .free(idx, component.in_lookup.len());
             }
-            let mut lock = component.partial.lock().unwrap_or_else(|e| e.into_inner());
-            let lock = &mut *lock;
-            for (n, (data, id)) in lock
-                .data
-                .chunks_mut(component.in_lookup.len())
-                .zip(&mut lock.ids)
-                .enumerate()
-            {
-                if id.as_ref().is_some_and(|i| cleanup_id.is_pred_of(i)) {
-                    *id = None;
-                    data.fill(None);
-                    if n < lock.first {
-                        lock.first = n;
+            if !component.in_lookup.is_empty() {
+                let mut lock = component.partial.lock().unwrap_or_else(|e| e.into_inner());
+                let lock = &mut *lock;
+                for (n, (data, id)) in lock
+                    .data
+                    .chunks_mut(component.in_lookup.len())
+                    .zip(&mut lock.ids)
+                    .enumerate()
+                {
+                    if id.as_ref().is_some_and(|i| cleanup_id.is_pred_of(i)) {
+                        *id = None;
+                        data.fill(None);
+                        if n < lock.first {
+                            lock.first = n;
+                        }
                     }
                 }
             }
         });
+    }
+    /// Get the info-level span for this run.
+    pub fn tracing_span(&self) -> tracing::Span {
+        tracing::info_span!("run", name = %self.name(), run = %self.run_id, component = %self.comp_id)
+    }
+    /// Run the component with tracing instrumentation (and possibly more in the future).
+    pub fn run(self, component: &dyn Component) {
+        self.tracing_span().in_scope(|| component.run(self));
     }
 }

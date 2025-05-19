@@ -25,6 +25,9 @@ triomphe = "0.1.14"
 typetag = "0.2.20"
 v4l.workspace = true
 
+[dev-dependencies]
+tracing-subscriber.workspace = true
+
 [workspace.dependencies]
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 tracing = "0.1.41"
