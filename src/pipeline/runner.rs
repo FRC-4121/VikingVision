@@ -1,9 +1,11 @@
 use super::component::{Component, Data};
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
 
 /// Newtype wrapper around a component ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,9 +69,9 @@ impl PartialData {
 struct ComponentData {
     /// The actual component
     component: Arc<dyn Component>,
-    /// Components dependent on a primary channel
+    /// Components dependent on a primary stream
     primary_dependents: Vec<(ComponentId, Option<usize>)>,
-    /// Components dependent on a secondary channel
+    /// Components dependent on a secondary stream
     dependents: HashMap<String, Vec<(ComponentId, Option<usize>)>>,
     /// Lookups from the input names to the partial indices
     in_lookup: HashMap<String, usize>,
@@ -77,6 +79,8 @@ struct ComponentData {
     partial: Mutex<PartialData>,
     /// This is true if we need to add a row to our run-id.
     multi_input: bool,
+    /// This is true if a primary input has already been registered.
+    has_single: bool,
 }
 
 struct DecrementRunCount<'a>(&'a PipelineRunner);
@@ -86,13 +90,59 @@ impl Drop for DecrementRunCount<'_> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum AddComponentError {
+    #[error("Name already exists with component ID {}", .0.0)]
+    AlreadyExists(ComponentId),
+    #[error("Empty component name")]
+    EmptyName,
+    #[error("Non-alphanumeric character in character {index} of {name:?}")]
+    InvalidName { name: String, index: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum AddDependencyError<'a> {
+    #[error("Publishing component {} doesn't exist", .0.0)]
+    NoPublisher(ComponentId),
+    #[error("Subscribing component {} doesn't exist", .0.0)]
+    NoSubscriber(ComponentId),
+    #[error("Can't create a self-loop")]
+    SelfLoop,
+    #[error("Publishing component doesn't have a {}", if let Some(name) = .0 { format!("named stream {name:?}") } else { "primary output stream".to_string() })]
+    NoPubStream(Option<&'a str>),
+    #[error("Input {0:?} has already been attached")]
+    DuplicateNamedInput(&'a str),
+    #[error("Primary input has already been attached")]
+    DuplicatePrimaryInput,
+    #[error("Components can't have both primary and named inputs")]
+    InputTypeMix,
+}
+
+#[derive(Default)]
 pub struct PipelineRunner {
     components: Vec<ComponentData>,
     lookup: HashMap<String, ComponentId>,
     running: AtomicUsize,
-    run: AtomicU32,
+    run_id: AtomicU32,
+}
+impl Debug for PipelineRunner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PipelineRunner")
+            .field("lookup", &self.lookup)
+            .field("running", &self.running)
+            .field("run_id", &self.run_id)
+            .finish_non_exhaustive()
+    }
 }
 impl PipelineRunner {
+    pub fn new() -> Self {
+        Self {
+            components: Vec::new(),
+            lookup: HashMap::new(),
+            running: AtomicUsize::new(0),
+            run_id: AtomicU32::new(0),
+        }
+    }
     /// Get a map from the registered component names to their IDs.
     pub fn components(&self) -> &HashMap<String, ComponentId> {
         &self.lookup
@@ -115,7 +165,7 @@ impl PipelineRunner {
         self.running.fetch_add(1, Ordering::AcqRel);
         let decr = Arc::new(DecrementRunCount(self));
         let run_id = RunId {
-            invoc: self.run.fetch_add(1, Ordering::Relaxed),
+            invoc: self.run_id.fetch_add(1, Ordering::Relaxed),
             tree: Vec::new(),
         };
         scope.spawn(move |scope| {
@@ -131,6 +181,104 @@ impl PipelineRunner {
                 },
             );
         });
+    }
+    /// Try to add a new component, returning the ID of one with the same name if there's a conflict
+    pub fn add_component(
+        &mut self,
+        name: String,
+        component: Arc<dyn Component>,
+    ) -> Result<ComponentId, AddComponentError> {
+        if name.is_empty() {
+            return Err(AddComponentError::EmptyName);
+        }
+        if let Some((index, _)) = name.char_indices().find(|(_, c)| c.is_alphanumeric()) {
+            return Err(AddComponentError::InvalidName { name, index });
+        }
+        match self.lookup.entry(name) {
+            Entry::Occupied(e) => Err(AddComponentError::AlreadyExists(*e.get())),
+            Entry::Vacant(e) => {
+                let value = ComponentId(self.components.len());
+                self.components.push(ComponentData {
+                    component,
+                    primary_dependents: Vec::new(),
+                    dependents: HashMap::new(),
+                    in_lookup: HashMap::new(),
+                    partial: Mutex::new(PartialData {
+                        data: Vec::new(),
+                        ids: Vec::new(),
+                        first: 0,
+                    }),
+                    multi_input: false,
+                    has_single: false,
+                });
+                e.insert(value);
+                Ok(value)
+            }
+        }
+    }
+    /// Add a dependency between two components.
+    pub fn add_dependency<'a>(
+        &mut self,
+        pub_id: ComponentId,
+        pub_stream: Option<&'a str>,
+        sub_id: ComponentId,
+        sub_stream: Option<&'a str>,
+    ) -> Result<(), AddDependencyError<'a>> {
+        if pub_id.0 < self.components.len() {
+            return Err(AddDependencyError::NoPublisher(pub_id));
+        }
+        if sub_id.0 < self.components.len() {
+            return Err(AddDependencyError::NoSubscriber(pub_id));
+        }
+        if pub_id == sub_id {
+            return Err(AddDependencyError::SelfLoop);
+        }
+        let [c1, c2] = self
+            .components
+            .get_disjoint_mut([pub_id.0, sub_id.0])
+            .unwrap();
+        let kind = c1.component.output_kind(pub_stream);
+        if kind.is_none() {
+            return Err(AddDependencyError::NoPubStream(pub_stream));
+        }
+        if kind.is_multi() {
+            c2.multi_input = true;
+        }
+        #[allow(clippy::collapsible_else_if)]
+        if let Some(name) = sub_stream {
+            if c2.has_single {
+                return Err(AddDependencyError::InputTypeMix);
+            }
+            let idx = c2.in_lookup.len();
+            match c2.in_lookup.entry(name.to_string()) {
+                Entry::Occupied(_) => return Err(AddDependencyError::DuplicateNamedInput(name)),
+                Entry::Vacant(e) => e.insert(idx),
+            };
+            if let Some(name) = pub_stream {
+                c1.dependents
+                    .entry(name.to_string())
+                    .or_default()
+                    .push((sub_id, Some(idx)));
+            } else {
+                c1.primary_dependents.push((sub_id, Some(idx)))
+            }
+        } else {
+            if c2.has_single {
+                return Err(AddDependencyError::DuplicatePrimaryInput);
+            }
+            if !c2.in_lookup.is_empty() {
+                return Err(AddDependencyError::InputTypeMix);
+            }
+            if let Some(name) = pub_stream {
+                c1.dependents
+                    .entry(name.to_string())
+                    .or_default()
+                    .push((sub_id, None));
+            } else {
+                c1.primary_dependents.push((sub_id, None))
+            }
+        }
+        Ok(())
     }
 }
 
@@ -154,9 +302,9 @@ impl Debug for ComponentInput<'_> {
     }
 }
 impl ComponentInput<'_> {
-    /// Get the current result from a given channel.
-    pub fn get<'a>(&self, channel: impl Into<Option<&'a str>>) -> Option<Arc<dyn Data>> {
-        match (channel.into(), &self.input) {
+    /// Get the current result from a given stream.
+    pub fn get<'a>(&self, stream: impl Into<Option<&'a str>>) -> Option<Arc<dyn Data>> {
+        match (stream.into(), &self.input) {
             (Some(name), InputKind::Multiple(run_idx)) => {
                 let component = &self.runner.components[self.comp_id.0];
                 let field_idx = *component.in_lookup.get(name)?;
@@ -196,21 +344,21 @@ impl Debug for ComponentOutput<'_, '_, '_> {
     }
 }
 impl<'s, 'r: 's> ComponentOutput<'r, '_, 's> {
-    /// Publish a result on a given channel.
+    /// Publish a result on a given stream.
     #[inline(always)]
-    pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
-        self.submit_impl(channel.into(), data);
+    pub fn submit<'b>(&self, stream: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
+        self.submit_impl(stream.into(), data);
     }
-    fn submit_impl(&self, channel: Option<&str>, data: Arc<dyn Data>) {
+    fn submit_impl(&self, stream: Option<&str>, data: Arc<dyn Data>) {
         let component = &self.runner.components[self.comp_id.0];
-        let dependents = channel.map_or_else(
+        let dependents = stream.map_or_else(
             || component.primary_dependents.as_slice(),
             |name| component.dependents.get(name).map_or(&[], Vec::as_slice),
         );
         let run = self.invoc.fetch_add(1, Ordering::Relaxed);
-        for &(comp_id, channel) in dependents {
+        for &(comp_id, stream) in dependents {
             let next_comp = &self.runner.components[comp_id.0];
-            if let Some(channel) = channel {
+            if let Some(stream) = stream {
                 let num_fields = next_comp.in_lookup.len();
                 let mut lock = next_comp.partial.lock().unwrap_or_else(|e| e.into_inner());
                 let lock = &mut *lock;
@@ -225,7 +373,7 @@ impl<'s, 'r: 's> ComponentOutput<'r, '_, 's> {
                     let Some(id) = id else { continue };
                     if !next_comp.multi_input {
                         if self.run_id == *id {
-                            in_data[channel] = Some(data.clone());
+                            in_data[stream] = Some(data.clone());
                             if in_data.iter().all(Option::is_some) {
                                 self.spawn_next(component, comp_id, InputKind::Multiple(n), None);
                             }
@@ -236,9 +384,9 @@ impl<'s, 'r: 's> ComponentOutput<'r, '_, 's> {
                         continue;
                     }
                     let last_row = id.tree.last_mut().expect("Partials should exist here!");
-                    if last_row[channel] == u32::MAX {
-                        last_row[channel] = run;
-                        in_data[channel] = Some(data.clone());
+                    if last_row[stream] == u32::MAX {
+                        last_row[stream] = run;
+                        in_data[stream] = Some(data.clone());
                         if in_data.iter().all(Option::is_some) {
                             self.spawn_next(
                                 component,
@@ -247,13 +395,13 @@ impl<'s, 'r: 's> ComponentOutput<'r, '_, 's> {
                                 Some(last_row.clone()),
                             );
                         }
-                    } else if last_row[channel] == 0 {
+                    } else if last_row[stream] == 0 {
                         let mut id = id.clone();
-                        id.tree.last_mut().unwrap()[channel] = run;
+                        id.tree.last_mut().unwrap()[stream] = run;
                         new_ids.push(id);
                         let len = new_data.len();
                         new_data.resize(len + num_fields, None);
-                        new_data[len + channel] = Some(data.clone());
+                        new_data[len + stream] = Some(data.clone());
                     }
                 }
                 for (data, id) in new_data.chunks(num_fields).zip(new_ids) {

@@ -1,5 +1,5 @@
 use crate::buffer::Buffer;
-use config::Config;
+use config::CameraConfig;
 use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
 use std::any::Any;
 use std::fmt::{self, Debug, Formatter};
@@ -12,7 +12,7 @@ pub mod config;
 pub mod frame;
 
 pub trait CameraImpl: Any + Send + Sync {
-    fn config(&self) -> &dyn Config;
+    fn config(&self) -> &dyn CameraConfig;
     fn read_frame(&mut self) -> io::Result<Buffer<'_>>;
 
     /// Try to reload the camera. Return false if we should stop trying.
@@ -50,7 +50,7 @@ impl Camera {
         }
     }
     /// Get the config associated with the camera.
-    pub fn config(&self) -> &dyn Config {
+    pub fn config(&self) -> &dyn CameraConfig {
         self.inner.config()
     }
     /// Get the name of the camera.

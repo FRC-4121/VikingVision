@@ -66,7 +66,7 @@ impl FrameCameraConfig {
 }
 
 #[typetag::serde(name = "frame")]
-impl super::Config for FrameCameraConfig {
+impl super::CameraConfig for FrameCameraConfig {
     delegate_camera_config!(FrameCameraConfig::basic);
 
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>> {
@@ -152,7 +152,7 @@ pub struct FrameCamera {
     pub buffer: Buffer<'static>,
 }
 impl CameraImpl for FrameCamera {
-    fn config(&self) -> &dyn super::Config {
+    fn config(&self) -> &dyn super::CameraConfig {
         &self.config
     }
     fn read_frame(&mut self) -> io::Result<Buffer<'_>> {

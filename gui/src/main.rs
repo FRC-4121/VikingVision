@@ -7,7 +7,7 @@ use tracing::error;
 use v4l::Device;
 use viking_vision::camera::Camera;
 use viking_vision::camera::capture::CaptureCamera;
-use viking_vision::camera::config::{BasicConfig, Config};
+use viking_vision::camera::config::{BasicConfig, CameraConfig};
 use viking_vision::camera::frame::{Color, FrameCameraConfig};
 use viking_vision::pipeline::daemon::DaemonHandle;
 

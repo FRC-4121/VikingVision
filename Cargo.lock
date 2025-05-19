@@ -3827,6 +3827,7 @@ dependencies = [
  "rayon",
  "serde",
  "smallvec",
+ "thiserror 2.0.12",
  "tracing",
  "triomphe",
  "typetag",

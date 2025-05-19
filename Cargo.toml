@@ -19,6 +19,7 @@ polonius-the-crab = "0.4.2"
 rayon = "1.10.0"
 serde.workspace = true
 smallvec = "1.15.0"
+thiserror = "2.0.12"
 tracing.workspace = true
 triomphe = "0.1.14"
 typetag = "0.2.20"

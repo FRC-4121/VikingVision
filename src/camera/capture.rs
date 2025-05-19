@@ -1,5 +1,5 @@
 use super::CameraImpl;
-use super::config::{BasicConfig, Config};
+use super::config::{BasicConfig, CameraConfig};
 use crate::buffer::{Buffer, PixelFormat};
 use crate::delegate_camera_config;
 use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
@@ -191,7 +191,7 @@ impl CaptureCameraConfig {
     }
 }
 #[typetag::serde(name = "v4l")]
-impl Config for CaptureCameraConfig {
+impl CameraConfig for CaptureCameraConfig {
     delegate_camera_config!(Self::basic);
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>> {
         let device = self.source.resolve()?;
@@ -342,7 +342,7 @@ impl Debug for CaptureCamera {
     }
 }
 impl CameraImpl for CaptureCamera {
-    fn config(&self) -> &dyn Config {
+    fn config(&self) -> &dyn CameraConfig {
         &self.config
     }
     fn read_frame(&mut self) -> io::Result<Buffer<'_>> {
