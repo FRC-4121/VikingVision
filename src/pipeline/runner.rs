@@ -1,4 +1,5 @@
 use super::component::{Component, Data, TypeMismatch};
+use crate::utils::LogErr;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -165,9 +166,8 @@ pub enum DowncastInputError<'a> {
     #[error(transparent)]
     TypeMismatch(#[from] TypeMismatch<Arc<dyn Data>>),
 }
-impl DowncastInputError<'_> {
-    /// Emit an error-level log with an appropriate message.
-    pub fn log_err(&self) {
+impl LogErr for DowncastInputError<'_> {
+    fn log_err(&self) {
         match self {
             Self::MissingInput(_) => tracing::error!("{self}"),
             Self::TypeMismatch(m) => m.log_err(),
@@ -292,6 +292,7 @@ impl PipelineRunner {
         component: Arc<dyn Component>,
     ) -> Result<ComponentId, AddComponentError> {
         let name = name.into();
+        tracing::info!(?name, "adding component");
         if name.is_empty() {
             return Err(AddComponentError::EmptyName);
         }
@@ -332,6 +333,19 @@ impl PipelineRunner {
         sub_id: ComponentId,
         sub_stream: Option<&'a str>,
     ) -> Result<(), AddDependencyError<'a>> {
+        tracing::info!(
+            "subscribing {sub_id} ({} output) to {pub_id} ({} input)",
+            if let Some(name) = pub_stream {
+                format!("{name:?}")
+            } else {
+                "primary".to_string()
+            },
+            if let Some(name) = sub_stream {
+                format!("{name:?}")
+            } else {
+                "primary".to_string()
+            },
+        );
         if pub_id.0 >= self.components.len() {
             return Err(AddDependencyError::NoPublisher(pub_id));
         }
@@ -456,7 +470,7 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
             _ => None,
         }
     }
-    /// Same as [`get`](Self::get) but returns a `Result` with an error type that can have [`log_err`](DowncastInputError::log_err) called.
+    /// Same as [`get`](Self::get) but returns a `Result` that implements [`LogErr`].
     pub fn get_res<'b>(
         &self,
         stream: impl Into<Option<&'b str>>,

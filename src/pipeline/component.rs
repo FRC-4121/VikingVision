@@ -1,5 +1,6 @@
 use super::runner::ComponentContext;
 use crate::buffer::Buffer;
+use crate::utils::LogErr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::Arc;
@@ -12,9 +13,8 @@ pub struct TypeMismatch<A> {
     pub expected: disqualified::ShortName<'static>,
     pub additional: A,
 }
-impl<A> TypeMismatch<A> {
-    /// Emit an error-level log with an appropriate message.
-    pub fn log_err(&self) {
+impl<A> LogErr for TypeMismatch<A> {
+    fn log_err(&self) {
         tracing::error!(id = ?self.id, "Couldn't downcast data to {}", self.expected);
     }
 }
