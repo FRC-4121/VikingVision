@@ -1,4 +1,4 @@
-use super::component::{Component, Data};
+use super::component::{Component, Data, TypeMismatch};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -156,6 +156,23 @@ pub enum AddDependencyError<'a> {
     DuplicatePrimaryInput,
     #[error("Components can't have both primary and named inputs")]
     InputTypeMix,
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum DowncastInputError<'a> {
+    #[error("Component doesn't have a {} input stream", if let Some(name) = .0 { format!("{name:?}") } else { "primary".to_string() })]
+    MissingInput(Option<&'a str>),
+    #[error(transparent)]
+    TypeMismatch(#[from] TypeMismatch<Arc<dyn Data>>),
+}
+impl DowncastInputError<'_> {
+    /// Emit an error-level log with an appropriate message.
+    pub fn log_err(&self) {
+        match self {
+            Self::MissingInput(_) => tracing::error!("{self}"),
+            Self::TypeMismatch(m) => m.log_err(),
+        }
+    }
 }
 
 /// The core runner for vision pipelines.
@@ -419,7 +436,7 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
     pub fn name(&self) -> &'r triomphe::Arc<str> {
         &self.runner.components[self.comp_id.0].name
     }
-    /// Get the current result from a given stream.
+    /// Get the current value from a given stream.
     pub fn get<'b>(&self, stream: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
         match (stream.into(), &self.input) {
             (Some(name), InputKind::Multiple(run_idx)) => {
@@ -438,6 +455,22 @@ impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
             (None, InputKind::Single(data)) => Some(data.clone()),
             _ => None,
         }
+    }
+    /// Same as [`get`](Self::get) but returns a `Result` with an error type that can have [`log_err`](DowncastInputError::log_err) called.
+    pub fn get_res<'b>(
+        &self,
+        stream: impl Into<Option<&'b str>>,
+    ) -> Result<Arc<dyn Data>, DowncastInputError<'b>> {
+        let stream = stream.into();
+        self.get(stream)
+            .ok_or(DowncastInputError::MissingInput(stream))
+    }
+    /// Get the current value from a given stream and attempt to downcast it. For even more convenience, [`DowncastInputError::log_err`] and the let-else pattern can be used.
+    pub fn get_as<'b, T: Data>(
+        &self,
+        stream: impl Into<Option<&'b str>>,
+    ) -> Result<Arc<T>, DowncastInputError<'b>> {
+        self.get_res(stream)?.downcast_arc().map_err(From::from)
     }
     /// Publish a result on a given stream.
     #[inline(always)]

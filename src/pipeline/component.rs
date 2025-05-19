@@ -1,7 +1,23 @@
 use super::runner::ComponentContext;
 use crate::buffer::Buffer;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
+use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, Error)]
+#[error("Couldn't downcast data to {expected}")]
+pub struct TypeMismatch<A> {
+    pub id: TypeId,
+    pub expected: disqualified::ShortName<'static>,
+    pub additional: A,
+}
+impl<A> TypeMismatch<A> {
+    /// Emit an error-level log with an appropriate message.
+    pub fn log_err(&self) {
+        tracing::error!(id = ?self.id, "Couldn't downcast data to {}", self.expected);
+    }
+}
 
 /// Some kind of data that can be passed between components.
 ///
@@ -21,6 +37,29 @@ pub trait Data: Any + Send + Sync {
 impl Debug for dyn Data {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.debug(f)
+    }
+}
+impl dyn Data {
+    pub fn downcast<T: Data>(&self) -> Result<&T, TypeMismatch<()>> {
+        let any: &dyn Any = self;
+        any.downcast_ref().ok_or_else(|| TypeMismatch {
+            id: any.type_id(),
+            expected: disqualified::ShortName::of::<T>(),
+            additional: (),
+        })
+    }
+    pub fn downcast_arc<T: Data>(self: Arc<Self>) -> Result<Arc<T>, TypeMismatch<Arc<Self>>> {
+        let any: &dyn Any = &*self;
+        let id = any.type_id();
+        if id == TypeId::of::<T>() {
+            Arc::downcast(self).map_err(|_| unreachable!())
+        } else {
+            Err(TypeMismatch {
+                id,
+                expected: disqualified::ShortName::of::<T>(),
+                additional: self,
+            })
+        }
     }
 }
 macro_rules! impl_via_debug {
