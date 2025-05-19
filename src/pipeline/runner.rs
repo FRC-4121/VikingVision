@@ -173,7 +173,7 @@ impl PipelineRunner {
     pub fn running(&self) -> usize {
         self.running.load(Ordering::Relaxed)
     }
-    /// Get the number of times [`run`] has been called.
+    /// Get the number of times [`run`](Self::run) has been called.
     #[inline(always)]
     pub fn run_count(&self) -> u32 {
         self.run_id.load(Ordering::Relaxed)
@@ -188,7 +188,7 @@ impl PipelineRunner {
         self.running.fetch_add(1, Ordering::AcqRel);
         self.run_impl(id, data, scope);
     }
-    /// Same as [`run`], but with a limit on how many pipelines can be running at once. If `limit` or more are already running, this'll return `Err` with the current number of running pipelines.
+    /// Same as [`run`](Self::run), but with a limit on how many pipelines can be running at once. If `limit` or more are already running, this'll return `Err` with the current number of running pipelines.
     pub fn run_limited<'s, 'a: 's>(
         &'a self,
         id: ComponentId,
