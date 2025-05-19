@@ -1,4 +1,4 @@
-use super::runner::{ComponentInput, ComponentOutput};
+use super::runner::ComponentContext;
 use crate::buffer::Buffer;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
@@ -132,5 +132,5 @@ pub trait Component: Send + Sync + 'static {
     /// Check if an output stream is available.
     fn output_kind(&self, name: Option<&str>) -> OutputKind;
     /// Run a component on a given input.
-    fn run<'a, 's, 'r: 's>(&self, input: ComponentInput<'r>, output: ComponentOutput<'r, 'a, 's>);
+    fn run<'a, 's, 'r: 's>(&self, context: ComponentContext<'r, 'a, 's>);
 }

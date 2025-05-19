@@ -118,6 +118,24 @@ pub enum AddDependencyError<'a> {
     InputTypeMix,
 }
 
+/// The core runner for vision pipelines.
+///
+/// Note that in order for the lifetimes to work, this should be defined outside of the call to [`rayon::scope`].
+///
+/// ```ignore
+/// let mut runner = PipelineRunner::new();
+/// // It's best to do initialization here.
+/// let component_a = runner.add_component("A", component_a()).unwrap();
+/// let component_b = runner.add_component("B", component_b()).unwrap();
+/// runner.add_dependency(component_a, None, component_b, None).unwrap();
+/// rayon::scope(|scope| {
+///     // Initialization *can* be done here, but probably shouldn't unless the scope is needed.
+///     runner.run(component_a, Arc::new("input data".to_string()), scope);
+///     // the call to run() immutably borrows the runner for the whole scope, so it can't be configured more here
+///     runner.run(componet_a, Arc::new("different data".to_string()), scope); // You can, however, run more pipelines from here
+/// });
+/// // By the time the call to `scope` returns, all of the pipelines will have run.
+/// ```
 #[derive(Default)]
 pub struct PipelineRunner {
     components: Vec<ComponentData>,
@@ -135,6 +153,8 @@ impl Debug for PipelineRunner {
     }
 }
 impl PipelineRunner {
+    /// Create a new runner with no components.
+    #[inline(always)]
     pub fn new() -> Self {
         Self {
             components: Vec::new(),
@@ -144,42 +164,67 @@ impl PipelineRunner {
         }
     }
     /// Get a map from the registered component names to their IDs.
+    #[inline(always)]
     pub fn components(&self) -> &HashMap<String, ComponentId> {
         &self.lookup
     }
     /// Get the number of running pipelines.
+    #[inline(always)]
     pub fn running(&self) -> usize {
         self.running.load(Ordering::Relaxed)
     }
+    /// Get the number of times [`run`] has been called.
+    #[inline(always)]
+    pub fn run_count(&self) -> u32 {
+        self.run_id.load(Ordering::Relaxed)
+    }
+    /// This is the main entry point for running components. This invokes the given component with some data, along with a [scope](rayon::Scope) to run it in.
     pub fn run<'s, 'a: 's>(
         &'a self,
         id: ComponentId,
         data: Arc<dyn Data>,
         scope: &rayon::Scope<'s>,
     ) {
-        let input = ComponentInput {
-            runner: self,
-            comp_id: id,
-            input: InputKind::Single(data),
-        };
         self.running.fetch_add(1, Ordering::AcqRel);
+        self.run_impl(id, data, scope);
+    }
+    /// Same as [`run`], but with a limit on how many pipelines can be running at once. If `limit` or more are already running, this'll return `Err` with the current number of running pipelines.
+    pub fn run_limited<'s, 'a: 's>(
+        &'a self,
+        id: ComponentId,
+        data: Arc<dyn Data>,
+        scope: &rayon::Scope<'s>,
+        limit: usize,
+    ) -> Result<(), usize> {
+        let old = self.running.fetch_add(1, Ordering::AcqRel);
+        if old >= limit {
+            self.running.fetch_sub(1, Ordering::AcqRel);
+            return Err(old);
+        }
+        self.run_impl(id, data, scope);
+        Ok(())
+    }
+    fn run_impl<'s, 'a: 's>(
+        &'a self,
+        id: ComponentId,
+        data: Arc<dyn Data>,
+        scope: &rayon::Scope<'s>,
+    ) {
         let decr = Arc::new(DecrementRunCount(self));
         let run_id = RunId {
             invoc: self.run_id.fetch_add(1, Ordering::Relaxed),
             tree: Vec::new(),
         };
         scope.spawn(move |scope| {
-            self.components[id.0].component.run(
-                input,
-                ComponentOutput {
-                    runner: self,
-                    comp_id: id,
-                    scope,
-                    decr,
-                    run_id,
-                    invoc: AtomicU32::new(0),
-                },
-            );
+            self.components[id.0].component.run(ComponentContext {
+                runner: self,
+                comp_id: id,
+                input: InputKind::Single(data),
+                scope,
+                decr,
+                run_id,
+                invoc: AtomicU32::new(0),
+            });
         });
     }
     /// Try to add a new component, returning the ID of one with the same name if there's a conflict
@@ -287,23 +332,45 @@ enum InputKind {
     Multiple(usize),
 }
 
-/// Input to a component
-pub struct ComponentInput<'a> {
-    runner: &'a PipelineRunner,
+/// Context passed to components.
+pub struct ComponentContext<'r, 'a, 's> {
+    runner: &'r PipelineRunner,
     comp_id: ComponentId,
     input: InputKind,
+    scope: &'a rayon::Scope<'s>,
+    decr: Arc<DecrementRunCount<'r>>,
+    run_id: RunId,
+    invoc: AtomicU32,
 }
-impl Debug for ComponentInput<'_> {
+impl Debug for ComponentContext<'_, '_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ComponentInput")
+        f.debug_struct("ComponentContext")
             .field("runner", &(&self.runner as *const _))
             .field("comp_id", &self.comp_id)
+            .field("run_id", &self.run_id)
+            .field("invoc", &self.invoc)
             .finish_non_exhaustive()
     }
 }
-impl ComponentInput<'_> {
+impl<'s, 'a, 'r: 's> ComponentContext<'r, 'a, 's> {
+    /// Get the ID of this component. This is mostly useful for logging.
+    pub fn comp_id(&self) -> ComponentId {
+        self.comp_id
+    }
+    /// Get the ID of this run. This will be unique for each time this component is called.
+    pub fn run_id(&self) -> &RunId {
+        &self.run_id
+    }
+    /// Get the rayon [`Scope`](rayon::Scope) to allow spawning scoped threads.
+    pub fn scope(&self) -> &'a rayon::Scope<'s> {
+        self.scope
+    }
+    /// Get the [`PipelineRunner`] that's calling this component.
+    pub fn runner(&self) -> &'r PipelineRunner {
+        self.runner
+    }
     /// Get the current result from a given stream.
-    pub fn get<'a>(&self, stream: impl Into<Option<&'a str>>) -> Option<Arc<dyn Data>> {
+    pub fn get<'b>(&self, stream: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
         match (stream.into(), &self.input) {
             (Some(name), InputKind::Multiple(run_idx)) => {
                 let component = &self.runner.components[self.comp_id.0];
@@ -322,28 +389,6 @@ impl ComponentInput<'_> {
             _ => None,
         }
     }
-}
-
-/// Output for a component
-pub struct ComponentOutput<'r, 'a, 's> {
-    runner: &'r PipelineRunner,
-    comp_id: ComponentId,
-    scope: &'a rayon::Scope<'s>,
-    decr: Arc<DecrementRunCount<'r>>,
-    run_id: RunId,
-    invoc: AtomicU32,
-}
-impl Debug for ComponentOutput<'_, '_, '_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ComponentOutput")
-            .field("runner", &(&self.runner as *const _))
-            .field("comp_id", &self.comp_id)
-            .field("run_id", &self.run_id)
-            .field("invoc", &self.invoc)
-            .finish_non_exhaustive()
-    }
-}
-impl<'s, 'r: 's> ComponentOutput<'r, '_, 's> {
     /// Publish a result on a given stream.
     #[inline(always)]
     pub fn submit<'b>(&self, stream: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
@@ -433,11 +478,6 @@ impl<'s, 'r: 's> ComponentOutput<'r, '_, 's> {
         } else {
             None
         };
-        let input = ComponentInput {
-            runner: self.runner,
-            comp_id,
-            input,
-        };
         let runner = self.runner;
         let inner = component.component.clone();
         let decr = self.decr.clone();
@@ -447,17 +487,15 @@ impl<'s, 'r: 's> ComponentOutput<'r, '_, 's> {
         }
         self.scope.spawn(move |scope| {
             let cleanup_id = run_id.clone();
-            inner.run(
+            inner.run(ComponentContext {
                 input,
-                ComponentOutput {
-                    runner,
-                    comp_id,
-                    scope,
-                    decr,
-                    run_id,
-                    invoc: AtomicU32::new(0),
-                },
-            );
+                runner,
+                comp_id,
+                scope,
+                decr,
+                run_id,
+                invoc: AtomicU32::new(0),
+            });
             if let Some(idx) = cleanup_idx {
                 component
                     .partial
