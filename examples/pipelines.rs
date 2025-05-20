@@ -8,10 +8,13 @@ struct CheckContains;
 
 // Print is a simple component that takes a value on its input stream and prints it.
 impl Component for Print {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
     fn output_kind(&self, _name: Option<&str>) -> OutputKind {
         OutputKind::None // our printing component doesn't return anything on any streams
     }
-    fn run<'a, 's, 'r: 's>(&self, context: ComponentContext<'r, 'a, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
         let Ok(val) = context.get_res(None).and_log_err() else {
             return;
         };
@@ -20,6 +23,9 @@ impl Component for Print {
 }
 // BroadcastVec is a component that takes a Vec<i32> in (downcasting as necessary) and outputs the vector on its primary output stream, along with each element on its "elem" stream.
 impl Component for BroadcastVec {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
     fn output_kind(&self, name: Option<&str>) -> OutputKind {
         match name {
             None => OutputKind::Single, // on our primary output, we're going to send one value (the original vector)
@@ -27,7 +33,7 @@ impl Component for BroadcastVec {
             _ => OutputKind::None,                // we won't send any other outputs
         }
     }
-    fn run<'a, 's, 'r: 's>(&self, context: ComponentContext<'r, 'a, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
         let Ok(val) = context.get_as::<Vec<i32>>(None).and_log_err() else {
             return;
         };
@@ -39,6 +45,9 @@ impl Component for BroadcastVec {
 }
 // CheckContains takes two named inputs rather than a primary one: a Vec<i32> and an i32 that might be in it. It then sends a single output on its output stream.
 impl Component for CheckContains {
+    fn inputs(&self) -> Inputs {
+        Inputs::Named(vec!["vec".to_string(), "elem".to_string()])
+    }
     fn output_kind(&self, name: Option<&str>) -> OutputKind {
         if name.is_none() {
             OutputKind::Single
@@ -46,7 +55,7 @@ impl Component for CheckContains {
             OutputKind::None
         }
     }
-    fn run<'a, 's, 'r: 's>(&self, context: ComponentContext<'r, 'a, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
         let Ok(vec) = context.get_as::<Vec<i32>>("vec").and_log_err() else {
             return;
         };
@@ -68,12 +77,12 @@ fn main() -> anyhow::Result<()> {
     let check_contains = runner.add_component("check-contains", Arc::new(CheckContains))?;
     runner.add_dependency(broadcast, None, print, None)?;
     runner.add_dependency(broadcast, Some("elem"), print, None)?;
-    runner.add_dependency(broadcast, None, check_contains, Some("vec"))?;
-    runner.add_dependency(broadcast, Some("elem"), check_contains, Some("elem"))?;
+    // runner.add_dependency(broadcast, None, check_contains, Some("vec"))?;
+    // runner.add_dependency(broadcast, Some("elem"), check_contains, Some("elem"))?;
     runner.add_dependency(check_contains, None, print, None)?;
     // We need a scope to spawn our tasks in to make sure they don't escape past the lifetime of the runner.
     rayon::scope(|scope| {
-        runner.run(broadcast, Arc::new(vec![1i32, 2, 3]), scope);
+        let _ = runner.run((broadcast, vec![1i32, 2, 3]), scope); // this can only return an error if we exceed the maximum number of running pipelines
     });
     tracing::debug!("runner: {runner:#?}"); // TODO: remove once I fix everything
     Ok(())

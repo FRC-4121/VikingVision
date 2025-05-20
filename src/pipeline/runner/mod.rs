@@ -1,0 +1,462 @@
+use super::component::{Component, Data, TypeMismatch};
+use crate::utils::LogErr;
+use smallvec::SmallVec;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::fmt::{self, Debug, Display, Formatter};
+use std::ops::Deref;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use thiserror::Error;
+
+pub mod deps;
+pub mod input;
+
+pub use deps::*;
+pub use input::*;
+
+/// Newtype wrapper around a component ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct ComponentId(pub usize);
+impl Display for ComponentId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RunId {
+    pub invoc: u32,
+    pub tree: Vec<SmallVec<[u32; 2]>>,
+}
+impl RunId {
+    pub fn starts_with(&self, other: &RunId) -> bool {
+        self.invoc == other.invoc && self.tree.starts_with(&other.tree)
+    }
+    pub fn is_pred_of(&self, next: &RunId) -> bool {
+        self.tree.len() + 1 == next.tree.len() && next.starts_with(self)
+    }
+    pub fn push(&mut self, vals: SmallVec<[u32; 2]>) {
+        self.tree.push(vals);
+    }
+}
+impl Display for RunId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.invoc)?;
+        for row in &self.tree {
+            f.write_str(":")?;
+            let Some((head, tail)) = row.split_first() else {
+                continue;
+            };
+            write!(f, "{head}")?;
+            for elem in tail {
+                write!(f, ".{elem}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A callback function to be called after a pipeline completes.
+pub type Callback<'a> = Box<dyn FnOnce(&'a PipelineRunner) + Send + Sync + 'a>;
+
+struct Cleanup<'a> {
+    runner: &'a PipelineRunner,
+    callback: Option<Callback<'a>>,
+}
+impl Drop for Cleanup<'_> {
+    fn drop(&mut self) {
+        if let Some(callback) = self.callback.take() {
+            callback(self.runner);
+        }
+        self.runner.running.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum DowncastInputError<'a> {
+    #[error("Component doesn't have a {} input stream", if let Some(name) = .0 { format!("{name:?}") } else { "primary".to_string() })]
+    MissingInput(Option<&'a str>),
+    #[error(transparent)]
+    TypeMismatch(#[from] TypeMismatch<Arc<dyn Data>>),
+}
+impl LogErr for DowncastInputError<'_> {
+    fn log_err(&self) {
+        match self {
+            Self::MissingInput(_) => tracing::error!("{self}"),
+            Self::TypeMismatch(m) => m.log_err(),
+        }
+    }
+}
+
+/// Parameters to be passed to [`PipelineRunner::run`].
+pub struct RunParams<'a> {
+    /// A callback we want to run after our pipeline has run.
+    pub callback: Option<Callback<'a>>,
+    /// The maximum number of running pipelines we want to allow to run.
+    pub max_running: Option<usize>,
+    /// The target component
+    pub component: ComponentId,
+    /// Arguments to be passed to the target component
+    pub args: ComponentArgs,
+}
+impl<'a> RunParams<'a> {
+    pub const fn new(component: ComponentId) -> Self {
+        Self {
+            component,
+            args: ComponentArgs::None,
+            max_running: None,
+            callback: None,
+        }
+    }
+    pub fn with_callback(
+        mut self,
+        callback: impl FnOnce(&'a PipelineRunner) + Send + Sync + 'a,
+    ) -> Self {
+        self.callback = Some(Box::new(callback));
+        self
+    }
+    pub fn with_boxed_callback(mut self, callback: Callback<'a>) -> Self {
+        self.callback = Some(callback);
+        self
+    }
+    pub fn with_max_running(mut self, max_running: usize) -> Self {
+        self.max_running = Some(max_running);
+        self
+    }
+    pub fn with_args(mut self, args: ComponentArgs) -> Self {
+        self.args = args;
+        self
+    }
+}
+impl From<ComponentId> for RunParams<'_> {
+    fn from(value: ComponentId) -> Self {
+        Self::new(value)
+    }
+}
+impl<A: Into<ComponentArgs>> From<(ComponentId, A)> for RunParams<'_> {
+    fn from(value: (ComponentId, A)) -> Self {
+        Self::new(value.0).with_args(value.1.into())
+    }
+}
+
+/// The core runner for vision pipelines.
+///
+/// Note that in order for the lifetimes to work, this should be defined outside of the call to [`rayon::scope`].
+///
+/// ```ignore
+/// let mut runner = PipelineRunner::new();
+/// // It's best to do initialization here.
+/// let component_a = runner.add_component("A", component_a()).unwrap();
+/// let component_b = runner.add_component("B", component_b()).unwrap();
+/// runner.add_dependency(component_a, None, component_b, None).unwrap();
+/// rayon::scope(|scope| {
+///     // Initialization *can* be done here, but probably shouldn't unless the scope is needed.
+///     runner.run(component_a, Arc::new("input data".to_string()), scope);
+///     // the call to run() immutably borrows the runner for the whole scope, so it can't be configured more here
+///     runner.run(componet_a, Arc::new("different data".to_string()), scope); // You can, however, run more pipelines from here
+/// });
+/// // By the time the call to `scope` returns, all of the pipelines will have run.
+/// ```
+#[derive(Debug, Default)]
+pub struct PipelineRunner {
+    components: Vec<ComponentData>,
+    lookup: HashMap<triomphe::Arc<str>, ComponentId>,
+    running: AtomicUsize,
+    run_id: AtomicU32,
+}
+impl PipelineRunner {
+    /// Create a new runner with no components.
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            components: Vec::new(),
+            lookup: HashMap::new(),
+            running: AtomicUsize::new(0),
+            run_id: AtomicU32::new(0),
+        }
+    }
+    /// Get a map from the registered component names to their IDs.
+    #[inline(always)]
+    pub fn components(&self) -> &HashMap<triomphe::Arc<str>, ComponentId> {
+        &self.lookup
+    }
+    /// Get the number of running pipelines.
+    #[inline(always)]
+    pub fn running(&self) -> usize {
+        self.running.load(Ordering::Relaxed)
+    }
+    /// Get the number of times [`run`](Self::run) has been called.
+    #[inline(always)]
+    pub fn run_count(&self) -> u32 {
+        self.run_id.load(Ordering::Relaxed)
+    }
+    /// This is the main entry point for running components. This invokes the given component with some data, along with a [scope](rayon::Scope) to run it in.
+    #[inline(always)]
+    pub fn run<'s, 'a: 's>(
+        &'a self,
+        params: impl Into<RunParams<'a>>,
+        scope: &rayon::Scope<'s>,
+    ) -> Result<(), RunParams<'a>> {
+        self.run_impl(params.into(), scope)
+    }
+    fn run_impl<'s, 'a: 's>(
+        &'a self,
+        params: RunParams<'a>,
+        scope: &rayon::Scope<'s>,
+    ) -> Result<(), RunParams<'a>> {
+        let running = self.running.fetch_add(1, Ordering::AcqRel);
+        if params.max_running.is_some_and(|max| running >= max) {
+            self.running.fetch_sub(1, Ordering::AcqRel);
+            return Err(params);
+        }
+        let RunParams {
+            callback,
+            max_running: _,
+            component,
+            args,
+        } = params;
+        let decr = Arc::new(Cleanup {
+            runner: self,
+            callback,
+        });
+        let run_id = RunId {
+            invoc: self.run_id.fetch_add(1, Ordering::Relaxed),
+            tree: Vec::new(),
+        };
+        let (input, cleanup_idx) = match args {
+            ComponentArgs::None => (InputKind::Empty, None),
+            ComponentArgs::Single(data) => (InputKind::Single(data), None),
+            ComponentArgs::Multiple(mut pack) => {
+                let len = pack.0.len();
+                let mut lock = self.components[component.0].partial.lock().unwrap();
+                let (idx, run, inputs) = lock.alloc(len);
+                *run = Some(run_id.clone());
+                for (to, from) in inputs.iter_mut().zip(&mut pack.0) {
+                    *to = from.take();
+                }
+                (InputKind::Multiple(idx), Some((idx, len)))
+            }
+        };
+        scope.spawn(move |scope| {
+            let data = &self.components[component.0];
+            ComponentContextInner {
+                runner: self,
+                comp_id: component,
+                input,
+                decr,
+                run_id,
+                invoc: AtomicU32::new(0),
+            }
+            .run(&*data.component, scope);
+            if let Some((idx, len)) = cleanup_idx {
+                data.partial.lock().unwrap().free(idx, len);
+            }
+        });
+        Ok(())
+    }
+}
+
+enum InputKind {
+    Empty,
+    Single(Arc<dyn Data>),
+    Multiple(usize),
+}
+
+/// Context passed to components, without the threadpool scope.
+///
+/// In order to defer tasks to the threadpool, the context has to be able to be separated from the scope, and a new `ComponentContext` can be created with the new scope.
+/// This type has a destructor that tells all dependent components that no more data will come from here, so we need to make sure that this inner context isn't dropped during that transition.
+pub struct ComponentContextInner<'r> {
+    runner: &'r PipelineRunner,
+    comp_id: ComponentId,
+    input: InputKind,
+    decr: Arc<Cleanup<'r>>,
+    run_id: RunId,
+    invoc: AtomicU32,
+}
+impl Debug for ComponentContextInner<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ComponentContextInner")
+            .field("runner", &(&self.runner as *const _))
+            .field("comp_id", &self.comp_id)
+            .field("run_id", &self.run_id)
+            .field("invoc", &self.invoc)
+            .finish_non_exhaustive()
+    }
+}
+impl<'r> ComponentContextInner<'r> {
+    /// Get the ID of this component. This is mostly useful for logging.
+    pub fn comp_id(&self) -> ComponentId {
+        self.comp_id
+    }
+    /// Get the ID of this run. This will be unique for each time this component is called.
+    pub fn run_id(&self) -> &RunId {
+        &self.run_id
+    }
+    /// Get the [`PipelineRunner`] that's calling this component.
+    pub fn runner(&self) -> &'r PipelineRunner {
+        self.runner
+    }
+    /// Get the name of the current component.
+    pub fn name(&self) -> &'r triomphe::Arc<str> {
+        &self.runner.components[self.comp_id.0].name
+    }
+    /// Get the current value from a given stream.
+    pub fn get<'b>(&self, stream: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
+        let req_stream = stream.into();
+        match self.input {
+            InputKind::Empty => None,
+            InputKind::Single(ref data) => {
+                let component = &self.runner.components[self.comp_id.0];
+                let InputMode::Single { name, .. } = &component.input_mode else {
+                    unreachable!()
+                };
+                (name.as_deref() == req_stream).then(|| data.clone())
+            }
+            InputKind::Multiple(run_idx) => req_stream.and_then(|name| {
+                let component = &self.runner.components[self.comp_id.0];
+                let InputMode::Multiple(lookup) = &component.input_mode else {
+                    unreachable!()
+                };
+                let field_idx = lookup.get(name)?;
+                let num_fields = lookup.len();
+                let lock = component.partial.lock().unwrap();
+                let index = run_idx * num_fields + field_idx;
+                Some(
+                    lock.data[index]
+                        .as_ref()
+                        .expect("All fields should be initialized here!")
+                        .clone(),
+                )
+            }),
+        }
+    }
+    /// Same as [`get`](Self::get) but returns a `Result` that implements [`LogErr`].
+    pub fn get_res<'b>(
+        &self,
+        stream: impl Into<Option<&'b str>>,
+    ) -> Result<Arc<dyn Data>, DowncastInputError<'b>> {
+        let stream = stream.into();
+        self.get(stream)
+            .ok_or(DowncastInputError::MissingInput(stream))
+    }
+    /// Get the current value from a given stream and attempt to downcast it. For even more convenience, [`DowncastInputError::log_err`] and the let-else pattern can be used.
+    pub fn get_as<'b, T: Data>(
+        &self,
+        stream: impl Into<Option<&'b str>>,
+    ) -> Result<Arc<T>, DowncastInputError<'b>> {
+        self.get_res(stream)?.downcast_arc().map_err(From::from)
+    }
+    /// Publish a result on a given stream.
+    #[inline(always)]
+    pub fn submit<'b, 's>(
+        &self,
+        stream: impl Into<Option<&'b str>>,
+        data: Arc<dyn Data>,
+        scope: &rayon::Scope<'s>,
+    ) where
+        'r: 's,
+    {
+        self.submit_impl(stream.into(), data, scope);
+    }
+    fn submit_impl<'s>(&self, stream: Option<&str>, data: Arc<dyn Data>, scope: &rayon::Scope<'s>)
+    where
+        'r: 's,
+    {
+        let component = &self.runner.components[self.comp_id.0];
+        let dependents = stream.map_or_else(
+            || component.primary_dependents.as_slice(),
+            |name| component.dependents.get(name).map_or(&[], Vec::as_slice),
+        );
+        let run = self.invoc.fetch_add(1, Ordering::Relaxed);
+        for &(comp_id, stream) in dependents {
+            let next_comp = &self.runner.components[comp_id.0];
+            if let Some(_stream) = stream {
+                todo!()
+            } else {
+                self.spawn_next(
+                    next_comp,
+                    comp_id,
+                    InputKind::Single(data.clone()),
+                    next_comp.multi_input.then_some(smallvec::smallvec![run]),
+                    scope,
+                );
+            }
+        }
+    }
+    fn spawn_next<'s>(
+        &self,
+        component: &'r ComponentData,
+        comp_id: ComponentId,
+        input: InputKind,
+        last_row: Option<SmallVec<[u32; 2]>>,
+        scope: &rayon::Scope<'s>,
+    ) where
+        'r: 's,
+    {
+        let runner = self.runner;
+        let inner = component.component.clone();
+        let decr = self.decr.clone();
+        let mut run_id = self.run_id.clone();
+        if let Some(row) = last_row {
+            run_id.push(row);
+        }
+        scope.spawn(move |scope| {
+            ComponentContextInner {
+                input,
+                runner,
+                comp_id,
+                decr,
+                run_id,
+                invoc: AtomicU32::new(0),
+            }
+            .run(&*inner, scope);
+        });
+    }
+    /// Get the info-level span for this run.
+    pub fn tracing_span(&self) -> tracing::Span {
+        tracing::info_span!("run", name = %self.name(), run = %self.run_id, component = %self.comp_id)
+    }
+    /// Run the component with tracing instrumentation (and possibly more in the future).
+    pub fn run<'s>(self, component: &dyn Component, scope: &rayon::Scope<'s>)
+    where
+        'r: 's,
+    {
+        self.tracing_span()
+            .in_scope(|| component.run(ComponentContext { inner: self, scope }));
+    }
+}
+
+/// Context passed to components.
+///
+/// A component is considered to be done submitting data when this is dropped, meaning that it can live after the component's body finishes.
+#[derive(Debug)]
+pub struct ComponentContext<'r, 'a, 's> {
+    pub inner: ComponentContextInner<'r>,
+    pub scope: &'a rayon::Scope<'s>,
+}
+impl<'r> Deref for ComponentContext<'r, '_, '_> {
+    type Target = ComponentContextInner<'r>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
+    /// Run the component with tracing instrumentation (and possibly more in the future).
+    #[inline(always)]
+    pub fn run(self, component: &dyn Component) {
+        self.inner.run(component, self.scope);
+    }
+    /// Publish a result on a given stream.
+    #[inline(always)]
+    pub fn submit<'b>(&self, stream: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
+        self.inner.submit(stream, data, self.scope);
+    }
+    /// Defer an operation to run later on the threadpool.
+    pub fn defer(self, op: impl FnOnce(ComponentContext<'r, '_, 's>) + Send + Sync + 'r) {
+        let ComponentContext { inner, scope } = self;
+        scope.spawn(move |scope| op(ComponentContext { inner, scope }));
+    }
+}

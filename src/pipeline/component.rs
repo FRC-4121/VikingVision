@@ -1,4 +1,4 @@
-use super::runner::ComponentContext;
+use super::runner::{ComponentContext, PipelineRunner};
 use crate::buffer::Buffer;
 use crate::utils::LogErr;
 use std::any::{Any, TypeId};
@@ -60,6 +60,19 @@ impl dyn Data {
                 additional: self,
             })
         }
+    }
+}
+pub trait IntoData {
+    fn into_data(self) -> Arc<dyn Data>;
+}
+impl<T: Data> IntoData for T {
+    fn into_data(self) -> Arc<dyn Data> {
+        Arc::new(self)
+    }
+}
+impl<T: Data> IntoData for Arc<T> {
+    fn into_data(self) -> Arc<dyn Data> {
+        self
     }
 }
 macro_rules! impl_via_debug {
@@ -153,10 +166,24 @@ impl OutputKind {
     }
 }
 
+/// The kind of inputs that this component is expecting, returned fron [`Component::inputs`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Inputs {
+    /// This component takes inputs through its primary input stream.
+    Primary,
+    /// This component takes multiple inputs.
+    Named(Vec<String>),
+}
+
 /// Some kind of component to be used in the runner.
 pub trait Component: Send + Sync + 'static {
+    /// Get the inputs that this component is expecting.
+    fn inputs(&self) -> Inputs;
     /// Check if an output stream is available.
     fn output_kind(&self, name: Option<&str>) -> OutputKind;
     /// Run a component on a given input.
-    fn run<'a, 's, 'r: 's>(&self, context: ComponentContext<'r, 'a, 's>);
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>);
+    /// Perform startup initialization on this component.
+    #[allow(unused_variables)]
+    fn initialize(&self, runner: &PipelineRunner) {}
 }
