@@ -70,12 +70,16 @@ macro_rules! impl_for_tuple {
 }
 impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
+/// An error that can occur from [`PipelineRunner::pack_args`].
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum PackArgsError<'a> {
+    /// The requested component ID was out of range.
     #[error("No component {0}")]
     NoComponent(ComponentId),
+    /// The component takes data through its primary input.
     #[error("Component expects an input on the pimary stream")]
     ExpectingPrimary,
+    /// The component needs an input, but it wasn't given.
     #[error("Component needs {0:?} as an input stream, but none was specified")]
     MissingInput(&'a str),
 }

@@ -82,41 +82,44 @@ impl Debug for ComponentData {
     }
 }
 
+/// An error that can occur from [`PipelineRunner::add_component`]
 #[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
 pub enum AddComponentError {
+    /// A component with the name already exits.
     #[error("Name already exists with component ID {}", .0.0)]
     AlreadyExists(ComponentId),
-    #[error("Empty component name")]
-    EmptyName,
-    #[error("Non-alphanumeric character in character {index} of {name:?}")]
-    InvalidName {
-        name: triomphe::Arc<str>,
-        index: usize,
-    },
 }
 
+/// An error that can occur from [`PipelineRunner::add_dependency`]
 #[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
 pub enum AddDependencyError<'a> {
+    /// The publishing component's ID was out of range.
     #[error("Publishing component {0} doesn't exist")]
     NoPublisher(ComponentId),
+    /// The subscribing component's ID was out of range.
     #[error("Subscribing component {0} doesn't exist")]
     NoSubscriber(ComponentId),
+    /// The publishing and subscribing component were the same.
     #[error("Can't create a self-loop")]
     SelfLoop,
+    /// The publishing component doesn't output on the requested stream.
     #[error("Publishing component {component} doesn't have a {}", if let Some(name) = .stream { format!("named stream {name:?}") } else { "primary output stream".to_string() })]
     NoPubStream {
         component: ComponentId,
         stream: Option<&'a str>,
     },
+    /// A dependency was already created for this named input stream.
     #[error("Input {stream:?} has already been attached to subscribing component {component}")]
     DuplicateNamedInput {
         component: ComponentId,
         stream: &'a str,
     },
+    /// A dependency was already created for the primary input stream.
     #[error("Primary input has already been attached to subscribing component {component}")]
     DuplicatePrimaryInput { component: ComponentId },
-    #[error("Attempted to mix primary and named inputs for subscribing component {component}")]
-    InputTypeMix { component: ComponentId },
+    /// The subscribing component doesn't take the requested input.
     #[error("Subscribing component {component} doesn't take input on a {}", if let Some(name) = .stream { format!("named stream {name:?}") } else { "primary input stream".to_string() })]
     DoesntTakeInput {
         component: ComponentId,
@@ -125,7 +128,7 @@ pub enum AddDependencyError<'a> {
 }
 
 impl PipelineRunner {
-    /// Try to add a new component, returning the ID of one with the same name if there's a conflict
+    /// Add a new component.
     pub fn add_component(
         &mut self,
         name: impl Into<triomphe::Arc<str>>,
@@ -133,15 +136,6 @@ impl PipelineRunner {
     ) -> Result<ComponentId, AddComponentError> {
         let name = name.into();
         tracing::info!(?name, "adding component");
-        if name.is_empty() {
-            return Err(AddComponentError::EmptyName);
-        }
-        if let Some((index, _)) = name
-            .char_indices()
-            .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
-        {
-            return Err(AddComponentError::InvalidName { name, index });
-        }
         match self.lookup.entry(name.clone()) {
             Entry::Occupied(e) => Err(AddComponentError::AlreadyExists(*e.get())),
             Entry::Vacant(e) => {

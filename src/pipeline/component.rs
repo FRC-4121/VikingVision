@@ -6,11 +6,15 @@ use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
 
+/// A pretty error for when downcasts fail.
 #[derive(Debug, Clone, Copy, Error)]
 #[error("Couldn't downcast data to {expected}")]
 pub struct TypeMismatch<A> {
+    /// The actual type ID
     pub id: TypeId,
+    /// The name of the expected type
     pub expected: disqualified::ShortName<'static>,
+    /// Additional data to be passed along with this, an [`Arc<dyn Data>`] in the case of `Data::downcast_arc`.
     pub additional: A,
 }
 impl<A> LogErr for TypeMismatch<A> {

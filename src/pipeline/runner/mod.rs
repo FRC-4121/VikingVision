@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-pub mod deps;
-pub mod input;
+mod deps;
+mod input;
 
 pub use deps::*;
 pub use input::*;
@@ -25,17 +25,21 @@ impl Display for ComponentId {
     }
 }
 
+/// A unique identifier for which set of inputs a component's being run on.
+///
+/// It's guaranteed that every time a [`PipelineRunner`] runs a component, this value will be different.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunId {
-    pub invoc: u32,
+    /// The base run number.
+    ///
+    /// This is 0 the first time [`run`](PipelineRunner::run) is called, then 1, then 2, etc.
+    pub run: u32,
+    /// Which combination of outputs this is. TODO: figure out what this should be.
     pub tree: Vec<SmallVec<[u32; 2]>>,
 }
 impl RunId {
     pub fn starts_with(&self, other: &RunId) -> bool {
-        self.invoc == other.invoc && self.tree.starts_with(&other.tree)
-    }
-    pub fn is_pred_of(&self, next: &RunId) -> bool {
-        self.tree.len() + 1 == next.tree.len() && next.starts_with(self)
+        self.run == other.run && self.tree.starts_with(&other.tree)
     }
     pub fn push(&mut self, vals: SmallVec<[u32; 2]>) {
         self.tree.push(vals);
@@ -43,7 +47,7 @@ impl RunId {
 }
 impl Display for RunId {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.invoc)?;
+        write!(f, "{}", self.run)?;
         for row in &self.tree {
             f.write_str(":")?;
             let Some((head, tail)) = row.split_first() else {
@@ -74,10 +78,13 @@ impl Drop for Cleanup<'_> {
     }
 }
 
+/// An error that can occur from [`ComponentContextInner::get_as`].
 #[derive(Debug, Clone, Error)]
 pub enum DowncastInputError<'a> {
+    /// The input wasn't given.
     #[error("Component doesn't have a {} input stream", if let Some(name) = .0 { format!("{name:?}") } else { "primary".to_string() })]
     MissingInput(Option<&'a str>),
+    /// The stored type doesn't match the requested one.
     #[error(transparent)]
     TypeMismatch(#[from] TypeMismatch<Arc<dyn Data>>),
 }
@@ -158,10 +165,13 @@ impl<A: Into<ComponentArgs>> From<(ComponentId, A)> for RunParams<'_> {
     }
 }
 
-#[doc(hidden)]
-pub struct ArgListMarker;
-#[doc(hidden)]
-pub struct InputMapMarker;
+/// Marker structs for [`IntoRunParams`].
+///
+/// This shouldn't be considered public API, but marking this as `#[doc(hidden)]` hides the implementations altogether.
+pub mod markers {
+    pub struct ArgListMarker;
+    pub struct InputMapMarker;
+}
 
 /// A type that's convertible in run parameters, with the runner available for the conversion if necessary.
 ///
@@ -177,14 +187,14 @@ impl<'a> IntoRunParams<'a, ()> for RunParams<'a> {
         Ok(self)
     }
 }
-impl<'a, A: Into<ComponentArgs>> IntoRunParams<'a, ArgListMarker> for (ComponentId, A) {
+impl<'a, A: Into<ComponentArgs>> IntoRunParams<'a, markers::ArgListMarker> for (ComponentId, A) {
     type Error = RunError<'a>;
     fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
         Ok(RunParams::new(self.0).with_args(self.1.into()))
     }
 }
 
-impl<'a, I: InputSpecifier> IntoRunParams<'a, InputMapMarker> for (ComponentId, I) {
+impl<'a, I: InputSpecifier> IntoRunParams<'a, markers::InputMapMarker> for (ComponentId, I) {
     type Error = RunOrPackArgsError<'a>;
     fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
         let args = runner
@@ -208,10 +218,17 @@ impl<'a> From<RunError<'a>> for RunOrPackArgsError<'a> {
     }
 }
 
+/// The inner error enum for [`RunError`]
 #[derive(Debug, Clone, Copy, Error)]
+#[non_exhaustive]
 pub enum RunErrorCause {
+    /// The requested component ID was out of range.
+    #[error("No component {0}")]
+    NoComponent(ComponentId),
+    /// Too many pipelines are running.
     #[error("Too many pipelines ({0}) were already running")]
     TooManyRunning(usize),
+    /// The given number of arguments doesn't match the expected number.
     #[error("Expected {expected} arguments, got {given}")]
     ArgsMismatch { expected: usize, given: usize },
 }
@@ -314,7 +331,12 @@ impl PipelineRunner {
                 params,
             });
         }
-        let data = &self.components[params.component.0];
+        let Some(data) = self.components.get(params.component.0) else {
+            return Err(RunError {
+                cause: RunErrorCause::NoComponent(params.component),
+                params,
+            });
+        };
         match (&data.input_mode, params.args.len()) {
             (InputMode::Single { .. }, n) => {
                 if n != 1 {
@@ -350,7 +372,7 @@ impl PipelineRunner {
             callback,
         });
         let run_id = RunId {
-            invoc: self.run_id.fetch_add(1, Ordering::Relaxed),
+            run: self.run_id.fetch_add(1, Ordering::Relaxed),
             tree: Vec::new(),
         };
         let (input, cleanup_idx) = match args.len() {
