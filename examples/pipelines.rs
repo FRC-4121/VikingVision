@@ -3,6 +3,7 @@ use viking_vision::pipeline::prelude::*;
 
 // Here we define the component types we'd like to use in our pipeline.
 struct Print;
+struct Print2;
 struct BroadcastVec;
 struct CheckContains;
 
@@ -18,7 +19,25 @@ impl Component for Print {
         let Ok(val) = context.get_res(None).and_log_err() else {
             return;
         };
-        tracing::info!("Got data: {val:?}");
+        tracing::info!(?val, "print");
+    }
+}
+// Print2 is a simple component that takes a value on its input stream and prints it.
+impl Component for Print2 {
+    fn inputs(&self) -> Inputs {
+        Inputs::Named(vec!["a".to_string(), "b".to_string()])
+    }
+    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+        OutputKind::None
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(a) = context.get_res("a").and_log_err() else {
+            return;
+        };
+        let Ok(b) = context.get_res("b").and_log_err() else {
+            return;
+        };
+        tracing::info!(?a, ?b, "print");
     }
 }
 // BroadcastVec is a component that takes a Vec<i32> in (downcasting as necessary) and outputs the vector on its primary output stream, along with each element on its "elem" stream.
@@ -74,16 +93,22 @@ fn main() -> anyhow::Result<()> {
     let mut runner = PipelineRunner::new();
     let broadcast = runner.add_component("broadcast", Arc::new(BroadcastVec))?;
     let print = runner.add_component("print", Arc::new(Print))?;
+    let print2 = runner.add_component("print2", Arc::new(Print2))?;
     let check_contains = runner.add_component("check-contains", Arc::new(CheckContains))?;
     runner.add_dependency(broadcast, None, print, None)?;
     runner.add_dependency(broadcast, Some("elem"), print, None)?;
-    // runner.add_dependency(broadcast, None, check_contains, Some("vec"))?;
-    // runner.add_dependency(broadcast, Some("elem"), check_contains, Some("elem"))?;
+    runner.add_dependency(broadcast, None, check_contains, Some("vec"))?;
+    runner.add_dependency(broadcast, Some("elem"), check_contains, Some("elem"))?;
     runner.add_dependency(check_contains, None, print, None)?;
+    tracing::debug!("before: {runner:#?}");
     // We need a scope to spawn our tasks in to make sure they don't escape past the lifetime of the runner.
     rayon::scope(|scope| {
+        // running multiple pipelines within a scope is fine, they all run concurrently
         runner.run((broadcast, vec![1i32, 2, 3]), scope).unwrap();
+        runner
+            .run((print2, [("a", 1i32), ("b", 2i32)]), scope)
+            .unwrap();
     });
-    tracing::debug!("runner: {runner:#?}"); // TODO: remove once I fix everything
+    tracing::debug!("after: {runner:#?}");
     Ok(())
 }

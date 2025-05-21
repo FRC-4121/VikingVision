@@ -1,42 +1,63 @@
 use super::*;
 use crate::pipeline::prelude::Inputs;
 
-const UNBOUND_NAMED_INPUT_MASK: usize = 1 << (usize::BITS - 1);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum InputChannel {
+    Primary(bool),
+    Multiple,
+    Numbered(usize),
+}
+
+#[derive(Debug, Default)]
+pub(super) struct PerRunData {
+    pub id: Option<RunId>,
+    pub multi: Vec<Arc<dyn Data>>,
+    pub invoc: u32,
+    pub refs: u32,
+}
+impl PerRunData {
+    pub fn is_empty(&self) -> bool {
+        self.id.is_none()
+    }
+    pub fn clear(&mut self) {
+        self.id = None;
+        self.multi.clear();
+        self.invoc = 0;
+        self.refs = 0;
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct MutableData {
     /// A vector of partial data. This should be chunked by the number of inputs
     pub data: Vec<Option<Arc<dyn Data>>>,
-    /// Additional info for each chunk
-    pub ids: Vec<Option<RunId>>,
+    /// Additional info for each chunk: both the run ID and
+    pub per_run: Vec<PerRunData>,
     /// First open index
     pub first: usize,
 }
 impl MutableData {
     #[allow(clippy::type_complexity)]
-    pub fn alloc(
-        &mut self,
-        len: usize,
-    ) -> (usize, &mut Option<RunId>, &mut [Option<Arc<dyn Data>>]) {
+    pub fn alloc(&mut self, len: usize) -> (usize, &mut PerRunData, &mut [Option<Arc<dyn Data>>]) {
         let idx = self.first;
-        if self.first == self.ids.len() {
+        if self.first == self.per_run.len() {
             self.first += 1;
-            self.ids.push(None);
+            self.per_run.push(PerRunData::default());
             self.data.resize(self.data.len() + len, None);
         } else {
-            self.first = self.ids[idx..]
+            self.first = self.per_run[idx..]
                 .iter()
-                .position(Option::is_none)
-                .map_or(self.ids.len(), |i| i + idx);
+                .position(PerRunData::is_empty)
+                .map_or(self.per_run.len(), |i| i + idx);
         }
         (
             idx,
-            &mut self.ids[idx],
+            &mut self.per_run[idx],
             &mut self.data[(idx * len)..((idx + 1) * len)],
         )
     }
     pub fn free(&mut self, idx: usize, len: usize) {
-        self.ids[idx] = None;
+        self.per_run[idx].clear();
         self.data[(idx * len)..((idx + 1) * len)].fill(None);
         if idx < self.first {
             self.first = idx
@@ -50,24 +71,27 @@ pub(super) enum InputMode {
         name: Option<String>,
         attached: bool,
     },
-    Multiple(HashMap<String, usize>),
+    Multiple {
+        lookup: HashMap<String, (usize, ComponentId)>,
+        multi: Option<(String, ComponentId)>,
+    },
 }
 
 pub(super) struct ComponentData {
     /// The actual component
     pub component: Arc<dyn Component>,
     /// Components dependent on a primary stream
-    pub primary_dependents: Vec<(ComponentId, Option<usize>)>,
+    pub primary_dependents: Vec<(ComponentId, InputChannel)>,
     /// Components dependent on a secondary stream
-    pub dependents: HashMap<String, Vec<(ComponentId, Option<usize>)>>,
+    pub dependents: HashMap<String, Vec<(ComponentId, InputChannel)>>,
     /// Locked partial data
     pub partial: Mutex<MutableData>,
     /// Name of this component
     pub name: triomphe::Arc<str>,
     /// What inputs this component is expecting
     pub input_mode: InputMode,
-    /// This is true if we expect one of our inputs to return multiple times.
-    pub multi_input: bool,
+    /// Where our multiple input came from
+    pub multi_input_from: Option<ComponentId>,
 }
 impl Debug for ComponentData {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -76,7 +100,7 @@ impl Debug for ComponentData {
             .field("dependents", &self.dependents)
             .field("partial", &self.partial)
             .field("name", &self.name)
-            .field("multi_input", &self.multi_input)
+            .field("multi_input_from", &self.multi_input_from)
             .field("input_mode", &self.input_mode)
             .finish_non_exhaustive()
     }
@@ -125,6 +149,15 @@ pub enum AddDependencyError<'a> {
         component: ComponentId,
         stream: Option<&'a str>,
     },
+    /// A component will get multiple inputs that give multiple values.
+    #[error(
+        "Component {component} will have multiple input streams that give multiple values (already from {old_multi_pub}, now from {new_multi_pub})"
+    )]
+    MultipleMultiInputs {
+        component: ComponentId,
+        old_multi_pub: ComponentId,
+        new_multi_pub: ComponentId,
+    },
 }
 
 impl PipelineRunner {
@@ -152,12 +185,14 @@ impl PipelineRunner {
                                 attached: false,
                             }
                         } else {
-                            InputMode::Multiple(
-                                v.into_iter()
+                            InputMode::Multiple {
+                                lookup: v
+                                    .into_iter()
                                     .enumerate()
-                                    .map(|(v, k)| (k, v | UNBOUND_NAMED_INPUT_MASK))
+                                    .map(|(v, k)| (k, (v, ComponentId::PLACEHOLDER)))
                                     .collect(),
-                            )
+                                multi: None,
+                            }
                         }
                     }
                 };
@@ -167,12 +202,12 @@ impl PipelineRunner {
                     dependents: HashMap::new(),
                     partial: Mutex::new(MutableData {
                         data: Vec::new(),
-                        ids: Vec::new(),
+                        per_run: Vec::new(),
                         first: 0,
                     }),
                     name,
                     input_mode,
-                    multi_input: false,
+                    multi_input_from: None,
                 });
                 e.insert(value);
                 Ok(value)
@@ -220,9 +255,6 @@ impl PipelineRunner {
                 stream: pub_stream,
             });
         }
-        if kind.is_multi() {
-            c2.multi_input = true;
-        }
         #[allow(clippy::collapsible_else_if)]
         if let Some(name) = sub_stream {
             let idx = match &mut c2.input_mode {
@@ -243,23 +275,61 @@ impl PipelineRunner {
                         });
                     }
                     *attached = true;
-                    None
+                    if kind.is_multi() {
+                        c2.multi_input_from = Some(pub_id);
+                        InputChannel::Primary(true)
+                    } else {
+                        c2.multi_input_from = c1.multi_input_from;
+                        InputChannel::Primary(false)
+                    }
                 }
-                InputMode::Multiple(m) => {
-                    let Some(idx) = m.get_mut(name) else {
+                InputMode::Multiple { lookup, multi } => {
+                    let Some((idx, comp)) = lookup.get_mut(name) else {
                         return Err(AddDependencyError::DoesntTakeInput {
                             component: sub_id,
                             stream: Some(name),
                         });
                     };
-                    if *idx & UNBOUND_NAMED_INPUT_MASK == 0 {
+                    if comp.is_valid() {
                         return Err(AddDependencyError::DuplicateNamedInput {
                             component: sub_id,
                             stream: name,
                         });
                     }
-                    *idx &= !UNBOUND_NAMED_INPUT_MASK;
-                    Some(*idx)
+                    if kind.is_multi() {
+                        if let Some((_, id)) = multi {
+                            return Err(AddDependencyError::MultipleMultiInputs {
+                                component: sub_id,
+                                old_multi_pub: *id,
+                                new_multi_pub: pub_id,
+                            });
+                        } else {
+                            if let Some(from) = c2.multi_input_from {
+                                if !(from == pub_id || Some(from) == c1.multi_input_from) {
+                                    return Err(AddDependencyError::MultipleMultiInputs {
+                                        component: sub_id,
+                                        old_multi_pub: from,
+                                        new_multi_pub: pub_id,
+                                    });
+                                }
+                            }
+                            c2.multi_input_from = Some(pub_id);
+                        }
+                        let idx = *idx;
+                        lookup.retain(|k, (v, _)| {
+                            (k != name) && {
+                                if *v > idx {
+                                    *v -= 1;
+                                }
+                                true
+                            }
+                        });
+                        *multi = Some((name.to_string(), pub_id));
+                        InputChannel::Multiple
+                    } else {
+                        *comp = pub_id;
+                        InputChannel::Numbered(*idx)
+                    }
                 }
             };
             if let Some(name) = pub_stream {
@@ -288,9 +358,10 @@ impl PipelineRunner {
                 c1.dependents
                     .entry(name.to_string())
                     .or_default()
-                    .push((sub_id, None));
+                    .push((sub_id, InputChannel::Primary(kind.is_multi())));
             } else {
-                c1.primary_dependents.push((sub_id, None))
+                c1.primary_dependents
+                    .push((sub_id, InputChannel::Primary(kind.is_multi())))
             }
         }
         Ok(())
