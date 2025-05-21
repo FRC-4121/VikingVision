@@ -161,14 +161,81 @@ pub enum AddDependencyError<'a> {
 }
 
 impl PipelineRunner {
+    /// Add a component without adding it to the lookup table.
+    ///
+    /// It will only be able to be referred to by its ID after this. A name is still needed for logging, but it doesn't need to be unique.
+    #[inline(always)]
+    pub fn add_hidden_component(
+        &mut self,
+        name: impl Into<triomphe::Arc<str>>,
+        component: Arc<dyn Component>,
+    ) -> ComponentId {
+        self.add_hidden_component_impl(name.into(), component)
+    }
+    fn add_hidden_component_impl(
+        &mut self,
+        name: triomphe::Arc<str>,
+        component: Arc<dyn Component>,
+    ) -> ComponentId {
+        tracing::info!(?name, hidden = true, "adding component");
+        let value = ComponentId(self.components.len());
+        let input_mode = match component.inputs() {
+            Inputs::Primary => InputMode::Single {
+                name: None,
+                attached: false,
+            },
+            Inputs::Named(mut v) => {
+                if v.len() == 1 {
+                    InputMode::Single {
+                        name: v.pop(),
+                        attached: false,
+                    }
+                } else {
+                    InputMode::Multiple {
+                        lookup: v
+                            .into_iter()
+                            .enumerate()
+                            .map(|(v, k)| (k, (v, ComponentId::PLACEHOLDER)))
+                            .collect(),
+                        multi: None,
+                    }
+                }
+            }
+        };
+        let component_clone = component.clone();
+        let span = tracing::info_span!("initializing component", %name, component = %value);
+        self.components.push(ComponentData {
+            component,
+            primary_dependents: Vec::new(),
+            dependents: HashMap::new(),
+            partial: Mutex::new(MutableData {
+                data: Vec::new(),
+                per_run: Vec::new(),
+                first: 0,
+            }),
+            name,
+            input_mode,
+            multi_input_from: None,
+        });
+        span.in_scope(|| component_clone.initialize(self, value));
+        value
+    }
     /// Add a new component.
+    ///
+    /// This also adds the component to the lookup table, failing if one isn't available.
     pub fn add_component(
         &mut self,
         name: impl Into<triomphe::Arc<str>>,
         component: Arc<dyn Component>,
     ) -> Result<ComponentId, AddComponentError> {
-        let name = name.into();
-        tracing::info!(?name, "adding component");
+        self.add_component_impl(name.into(), component)
+    }
+    fn add_component_impl(
+        &mut self,
+        name: triomphe::Arc<str>,
+        component: Arc<dyn Component>,
+    ) -> Result<ComponentId, AddComponentError> {
+        tracing::info!(?name, hidden = false, "adding component");
         match self.lookup.entry(name.clone()) {
             Entry::Occupied(e) => Err(AddComponentError::AlreadyExists(*e.get())),
             Entry::Vacant(e) => {
@@ -196,6 +263,8 @@ impl PipelineRunner {
                         }
                     }
                 };
+                let component_clone = component.clone();
+                let span = tracing::info_span!("initializing component", %name, component = %value);
                 self.components.push(ComponentData {
                     component,
                     primary_dependents: Vec::new(),
@@ -210,11 +279,14 @@ impl PipelineRunner {
                     multi_input_from: None,
                 });
                 e.insert(value);
+                span.in_scope(|| component_clone.initialize(self, value));
                 Ok(value)
             }
         }
     }
     /// Add a dependency between two components.
+    ///
+    /// Each input stream can only have one component, and they can only have streams
     pub fn add_dependency<'a>(
         &mut self,
         pub_id: ComponentId,

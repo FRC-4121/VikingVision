@@ -1,4 +1,4 @@
-use super::runner::{ComponentContext, PipelineRunner};
+use super::runner::{ComponentContext, ComponentId, PipelineRunner};
 use crate::buffer::Buffer;
 use crate::utils::LogErr;
 use std::any::{Any, TypeId};
@@ -184,5 +184,5 @@ pub trait Component: Send + Sync + 'static {
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>);
     /// Perform startup initialization on this component.
     #[allow(unused_variables)]
-    fn initialize(&self, runner: &PipelineRunner) {}
+    fn initialize(&self, runner: &mut PipelineRunner, self_id: ComponentId) {}
 }
