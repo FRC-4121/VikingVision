@@ -158,6 +158,56 @@ impl<A: Into<ComponentArgs>> From<(ComponentId, A)> for RunParams<'_> {
     }
 }
 
+#[doc(hidden)]
+pub struct ArgListMarker;
+#[doc(hidden)]
+pub struct InputMapMarker;
+
+/// A type that's convertible in run parameters, with the runner available for the conversion if necessary.
+///
+/// This trait has a marker generic parameter to allow potentially overlapping implementations. Rust can deduce the marker type used as long as there aren't actually conflicting
+pub trait IntoRunParams<'a, Marker> {
+    /// A custom error type allows for this conversion to fail. It also becomes the error type of [`run`](PipelineRunner::run).
+    type Error: From<RunError<'a>>;
+    fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error>;
+}
+impl<'a> IntoRunParams<'a, ()> for RunParams<'a> {
+    type Error = RunError<'a>;
+    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, RunError<'a>> {
+        Ok(self)
+    }
+}
+impl<'a, A: Into<ComponentArgs>> IntoRunParams<'a, ArgListMarker> for (ComponentId, A) {
+    type Error = RunError<'a>;
+    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        Ok(RunParams::new(self.0).with_args(self.1.into()))
+    }
+}
+
+impl<'a, I: InputSpecifier> IntoRunParams<'a, InputMapMarker> for (ComponentId, I) {
+    type Error = RunOrPackArgsError<'a>;
+    fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        let args = runner
+            .pack_args(self.0, self.1)
+            .map_err(RunOrPackArgsError::PackArgsError)?;
+        Ok(RunParams::new(self.0).with_args(args))
+    }
+}
+
+/// Union of [`RunError`] and [`PackArgsError`], for when [`IntoRunParams`] fails for an input specifier.
+#[derive(Debug, Error)]
+pub enum RunOrPackArgsError<'a> {
+    #[error(transparent)]
+    RunError(RunError<'a>),
+    #[error(transparent)]
+    PackArgsError(PackArgsError<'a>),
+}
+impl<'a> From<RunError<'a>> for RunOrPackArgsError<'a> {
+    fn from(value: RunError<'a>) -> Self {
+        Self::RunError(value)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Error)]
 pub enum RunErrorCause {
     #[error("Too many pipelines ({0}) were already running")]
@@ -233,14 +283,23 @@ impl PipelineRunner {
     pub fn run_count(&self) -> u32 {
         self.run_id.load(Ordering::Relaxed)
     }
-    /// This is the main entry point for running components. This invokes the given component with some data, along with a [scope](rayon::Scope) to run it in.
+    /// The main entry point for running pipelines.
+    ///
+    /// This invokes the given component with some data, in a given [scope](rayon::Scope).
+    ///
+    /// The generics here can almost always be inferred. They allow various sets of run parameters to be used, including:
+    /// - [`RunParams`]
+    /// - [`ComponentId`]
+    /// - a `(ComponentId, A)` where A is some implementor of [`Data`] or an [`Arc`] of some implementor
+    /// - a `(ComponentId, I)` where I is some [`InputSpecifier`] (most likely a `(&str, A)` or some slice or tuple).
     #[inline(always)]
-    pub fn run<'s, 'a: 's>(
+    pub fn run<'s, 'a: 's, M, P: IntoRunParams<'a, M>>(
         &'a self,
-        params: impl Into<RunParams<'a>>,
+        params: P,
         scope: &rayon::Scope<'s>,
-    ) -> Result<(), RunError<'a>> {
-        self.run_impl(params.into(), scope)
+    ) -> Result<(), P::Error> {
+        let params = params.into_run_params(self)?;
+        self.run_impl(params, scope).map_err(From::from)
     }
     fn run_impl<'s, 'a: 's>(
         &'a self,

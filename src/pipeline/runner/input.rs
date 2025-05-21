@@ -5,7 +5,14 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
 
-/// A way to provide a lookup for
+/// A way to provide a lookup for component inputs.
+///
+/// The main implementors are `(&str, D)` and [`HashMap<String, D>`](HashMap) where D implements [`IntoData`], and with that it's implemented for:
+/// - references
+/// - slices
+/// - arrays
+/// - [`Vec`], and
+/// - tuples of up to twelve elements
 pub trait InputSpecifier {
     fn get(&self, stream: &str) -> Option<Arc<dyn Data>>;
 }
@@ -39,6 +46,29 @@ impl<S: Borrow<str> + Hash + Eq, D: Clone + Into<Arc<dyn Data>>> InputSpecifier 
         HashMap::get(self, stream).map(|d| d.clone().into())
     }
 }
+
+macro_rules! impl_for_tuple {
+    () => {};
+    ($head:ident $(, $tail:ident)*) => {
+        impl<$head: InputSpecifier, $($tail: InputSpecifier,)*> InputSpecifier for ($head, $($tail,)*) {
+            #[allow(non_snake_case)]
+            fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
+                let ($head, $($tail,)*) = self;
+                if let Some(val) = $head.get(stream) {
+                    return Some(val);
+                }
+                $(
+                    if let Some(val) = $tail.get(stream) {
+                        return Some(val);
+                    }
+                )*
+                None
+            }
+        }
+        impl_for_tuple!($($tail),*);
+    };
+}
+impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum PackArgsError<'a> {
