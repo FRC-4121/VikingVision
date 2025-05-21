@@ -1,6 +1,5 @@
-use crate::pipeline::prelude::Inputs;
-
 use super::*;
+use crate::pipeline::prelude::Inputs;
 
 const UNBOUND_NAMED_INPUT_MASK: usize = 1 << (usize::BITS - 1);
 

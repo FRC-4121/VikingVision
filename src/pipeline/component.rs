@@ -75,6 +75,11 @@ impl<T: Data> IntoData for Arc<T> {
         self
     }
 }
+impl IntoData for Arc<dyn Data> {
+    fn into_data(self) -> Arc<dyn Data> {
+        self
+    }
+}
 macro_rules! impl_via_debug {
     () => {};
     ($ty:ty $(, $rest:ty)*) => {

@@ -105,7 +105,7 @@ impl<'a> RunParams<'a> {
     pub const fn new(component: ComponentId) -> Self {
         Self {
             component,
-            args: ComponentArgs::None,
+            args: ComponentArgs::empty(),
             max_running: None,
             callback: None,
         }
@@ -130,6 +130,23 @@ impl<'a> RunParams<'a> {
         self
     }
 }
+impl Debug for RunParams<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunParams")
+            .field(
+                "callback",
+                &if self.callback.is_some() {
+                    "Some(..)"
+                } else {
+                    "None"
+                },
+            )
+            .field("max_running", &self.max_running)
+            .field("component", &self.component)
+            .field("args", &self.args)
+            .finish()
+    }
+}
 impl From<ComponentId> for RunParams<'_> {
     fn from(value: ComponentId) -> Self {
         Self::new(value)
@@ -138,6 +155,30 @@ impl From<ComponentId> for RunParams<'_> {
 impl<A: Into<ComponentArgs>> From<(ComponentId, A)> for RunParams<'_> {
     fn from(value: (ComponentId, A)) -> Self {
         Self::new(value.0).with_args(value.1.into())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Error)]
+pub enum RunErrorCause {
+    #[error("Too many pipelines ({0}) were already running")]
+    TooManyRunning(usize),
+    #[error("Expected {expected} arguments, got {given}")]
+    ArgsMismatch { expected: usize, given: usize },
+}
+
+#[derive(Debug)]
+pub struct RunError<'a> {
+    pub cause: RunErrorCause,
+    pub params: RunParams<'a>,
+}
+impl Display for RunError<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.cause, f)
+    }
+}
+impl std::error::Error for RunError<'_> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
     }
 }
 
@@ -198,24 +239,52 @@ impl PipelineRunner {
         &'a self,
         params: impl Into<RunParams<'a>>,
         scope: &rayon::Scope<'s>,
-    ) -> Result<(), RunParams<'a>> {
+    ) -> Result<(), RunError<'a>> {
         self.run_impl(params.into(), scope)
     }
     fn run_impl<'s, 'a: 's>(
         &'a self,
         params: RunParams<'a>,
         scope: &rayon::Scope<'s>,
-    ) -> Result<(), RunParams<'a>> {
+    ) -> Result<(), RunError<'a>> {
         let running = self.running.fetch_add(1, Ordering::AcqRel);
         if params.max_running.is_some_and(|max| running >= max) {
             self.running.fetch_sub(1, Ordering::AcqRel);
-            return Err(params);
+            return Err(RunError {
+                cause: RunErrorCause::TooManyRunning(running),
+                params,
+            });
+        }
+        let data = &self.components[params.component.0];
+        match (&data.input_mode, params.args.len()) {
+            (InputMode::Single { .. }, n) => {
+                if n != 1 {
+                    return Err(RunError {
+                        cause: RunErrorCause::ArgsMismatch {
+                            expected: 1,
+                            given: n,
+                        },
+                        params,
+                    });
+                }
+            }
+            (InputMode::Multiple(m), n) => {
+                if m.len() != n {
+                    return Err(RunError {
+                        cause: RunErrorCause::ArgsMismatch {
+                            expected: n,
+                            given: m.len(),
+                        },
+                        params,
+                    });
+                }
+            }
         }
         let RunParams {
             callback,
             max_running: _,
             component,
-            args,
+            mut args,
         } = params;
         let decr = Arc::new(Cleanup {
             runner: self,
@@ -225,15 +294,14 @@ impl PipelineRunner {
             invoc: self.run_id.fetch_add(1, Ordering::Relaxed),
             tree: Vec::new(),
         };
-        let (input, cleanup_idx) = match args {
-            ComponentArgs::None => (InputKind::Empty, None),
-            ComponentArgs::Single(data) => (InputKind::Single(data), None),
-            ComponentArgs::Multiple(mut pack) => {
-                let len = pack.0.len();
-                let mut lock = self.components[component.0].partial.lock().unwrap();
+        let (input, cleanup_idx) = match args.len() {
+            0 => (InputKind::Empty, None),
+            1 => (InputKind::Single(args.0.pop().unwrap().unwrap()), None),
+            len => {
+                let mut lock = data.partial.lock().unwrap();
                 let (idx, run, inputs) = lock.alloc(len);
                 *run = Some(run_id.clone());
-                for (to, from) in inputs.iter_mut().zip(&mut pack.0) {
+                for (to, from) in inputs.iter_mut().zip(&mut args.0) {
                     *to = from.take();
                 }
                 (InputKind::Multiple(idx), Some((idx, len)))

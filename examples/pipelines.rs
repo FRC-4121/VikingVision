@@ -82,7 +82,7 @@ fn main() -> anyhow::Result<()> {
     runner.add_dependency(check_contains, None, print, None)?;
     // We need a scope to spawn our tasks in to make sure they don't escape past the lifetime of the runner.
     rayon::scope(|scope| {
-        let _ = runner.run((broadcast, vec![1i32, 2, 3]), scope); // this can only return an error if we exceed the maximum number of running pipelines
+        runner.run((broadcast, vec![1i32, 2, 3]), scope).unwrap();
     });
     tracing::debug!("runner: {runner:#?}"); // TODO: remove once I fix everything
     Ok(())
