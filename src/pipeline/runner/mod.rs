@@ -33,7 +33,7 @@ impl Display for ComponentId {
         if self.is_placeholder() {
             f.write_str("PLACEHOLDER")
         } else {
-            Display::fmt(&self.0, f)
+            write!(f, "#{}", self.0)
         }
     }
 }

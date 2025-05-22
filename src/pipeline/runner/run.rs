@@ -195,7 +195,7 @@ enum InputKind {
 /// This type has a destructor that tells all dependent components that no more data will come from here, so we need to make sure that this inner context isn't dropped during that transition.
 pub struct ComponentContextInner<'r> {
     runner: &'r PipelineRunner,
-    comp_id: ComponentId,
+    component: &'r ComponentData,
     input: InputKind,
     decr: Arc<Cleanup<'r>>,
     run_id: RunId,
@@ -206,7 +206,7 @@ impl Debug for ComponentContextInner<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentContextInner")
             .field("runner", &(&self.runner as *const _))
-            .field("comp_id", &self.comp_id)
+            .field("comp_id", &self.comp_id())
             .field("run_id", &self.run_id)
             .field("invoc", &self.invoc)
             .finish_non_exhaustive()
@@ -221,7 +221,11 @@ impl Drop for ComponentContextInner<'_> {
 impl<'r> ComponentContextInner<'r> {
     /// Get the ID of this component. This is mostly useful for logging.
     pub fn comp_id(&self) -> ComponentId {
-        self.comp_id
+        ComponentId(
+            (self.component as *const ComponentData as usize
+                / self.runner.components.as_ptr() as usize)
+                / size_of::<ComponentData>(),
+        )
     }
     /// Get the ID of this run. This will be unique for each time this component is called.
     pub fn run_id(&self) -> &RunId {
@@ -233,7 +237,7 @@ impl<'r> ComponentContextInner<'r> {
     }
     /// Get the name of the current component.
     pub fn name(&self) -> &'r triomphe::Arc<str> {
-        &self.runner.components[self.comp_id.0].name
+        &self.component.name
     }
     /// Get the current value from a given stream.
     pub fn get<'b>(&self, stream: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
@@ -245,15 +249,13 @@ impl<'r> ComponentContextInner<'r> {
         match self.input {
             InputKind::Empty => None,
             InputKind::Single(ref data) => {
-                let component = &self.runner.components[self.comp_id.0];
-                let InputMode::Single { name, .. } = &component.input_mode else {
+                let InputMode::Single { name, .. } = &self.component.input_mode else {
                     unreachable!()
                 };
                 (name.as_deref() == req_stream).then(|| data.clone())
             }
             InputKind::Multiple(run_idx, ref arg) => req_stream.and_then(|name| {
-                let component = &self.runner.components[self.comp_id.0];
-                let InputMode::Multiple { lookup, multi } = &component.input_mode else {
+                let InputMode::Multiple { lookup, multi } = &self.component.input_mode else {
                     unreachable!()
                 };
                 if multi.as_ref().map(|x| x.0.as_str()) == req_stream {
@@ -261,7 +263,7 @@ impl<'r> ComponentContextInner<'r> {
                 }
                 let field_idx = lookup.get(name)?.0;
                 let num_fields = lookup.len();
-                let lock = component.partial.lock().unwrap();
+                let lock = self.component.partial.lock().unwrap();
                 let index = run_idx * num_fields + field_idx;
                 Some(
                     lock.data[index]
@@ -310,17 +312,20 @@ impl<'r> ComponentContextInner<'r> {
             tracing::error!("submit() was called after finish() for a component");
             return;
         }
-        let component = &self.runner.components[self.comp_id.0];
         let dependents = stream.map_or_else(
-            || component.primary_dependents.as_slice(),
-            |name| component.dependents.get(name).map_or(&[], Vec::as_slice),
+            || self.component.primary_dependents.as_slice(),
+            |name| {
+                self.component
+                    .dependents
+                    .get(name)
+                    .map_or(&[], Vec::as_slice)
+            },
         );
         for &(comp_id, stream) in dependents {
             let next_comp = &self.runner.components[comp_id.0];
             match stream {
                 InputChannel::Primary(multi) => self.spawn_next(
                     next_comp,
-                    comp_id,
                     InputKind::Single(data.clone()),
                     multi.then(|| self.invoc.fetch_add(1, Ordering::Relaxed)),
                     scope,
@@ -348,7 +353,6 @@ impl<'r> ComponentContextInner<'r> {
                                 prdata.refs += 1;
                                 self.spawn_next(
                                     next_comp,
-                                    comp_id,
                                     InputKind::Multiple(n, Some(data.clone())),
                                     Some(prdata.invoc),
                                     scope,
@@ -394,7 +398,6 @@ impl<'r> ComponentContextInner<'r> {
                                         prdata.refs += 1;
                                         self.spawn_next(
                                             next_comp,
-                                            comp_id,
                                             InputKind::Multiple(n, Some(elem)),
                                             Some(prdata.invoc),
                                             scope,
@@ -405,7 +408,6 @@ impl<'r> ComponentContextInner<'r> {
                                     prdata.refs += 1;
                                     self.spawn_next(
                                         next_comp,
-                                        comp_id,
                                         InputKind::Multiple(n, None),
                                         Some(prdata.invoc),
                                         scope,
@@ -429,7 +431,6 @@ impl<'r> ComponentContextInner<'r> {
     fn spawn_next<'s>(
         &self,
         component: &'r ComponentData,
-        comp_id: ComponentId,
         input: InputKind,
         push_run: Option<u32>,
         scope: &rayon::Scope<'s>,
@@ -437,7 +438,6 @@ impl<'r> ComponentContextInner<'r> {
         'r: 's,
     {
         let runner = self.runner;
-        let inner = component.component.clone();
         let decr = self.decr.clone();
         let mut run_id = self.run_id.clone();
         if let Some(run) = push_run {
@@ -447,13 +447,13 @@ impl<'r> ComponentContextInner<'r> {
             ComponentContextInner {
                 input,
                 runner,
-                comp_id,
+                component,
                 decr,
                 run_id,
                 invoc: AtomicU32::new(0),
                 finished: false,
             }
-            .run(&*inner, scope);
+            .run(scope);
         });
     }
     /// Signal that we're done with this component.
@@ -464,32 +464,34 @@ impl<'r> ComponentContextInner<'r> {
             tracing::warn!("finish() was called twice for a component");
             return;
         }
-        let component = &self.runner.components[self.comp_id.0];
         if let InputKind::Multiple(idx, _) = self.input {
-            let mut partial = component.partial.lock().unwrap();
+            let mut partial = self.component.partial.lock().unwrap();
             let prdata = &mut partial.per_run[idx];
             prdata.refs -= 1;
             if prdata.refs == 0 {
-                let InputMode::Multiple { lookup, .. } = &component.input_mode else {
+                let InputMode::Multiple { lookup, .. } = &self.component.input_mode else {
                     unreachable!()
                 };
                 partial.free(idx, lookup.len());
             }
         }
-        self.runner.cleanup_runs(component, &self.run_id);
+        self.runner.cleanup_runs(self.component, &self.run_id);
         self.input = InputKind::Empty;
     }
     /// Get the info-level span for this run.
     pub fn tracing_span(&self) -> tracing::Span {
-        tracing::info_span!("run", name = %self.name(), run = %self.run_id, component = %self.comp_id)
+        tracing::info_span!("run", name = %self.name(), run = %self.run_id, component = %self.comp_id())
     }
     /// Run the component with tracing instrumentation (and possibly more in the future).
-    pub fn run<'s>(self, component: &dyn Component, scope: &rayon::Scope<'s>)
+    fn run<'s>(self, scope: &rayon::Scope<'s>)
     where
         'r: 's,
     {
-        self.tracing_span()
-            .in_scope(|| component.run(ComponentContext { inner: self, scope }));
+        self.tracing_span().in_scope(|| {
+            self.component
+                .component
+                .run(ComponentContext { inner: self, scope })
+        });
     }
 }
 
@@ -508,11 +510,6 @@ impl<'r> Deref for ComponentContext<'r, '_, '_> {
     }
 }
 impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
-    /// Run the component with tracing instrumentation (and possibly more in the future).
-    #[inline(always)]
-    pub fn run(self, component: &dyn Component) {
-        self.inner.run(component, self.scope);
-    }
     /// Publish a result on a given stream.
     #[inline(always)]
     pub fn submit<'b>(&self, stream: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
@@ -617,18 +614,18 @@ impl PipelineRunner {
                 InputKind::Multiple(idx, arg)
             }
         };
+        let data = &self.components[component.0];
         scope.spawn(move |scope| {
-            let data = &self.components[component.0];
             ComponentContextInner {
                 runner: self,
-                comp_id: component,
+                component: data,
                 input,
                 decr,
                 run_id,
                 invoc: AtomicU32::new(0),
                 finished: false,
             }
-            .run(&*data.component, scope);
+            .run(scope);
         });
         Ok(())
     }
