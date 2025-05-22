@@ -1,6 +1,7 @@
 use super::*;
 use crate::pipeline::component::TypeMismatch;
 use crate::utils::LogErr;
+use std::convert::Infallible;
 use std::ops::Deref;
 
 struct Cleanup<'a> {
@@ -116,42 +117,26 @@ pub mod markers {
 /// This trait has a marker generic parameter to allow potentially overlapping implementations. Rust can deduce the marker type used as long as there aren't actually conflicting
 pub trait IntoRunParams<'a, Marker> {
     /// A custom error type allows for this conversion to fail. It also becomes the error type of [`run`](PipelineRunner::run).
-    type Error: From<RunError<'a>>;
+    type Error;
     fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error>;
 }
 impl<'a> IntoRunParams<'a, ()> for RunParams<'a> {
-    type Error = RunError<'a>;
-    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, RunError<'a>> {
+    type Error = Infallible;
+    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
         Ok(self)
     }
 }
 impl<'a, A: Into<ComponentArgs>> IntoRunParams<'a, markers::ArgListMarker> for (ComponentId, A) {
-    type Error = RunError<'a>;
+    type Error = Infallible;
     fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
         Ok(RunParams::new(self.0).with_args(self.1.into()))
     }
 }
 impl<'a, I: InputSpecifier> IntoRunParams<'a, markers::InputMapMarker> for (ComponentId, I) {
-    type Error = RunOrPackArgsError<'a>;
+    type Error = PackArgsError<'a>;
     fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
-        let args = runner
-            .pack_args(self.0, self.1)
-            .map_err(RunOrPackArgsError::PackArgsError)?;
+        let args = runner.pack_args(self.0, self.1)?;
         Ok(RunParams::new(self.0).with_args(args))
-    }
-}
-
-/// Union of [`RunError`] and [`PackArgsError`], for when [`IntoRunParams`] fails for an input specifier.
-#[derive(Debug, Error)]
-pub enum RunOrPackArgsError<'a> {
-    #[error(transparent)]
-    RunError(RunError<'a>),
-    #[error(transparent)]
-    PackArgsError(PackArgsError<'a>),
-}
-impl<'a> From<RunError<'a>> for RunOrPackArgsError<'a> {
-    fn from(value: RunError<'a>) -> Self {
-        Self::RunError(value)
     }
 }
 
@@ -170,20 +155,32 @@ pub enum RunErrorCause {
     ArgsMismatch { expected: usize, given: usize },
 }
 
+/// An error that could arise from running a pipeline, after the `RunParams` have been created.
 #[derive(Debug)]
-pub struct RunError<'a> {
+pub struct RunErrorWithParams<'a> {
     pub cause: RunErrorCause,
     pub params: RunParams<'a>,
 }
-impl Display for RunError<'_> {
+impl Display for RunErrorWithParams<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.cause, f)
     }
 }
-impl std::error::Error for RunError<'_> {
+impl std::error::Error for RunErrorWithParams<'_> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.cause)
     }
+}
+
+/// An error, either before or after the run parameters were created.
+#[derive(Debug, Error)]
+pub enum RunError<'a, E> {
+    /// We created the parameters, and then there was a common error.
+    #[error(transparent)]
+    WithParams(RunErrorWithParams<'a>),
+    /// An error specific to the parameter creation.
+    #[error(transparent)]
+    FromConversion(E),
 }
 
 enum InputKind {
@@ -546,25 +543,27 @@ impl PipelineRunner {
         &'a self,
         params: P,
         scope: &rayon::Scope<'s>,
-    ) -> Result<(), P::Error> {
-        let params = params.into_run_params(self)?;
-        self.run_impl(params, scope).map_err(From::from)
+    ) -> Result<(), RunError<'a, P::Error>> {
+        let params = params
+            .into_run_params(self)
+            .map_err(RunError::FromConversion)?;
+        self.run_impl(params, scope).map_err(RunError::WithParams)
     }
     fn run_impl<'s, 'a: 's>(
         &'a self,
         params: RunParams<'a>,
         scope: &rayon::Scope<'s>,
-    ) -> Result<(), RunError<'a>> {
+    ) -> Result<(), RunErrorWithParams<'a>> {
         let running = self.running.fetch_add(1, Ordering::AcqRel);
         if params.max_running.is_some_and(|max| running >= max) {
             self.running.fetch_sub(1, Ordering::AcqRel);
-            return Err(RunError {
+            return Err(RunErrorWithParams {
                 cause: RunErrorCause::TooManyRunning(running),
                 params,
             });
         }
         let Some(data) = self.components.get(params.component.0) else {
-            return Err(RunError {
+            return Err(RunErrorWithParams {
                 cause: RunErrorCause::NoComponent(params.component),
                 params,
             });
@@ -572,7 +571,7 @@ impl PipelineRunner {
         match (&data.input_mode, params.args.len()) {
             (InputMode::Single { .. }, n) => {
                 if n != 1 {
-                    return Err(RunError {
+                    return Err(RunErrorWithParams {
                         cause: RunErrorCause::ArgsMismatch {
                             expected: 1,
                             given: n,
@@ -584,7 +583,7 @@ impl PipelineRunner {
             (InputMode::Multiple { lookup, multi }, n) => {
                 let expected = lookup.len() + usize::from(multi.is_some());
                 if expected != n {
-                    return Err(RunError {
+                    return Err(RunErrorWithParams {
                         cause: RunErrorCause::ArgsMismatch { expected, given: n },
                         params,
                     });
