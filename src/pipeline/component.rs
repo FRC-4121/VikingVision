@@ -23,15 +23,37 @@ impl<A> LogErr for TypeMismatch<A> {
     }
 }
 
-/// Some kind of data that can be passed between components.
+/// A trait representing data that can be passed between pipeline components.
 ///
-/// This is implemented for:
-/// - [`bool`]
-/// - all primitive integers
-/// - [`String`]
-/// - [`Buffer`]
-/// - [`Vec`]s of data
-/// - tuples with up to 12 elements
+/// This trait is automatically implemented for common types but is opt-in, which is better for
+/// certain generic stuff done in other places.
+///
+/// # Implemented Types
+/// - Primitive types: `bool`, integers, and floats
+/// - `String`
+/// - `Buffer`
+/// - `Vec<T>` where T: Data
+/// - Tuples up to 12 elements where each element implements Data
+///
+/// # Example
+///
+/// ```rust
+/// use std::sync::Arc;
+/// use viking_vision::pipeline::component::Data;
+///
+/// // Primitive types implement Data
+/// let num: Arc<dyn Data> = Arc::new(42i32);
+///
+/// // Custom types can implement Data
+/// #[derive(Debug)]
+/// struct MyData(String);
+/// impl Data for MyData {
+///     // Optionally override debug for custom formatting
+///     fn debug(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+///         write!(f, "MyData({})", self.0)
+///     }
+/// }
+/// ```
 pub trait Data: Any + Send + Sync {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Display::fmt(&disqualified::ShortName::of::<Self>(), f)
@@ -106,6 +128,8 @@ impl_via_debug!(
     u32,
     u64,
     usize,
+    f32,
+    f64,
     String,
     Buffer<'static>
 );
@@ -143,13 +167,18 @@ pub trait ComponentFactory {
 }
 
 /// What will come from an output channel.
+///
+/// It's the component's responsibility to adhere to this. The aren't any checks in place to prevent a component
+/// from submitting multiple values to a channel reported to only send one, but it'll likely lead to some kind of error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OutputKind {
-    /// There's no channel associated with the given output. This is used to catch errors earlier.
+    /// There's no channel associated with the given output.
     None,
-    /// Only one output will be sent per input. If multiple outputs are called after this was returned, the runner will panic.
+    /// Only one output will be sent per input.
     Single,
-    /// Multiple outputs can be sent from a single input. If it's possible that multiple could be returned, then this should always be chosen.
+    /// Multiple outputs can be sent from a single input.
+    ///
+    /// If it's possible that multiple could be returned, then this should always be chosen.
     Multiple,
 }
 impl OutputKind {
@@ -183,7 +212,44 @@ impl Inputs {
     }
 }
 
-/// Some kind of component to be used in the runner.
+/// A component that can be used in a vision processing pipeline.
+///
+/// Components are the building blocks of the pipeline system. Each component
+/// can have inputs, produce outputs, and runs independently within the pipeline.
+///
+/// # Example
+///
+/// ```rust
+/// use viking_vision::pipeline::prelude::*;
+/// use viking_vision::buffer::Buffer;
+/// use std::sync::Arc;
+/// # fn process_image(_: &Buffer<'static>) {}
+/// struct ImageProcessor;
+///
+/// impl Component for ImageProcessor {
+///     fn inputs(&self) -> Inputs {
+///         Inputs::Named(vec!["image".to_string()])
+///     }
+///
+///     fn output_kind(&self, name: Option<&str>) -> OutputKind {
+///         match name {
+///             None => OutputKind::Single,
+///             Some("debug") => OutputKind::Multiple,
+///             _ => OutputKind::None,
+///         }
+///     }
+///
+///     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'r, '_, 's>) {
+///         let Ok(image) = ctx.get_as::<Buffer<'static>>("image").and_log_err() else { return };
+///         
+///         // Process image...
+///         let result = process_image(&image);
+///         
+///         // Submit result
+///         ctx.submit(None, Arc::new(result));
+///     }
+/// }
+/// ```
 pub trait Component: Send + Sync + 'static {
     /// Get the inputs that this component is expecting.
     fn inputs(&self) -> Inputs;

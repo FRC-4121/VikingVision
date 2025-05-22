@@ -163,7 +163,9 @@ pub enum AddDependencyError<'a> {
 impl PipelineRunner {
     /// Add a component without adding it to the lookup table.
     ///
-    /// It will only be able to be referred to by its ID after this. A name is still needed for logging, but it doesn't need to be unique.
+    /// Hidden components can only be referenced by their [`ComponentId`] but still need a name for logging purposes.
+    /// They participate in dependencies like normal components, making them useful for internal components that shouldn't
+    /// be publicly accessible, dynamically generated components, or components with non-unique names.
     #[inline(always)]
     pub fn add_hidden_component(
         &mut self,
@@ -220,9 +222,29 @@ impl PipelineRunner {
         span.in_scope(|| component_clone.initialize(self, value));
         value
     }
-    /// Add a new component.
+
+    /// Add a new component to the pipeline with a unique name.
     ///
-    /// This also adds the component to the lookup table, failing if one isn't available.
+    /// The component is registered in the lookup table and assigned a unique [`ComponentId`] for referencing.
+    /// During registration, the component's [`initialize`](Component::initialize) method is called to perform any necessary setup.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use viking_vision::pipeline::prelude::{*, ProduceComponent as ImageProcessor, ConsumeComponent as OtherProcessor};
+    /// # use std::sync::Arc;
+    ///
+    /// let mut runner = PipelineRunner::new();
+    ///
+    /// // Add a component
+    /// let processor = runner.add_component(
+    ///     "image_processor",
+    ///     Arc::new(ImageProcessor::new())
+    /// ).unwrap();
+    ///
+    /// // Adding with same name fails
+    /// assert!(runner.add_component("image_processor", Arc::new(OtherProcessor)).is_err());
+    /// ```
     pub fn add_component(
         &mut self,
         name: impl Into<triomphe::Arc<str>>,

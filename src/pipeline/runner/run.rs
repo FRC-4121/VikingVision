@@ -2,12 +2,15 @@ use super::*;
 use crate::pipeline::component::TypeMismatch;
 use crate::utils::LogErr;
 use std::convert::Infallible;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
+/// Internal cleanup handler for pipeline runs that executes callbacks and
+/// decrements the running pipeline counter on drop.
 struct Cleanup<'a> {
     runner: &'a PipelineRunner,
     callback: Option<Callback<'a>>,
 }
+
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
         if let Some(callback) = self.callback.take() {
@@ -17,16 +20,20 @@ impl Drop for Cleanup<'_> {
     }
 }
 
-/// An error that can occur from [`ComponentContextInner::get_as`].
+/// Error that occurs when attempting to get and downcast input data.
+///
+/// This error occurs either when the requested input doesn't exist or when the input exists but has an incompatible type.
 #[derive(Debug, Clone, Error)]
 pub enum DowncastInputError<'a> {
-    /// The input wasn't given.
+    /// The requested input was not provided
     #[error("Component doesn't have a{}", if let Some(name) = .0 { format!("n input named {name:?}") } else { " primary input".to_string() })]
     MissingInput(Option<&'a str>),
-    /// The stored type doesn't match the requested one.
+
+    /// The input exists but has a different type than requested
     #[error(transparent)]
     TypeMismatch(#[from] TypeMismatch<Arc<dyn Data>>),
 }
+
 impl LogErr for DowncastInputError<'_> {
     fn log_err(&self) {
         match self {
@@ -36,18 +43,24 @@ impl LogErr for DowncastInputError<'_> {
     }
 }
 
-/// Parameters to be passed to [`PipelineRunner::run`].
+/// Parameters for configuring a pipeline run. Controls component selection,
+/// input data, execution limits, and completion callbacks.
 pub struct RunParams<'a> {
-    /// A callback we want to run after our pipeline has run.
+    /// Optional callback to execute after pipeline completion
     pub callback: Option<Callback<'a>>,
-    /// The maximum number of running pipelines we want to allow to run.
+
+    /// Optional limit on concurrent pipeline executions
     pub max_running: Option<usize>,
-    /// The target component
+
+    /// The component to execute
     pub component: ComponentId,
-    /// Arguments to be passed to the target component
+
+    /// Input arguments for the component
     pub args: ComponentArgs,
 }
+
 impl<'a> RunParams<'a> {
+    /// Create a new set of parameters with no run limit or callback.
     pub const fn new(component: ComponentId) -> Self {
         Self {
             component,
@@ -56,6 +69,8 @@ impl<'a> RunParams<'a> {
             callback: None,
         }
     }
+
+    /// Add a completion callback to the parameters.
     pub fn with_callback(
         mut self,
         callback: impl FnOnce(&'a PipelineRunner) + Send + Sync + 'a,
@@ -63,19 +78,26 @@ impl<'a> RunParams<'a> {
         self.callback = Some(Box::new(callback));
         self
     }
+
+    /// Add a pre-boxed callback to the parameters.
     pub fn with_boxed_callback(mut self, callback: Callback<'a>) -> Self {
         self.callback = Some(callback);
         self
     }
+
+    /// Set a limit on concurrent pipeline executions.
     pub fn with_max_running(mut self, max_running: usize) -> Self {
         self.max_running = Some(max_running);
         self
     }
+
+    /// Set the input arguments for the component.
     pub fn with_args(mut self, args: ComponentArgs) -> Self {
         self.args = args;
         self
     }
 }
+
 impl Debug for RunParams<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("RunParams")
@@ -93,31 +115,64 @@ impl Debug for RunParams<'_> {
             .finish()
     }
 }
+
 impl From<ComponentId> for RunParams<'_> {
     fn from(value: ComponentId) -> Self {
         Self::new(value)
     }
 }
+
 impl<A: Into<ComponentArgs>> From<(ComponentId, A)> for RunParams<'_> {
     fn from(value: (ComponentId, A)) -> Self {
         Self::new(value.0).with_args(value.1.into())
     }
 }
 
-/// Marker structs for [`IntoRunParams`].
+/// Marker types for parameter conversion traits.
 ///
-/// This shouldn't be considered public API, but marking this as `#[doc(hidden)]` hides the implementations altogether.
+/// These types are used to disambiguate implementations of [`IntoRunParams`]
+/// for different input types. They should not be used directly.
 pub mod markers {
+    /// Marker for direct argument list conversions
     pub struct ArgListMarker;
+    /// Marker for input map conversions
     pub struct InputMapMarker;
 }
 
-/// A type that's convertible in run parameters, with the runner available for the conversion if necessary.
+/// Trait for types that can be converted into pipeline run parameters.
 ///
-/// This trait has a marker generic parameter to allow potentially overlapping implementations. Rust can deduce the marker type used as long as there aren't actually conflicting
+/// This trait enables flexible input handling for pipeline runs, supporting:
+/// - Direct parameter passing
+/// - Component ID with arguments
+/// - Component ID with input maps
+///
+/// The marker type parameter allows for multiple implementations for the same
+/// type without conflicts.
+///
+/// # Examples
+///
+/// ```rust
+/// # use viking_vision::pipeline::prelude::*;
+/// # let mut runner = PipelineRunner::new();
+/// # let component_id = runner.add_component("processor", produce_component()).unwrap();
+///
+/// rayon::scope(|scope| {
+///     // Direct parameters
+///     let params = RunParams::new(component_id);
+///     runner.run(params, scope);
+///
+///     // Component with data
+///     runner.run((component_id, vec![1, 2, 3]), scope);
+///
+///     // Component with named inputs
+///     runner.run((component_id, [("input", "data".to_string())]), scope);
+/// });
+/// ```
 pub trait IntoRunParams<'a, Marker> {
-    /// A custom error type allows for this conversion to fail. It also becomes the error type of [`run`](PipelineRunner::run).
+    /// The error type returned if conversion fails
     type Error;
+
+    /// Converts this type into run parameters
     fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error>;
 }
 impl<'a> IntoRunParams<'a, ()> for RunParams<'a> {
@@ -126,12 +181,14 @@ impl<'a> IntoRunParams<'a, ()> for RunParams<'a> {
         Ok(self)
     }
 }
+
 impl<'a, A: Into<ComponentArgs>> IntoRunParams<'a, markers::ArgListMarker> for (ComponentId, A) {
     type Error = Infallible;
     fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
         Ok(RunParams::new(self.0).with_args(self.1.into()))
     }
 }
+
 impl<'a, I: InputSpecifier> IntoRunParams<'a, markers::InputMapMarker> for (ComponentId, I) {
     type Error = PackArgsError<'a>;
     fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
@@ -140,59 +197,69 @@ impl<'a, I: InputSpecifier> IntoRunParams<'a, markers::InputMapMarker> for (Comp
     }
 }
 
-/// The inner error enum for [`RunError`]
+/// Core error types that can occur during pipeline execution, such as invalid
+/// component references, resource limits, and argument mismatches.
 #[derive(Debug, Clone, Copy, Error)]
 #[non_exhaustive]
 pub enum RunErrorCause {
-    /// The requested component ID was out of range.
+    /// The specified component ID does not exist
     #[error("No component {0}")]
     NoComponent(ComponentId),
-    /// Too many pipelines are running.
+
+    /// Too many pipelines are currently running
     #[error("Too many pipelines ({0}) were already running")]
     TooManyRunning(usize),
-    /// The given number of arguments doesn't match the expected number.
+
+    /// The number of provided arguments doesn't match what the component expects
     #[error("Expected {expected} arguments, got {given}")]
     ArgsMismatch { expected: usize, given: usize },
 }
 
-/// An error that could arise from running a pipeline, after the `RunParams` have been created.
+/// An error that occurs during pipeline execution, along with the parameters that caused it.
 #[derive(Debug)]
 pub struct RunErrorWithParams<'a> {
     pub cause: RunErrorCause,
     pub params: RunParams<'a>,
 }
+
 impl Display for RunErrorWithParams<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.cause, f)
     }
 }
+
 impl std::error::Error for RunErrorWithParams<'_> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.cause)
     }
 }
 
-/// An error, either before or after the run parameters were created.
+/// An error that occured when calling [`PipelineRunner::run`].
 #[derive(Debug, Error)]
 pub enum RunError<'a, E> {
-    /// We created the parameters, and then there was a common error.
+    /// Error occurred after parameters were created
     #[error(transparent)]
     WithParams(RunErrorWithParams<'a>),
-    /// An error specific to the parameter creation.
+
+    /// Error occurred during parameter conversion
     #[error(transparent)]
     FromConversion(E),
 }
 
+/// Input passed to [`ComponentContext`].
 enum InputKind {
+    /// No input data
     Empty,
+    /// Single piece of input data
     Single(Arc<dyn Data>),
+    /// An index into the partial state, along with a value popped from the multi-input vector
     Multiple(usize, Option<Arc<dyn Data>>),
 }
 
-/// Context passed to components, without the threadpool scope.
+/// Core context used to get input and submit output from a component body.
 ///
-/// In order to defer tasks to the threadpool, the context has to be able to be separated from the scope, and a new `ComponentContext` can be created with the new scope.
-/// This type has a destructor that tells all dependent components that no more data will come from here, so we need to make sure that this inner context isn't dropped during that transition.
+/// This contains all of the core functionality, but [`ComponentContext`] is often more convenient
+/// because it contains the scope required to submit the results.
 pub struct ComponentContextInner<'r> {
     runner: &'r PipelineRunner,
     component: &'r ComponentData,
@@ -202,6 +269,7 @@ pub struct ComponentContextInner<'r> {
     invoc: AtomicU32,
     finished: bool,
 }
+
 impl Debug for ComponentContextInner<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentContextInner")
@@ -212,14 +280,16 @@ impl Debug for ComponentContextInner<'_> {
             .finish_non_exhaustive()
     }
 }
+
 impl Drop for ComponentContextInner<'_> {
     fn drop(&mut self) {
         use tracing::subscriber::*;
         with_default(NoSubscriber::new(), || self.finish());
     }
 }
+
 impl<'r> ComponentContextInner<'r> {
-    /// Get the ID of this component. This is mostly useful for logging.
+    /// Get the component identifier of this .
     pub fn comp_id(&self) -> ComponentId {
         ComponentId(
             (self.component as *const ComponentData as usize
@@ -227,19 +297,23 @@ impl<'r> ComponentContextInner<'r> {
                 / size_of::<ComponentData>(),
         )
     }
-    /// Get the ID of this run. This will be unique for each time this component is called.
+
+    /// Returns the unique identifier for this execution run.
     pub fn run_id(&self) -> &RunId {
         &self.run_id
     }
-    /// Get the [`PipelineRunner`] that's calling this component.
+
+    /// Returns a reference to the pipeline runner.
     pub fn runner(&self) -> &'r PipelineRunner {
         self.runner
     }
-    /// Get the name of the current component.
+
+    /// Returns the name of the current component.
     pub fn name(&self) -> &'r triomphe::Arc<str> {
         &self.component.name
     }
-    /// Get the current value from a given channel.
+
+    /// Retrieve the input data from either a named channel or the primary one.
     pub fn get<'b>(&self, channel: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
         if self.finished {
             tracing::error!("get() was called after finish() for a component");
@@ -274,7 +348,10 @@ impl<'r> ComponentContextInner<'r> {
             }),
         }
     }
-    /// Same as [`get`](Self::get) but returns a `Result` that implements [`LogErr`].
+
+    /// Retrieve input data similarly to [`get`](Self::get), but in a `Result`.
+    ///
+    /// This function is more useful for chaining with [`LogErr`](crate::utils::LogErr) and let-else chaining.
     pub fn get_res<'b>(
         &self,
         channel: impl Into<Option<&'b str>>,
@@ -283,18 +360,16 @@ impl<'r> ComponentContextInner<'r> {
         self.get(channel)
             .ok_or(DowncastInputError::MissingInput(channel))
     }
-    /// Get the current value from a given channel and attempt to downcast it.
-    ///
-    /// For even more convenience, [`DowncastInputError::log_err`] and the let-else pattern can be used.
+
+    /// Retrieve and downcast input data to a specific type.
     pub fn get_as<'b, T: Data>(
         &self,
         channel: impl Into<Option<&'b str>>,
     ) -> Result<Arc<T>, DowncastInputError<'b>> {
         self.get_res(channel)?.downcast_arc().map_err(From::from)
     }
-    /// Check whether publishing on a given channel will have an effect.
-    ///
-    /// After [`finish`](Self::finish) is called, this will always return false.
+
+    /// Check if any components are listening on a given channel.
     pub fn listening<'b>(&self, channel: impl Into<Option<&'b str>>) -> bool {
         if self.finished {
             return false;
@@ -310,9 +385,10 @@ impl<'r> ComponentContextInner<'r> {
             },
         )
     }
+
     /// Publish a result on a given channel.
     ///
-    /// After [`finish`](Self::finish) is called, this will become a no-op and log an error.
+    /// This immediately runs any listening components if possible.
     #[inline(always)]
     pub fn submit<'b, 's>(
         &self,
@@ -324,6 +400,8 @@ impl<'r> ComponentContextInner<'r> {
     {
         self.submit_impl(channel.into(), data, scope);
     }
+
+    /// Internal implementation of `submit` that handles data distribution and scheduling.
     fn submit_impl<'s>(&self, channel: Option<&str>, data: Arc<dyn Data>, scope: &rayon::Scope<'s>)
     where
         'r: 's,
@@ -448,6 +526,10 @@ impl<'r> ComponentContextInner<'r> {
             }
         }
     }
+
+    /// Spawn a new component execution in the pipeline.
+    ///
+    /// This internal method handles creating the new context and running it.
     fn spawn_next<'s>(
         &self,
         component: &'r ComponentData,
@@ -476,9 +558,14 @@ impl<'r> ComponentContextInner<'r> {
             .run(scope);
         });
     }
-    /// Signal that we're done with this component.
+
+    /// Mark this component as finished and cleans up resources.
     ///
-    /// After this is called, [`submit`](Self::submit) will become a no-op and [`get`](Self::get) will return `None`.
+    /// After calling this method, all of the inputs will be inaccessible and
+    /// submitting a value will be a no-op.
+    ///
+    /// This happens automatically when the context is dropped,
+    /// but can be called explicitly for more precise control.
     pub fn finish(&mut self) {
         if std::mem::replace(&mut self.finished, true) {
             tracing::warn!("finish() was called twice for a component");
@@ -498,11 +585,13 @@ impl<'r> ComponentContextInner<'r> {
         self.runner.cleanup_runs(self.component, &self.run_id);
         self.input = InputKind::Empty;
     }
-    /// Get the info-level span for this run.
+
+    /// Create a tracing span for this component execution.
     pub fn tracing_span(&self) -> tracing::Span {
         tracing::info_span!("run", name = %self.name(), run = %self.run_id, component = %self.comp_id())
     }
-    /// Run the component with tracing instrumentation (and possibly more in the future).
+
+    /// Run the component with tracing instrumentation.
     fn run<'s>(self, scope: &rayon::Scope<'s>)
     where
         'r: 's,
@@ -514,10 +603,14 @@ impl<'r> ComponentContextInner<'r> {
         });
     }
 }
-
-/// Context passed to components.
+/// Context passed to components during execution.
 ///
-/// A component is considered to be done submitting data when this is dropped, meaning that it can live after the component's body finishes.
+/// Components can use this context to access their input data, submit output data,
+/// defer operations to run later, and access pipeline-wide information.
+///
+/// A component is considered finished when either the context is dropped or finish()
+/// is explicitly called. After finishing, the component can no longer submit outputs
+/// or access inputs.
 #[derive(Debug)]
 pub struct ComponentContext<'r, 'a, 's> {
     pub inner: ComponentContextInner<'r>,
@@ -529,16 +622,20 @@ impl<'r> Deref for ComponentContext<'r, '_, '_> {
         &self.inner
     }
 }
+impl<'r> DerefMut for ComponentContext<'r, '_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
     /// Publish a result on a given channel.
     #[inline(always)]
     pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
         self.inner.submit(channel, data, self.scope);
     }
-    pub fn finish(&mut self) {
-        self.inner.finish();
-    }
-    /// Defer an operation to run later on the threadpool.
+
+    /// Defer an operation to run later on the thread pool.
     pub fn defer(self, op: impl FnOnce(ComponentContext<'r, '_, 's>) + Send + Sync + 'r) {
         let ComponentContext { inner, scope } = self;
         scope.spawn(move |scope| op(ComponentContext { inner, scope }));
@@ -546,15 +643,43 @@ impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
 }
 
 impl PipelineRunner {
-    /// The main entry point for running pipelines.
+    /// Executes a pipeline starting from a specified component. This is the main entry
+    /// point for running pipelines, supporting direct parameter passing, components with
+    /// data, and components with input maps.
     ///
-    /// This invokes the given component with some data, in a given [scope](rayon::Scope).
+    /// # Example
     ///
-    /// The generics here can almost always be inferred. They allow various sets of run parameters to be used, including:
-    /// - [`RunParams`]
-    /// - [`ComponentId`]
-    /// - a `(ComponentId, A)` where A is some implementor of [`Data`] or an [`Arc`] of some implementor
-    /// - a `(ComponentId, I)` where I is some [`InputSpecifier`] (most likely a `(&str, A)` or some slice or tuple).
+    /// ```rust
+    /// # use viking_vision::pipeline::prelude::{*, produce_component as some_component_no_args, consume_component as some_component_with_primary};
+    /// # use std::sync::Arc;
+    /// # fn some_component_with_named() -> Arc<dyn Component> {
+    /// #     struct NamedInput;
+    /// #     impl Component for NamedInput {
+    /// #         fn inputs(&self) -> Inputs {
+    /// #             Inputs::Named(vec![("input".to_string())])
+    /// #         }
+    /// #         fn output_kind(&self, _: Option<&str>) -> OutputKind {
+    /// #             OutputKind::None
+    /// #         }
+    /// #         fn run<'s, 'r: 's>(&self, _: ComponentContext<'r, '_, 's>) {}
+    /// #     }
+    /// #     Arc::new(NamedInput)
+    /// # }
+    /// let mut runner = PipelineRunner::new();
+    /// let no_args = runner.add_component("no-args", some_component_no_args()).unwrap();
+    /// let primary = runner.add_component("primary", some_component_with_primary()).unwrap();
+    /// let named = runner.add_component("named", some_component_with_named()).unwrap();
+    /// rayon::scope(|scope| {
+    ///     // Run with direct parameters
+    ///     runner.run(RunParams::new(no_args), scope).unwrap();
+    ///
+    ///     // Run with component and data
+    ///     runner.run((primary, "primary input".to_string()), scope).unwrap();
+    ///
+    ///     // Run with named inputs
+    ///     runner.run((named, [("input", "named input".to_string())]), scope).unwrap();
+    /// });
+    /// ```
     #[inline(always)]
     pub fn run<'s, 'a: 's, M, P: IntoRunParams<'a, M>>(
         &'a self,
@@ -566,6 +691,7 @@ impl PipelineRunner {
             .map_err(RunError::FromConversion)?;
         self.run_impl(params, scope).map_err(RunError::WithParams)
     }
+
     fn run_impl<'s, 'a: 's>(
         &'a self,
         params: RunParams<'a>,
@@ -649,6 +775,10 @@ impl PipelineRunner {
         });
         Ok(())
     }
+
+    /// Clean up resources after a component run completes.
+    ///
+    /// This internal method handles cleanup of component inputs and propagates to dependent components.
     fn cleanup_runs<'a>(&'a self, component: &'a ComponentData, prefix: &RunId) {
         for (name, deps) in std::iter::once((None, &component.primary_dependents))
             .chain(component.dependents.iter().map(|(k, v)| (Some(&**k), v)))
