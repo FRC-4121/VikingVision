@@ -292,7 +292,27 @@ impl<'r> ComponentContextInner<'r> {
     ) -> Result<Arc<T>, DowncastInputError<'b>> {
         self.get_res(stream)?.downcast_arc().map_err(From::from)
     }
+    /// Check whether publishing on a given stream will have an effect.
+    ///
+    /// After [`finish`](Self::finish) is called, this will always return false.
+    pub fn listening<'b>(&self, stream: impl Into<Option<&'b str>>) -> bool {
+        if self.finished {
+            return false;
+        }
+        let stream: Option<&'b str> = stream.into();
+        stream.map_or_else(
+            || self.component.primary_dependents.is_empty(),
+            |name| {
+                self.component
+                    .dependents
+                    .get(name)
+                    .is_some_and(|d| !d.is_empty())
+            },
+        )
+    }
     /// Publish a result on a given stream.
+    ///
+    /// After [`finish`](Self::finish) is called, this will become a no-op and log an error.
     #[inline(always)]
     pub fn submit<'b, 's>(
         &self,
