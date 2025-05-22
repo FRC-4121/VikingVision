@@ -134,16 +134,18 @@ macro_rules! impl_for_tuple {
 }
 impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
-/// A serializable factory that can build a component
-#[typetag::serde]
+/// A serializable factory that can build a component.
+///
+/// This is useful for serialization and deserialization of components, but isn't required for their use in pipelines.
+#[typetag::serde(tag = "type")]
 pub trait ComponentFactory {
     fn build(&self, name: &str) -> Box<dyn Component>;
 }
 
-/// Kind of an output stream
+/// What will come from an output channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OutputKind {
-    /// There's no stream associated with the given output. This is used to catch errors earlier.
+    /// There's no channel associated with the given output. This is used to catch errors earlier.
     None,
     /// Only one output will be sent per input. If multiple outputs are called after this was returned, the runner will panic.
     Single,
@@ -168,17 +170,24 @@ impl OutputKind {
 /// The kind of inputs that this component is expecting, returned fron [`Component::inputs`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inputs {
-    /// This component takes inputs through its primary input stream.
+    /// This component takes inputs through its primary input.
     Primary,
-    /// This component takes multiple inputs.
+    /// This component takes multiple, named inputs (or none at all).
     Named(Vec<String>),
+}
+impl Inputs {
+    /// `Named(Vec::new())` means a component taktes no inputs; this is just an alias for that.
+    #[inline(always)]
+    pub const fn none() -> Self {
+        Self::Named(Vec::new())
+    }
 }
 
 /// Some kind of component to be used in the runner.
 pub trait Component: Send + Sync + 'static {
     /// Get the inputs that this component is expecting.
     fn inputs(&self) -> Inputs;
-    /// Check if an output stream is available.
+    /// Check if an output channel is available.
     fn output_kind(&self, name: Option<&str>) -> OutputKind;
     /// Run a component on a given input.
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>);

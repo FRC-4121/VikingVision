@@ -80,9 +80,9 @@ pub(super) enum InputMode {
 pub(super) struct ComponentData {
     /// The actual component
     pub component: Arc<dyn Component>,
-    /// Components dependent on a primary stream
+    /// Components dependent on a primary channel
     pub primary_dependents: Vec<(ComponentId, InputChannel)>,
-    /// Components dependent on a secondary stream
+    /// Components dependent on a secondary channel
     pub dependents: HashMap<String, Vec<(ComponentId, InputChannel)>>,
     /// Locked partial data
     pub partial: Mutex<MutableData>,
@@ -128,30 +128,30 @@ pub enum AddDependencyError<'a> {
     /// The publishing and subscribing component were the same.
     #[error("Can't create a self-loop")]
     SelfLoop,
-    /// The publishing component doesn't output on the requested stream.
-    #[error("Publishing component {component} doesn't have a {}", if let Some(name) = .stream { format!("named stream {name:?}") } else { "primary output stream".to_string() })]
-    NoPubStream {
+    /// The publishing component doesn't output on the requested channel.
+    #[error("Publishing component {component} doesn't have a {}", if let Some(name) = .channel { format!("named output {name:?}") } else { "primary output".to_string() })]
+    NoPubChannel {
         component: ComponentId,
-        stream: Option<&'a str>,
+        channel: Option<&'a str>,
     },
-    /// A dependency was already created for this named input stream.
-    #[error("Input {stream:?} has already been attached to subscribing component {component}")]
+    /// A dependency was already created for this named input.
+    #[error("Input {channel:?} has already been attached to subscribing component {component}")]
     DuplicateNamedInput {
         component: ComponentId,
-        stream: &'a str,
+        channel: &'a str,
     },
-    /// A dependency was already created for the primary input stream.
+    /// A dependency was already created for the primary input.
     #[error("Primary input has already been attached to subscribing component {component}")]
     DuplicatePrimaryInput { component: ComponentId },
     /// The subscribing component doesn't take the requested input.
-    #[error("Subscribing component {component} doesn't take input on a {}", if let Some(name) = .stream { format!("named stream {name:?}") } else { "primary input stream".to_string() })]
+    #[error("Subscribing component {component} doesn't take input on a {}", if let Some(name) = .channel { format!("named input {name:?}") } else { "primary input".to_string() })]
     DoesntTakeInput {
         component: ComponentId,
-        stream: Option<&'a str>,
+        channel: Option<&'a str>,
     },
     /// A component will get multiple inputs that give multiple values.
     #[error(
-        "Component {component} will have multiple input streams that give multiple values (already from {old_multi_pub}, now from {new_multi_pub})"
+        "Component {component} will have multiple inputs that give multiple values (already from {old_multi_pub}, now from {new_multi_pub})"
     )]
     MultipleMultiInputs {
         component: ComponentId,
@@ -286,22 +286,22 @@ impl PipelineRunner {
     }
     /// Add a dependency between two components.
     ///
-    /// Each input stream can only have one component, and they can only have streams
+    /// Each input can only have one component, and only one input can give multiple values.
     pub fn add_dependency<'a>(
         &mut self,
         pub_id: ComponentId,
-        pub_stream: Option<&'a str>,
+        pub_channel: Option<&'a str>,
         sub_id: ComponentId,
-        sub_stream: Option<&'a str>,
+        sub_channel: Option<&'a str>,
     ) -> Result<(), AddDependencyError<'a>> {
         tracing::info!(
             "subscribing {sub_id} ({} output) to {pub_id} ({} input)",
-            if let Some(name) = pub_stream {
+            if let Some(name) = pub_channel {
                 format!("{name:?}")
             } else {
                 "primary".to_string()
             },
-            if let Some(name) = sub_stream {
+            if let Some(name) = sub_channel {
                 format!("{name:?}")
             } else {
                 "primary".to_string()
@@ -320,15 +320,15 @@ impl PipelineRunner {
             .components
             .get_disjoint_mut([pub_id.0, sub_id.0])
             .unwrap();
-        let kind = c1.component.output_kind(pub_stream);
+        let kind = c1.component.output_kind(pub_channel);
         if kind.is_none() {
-            return Err(AddDependencyError::NoPubStream {
+            return Err(AddDependencyError::NoPubChannel {
                 component: pub_id,
-                stream: pub_stream,
+                channel: pub_channel,
             });
         }
         #[allow(clippy::collapsible_else_if)]
-        if let Some(name) = sub_stream {
+        if let Some(name) = sub_channel {
             let idx = match &mut c2.input_mode {
                 InputMode::Single {
                     name: ex_name,
@@ -337,13 +337,13 @@ impl PipelineRunner {
                     if !ex_name.as_ref().is_some_and(|n| n == name) {
                         return Err(AddDependencyError::DoesntTakeInput {
                             component: sub_id,
-                            stream: Some(name),
+                            channel: Some(name),
                         });
                     }
                     if *attached {
                         return Err(AddDependencyError::DuplicateNamedInput {
                             component: sub_id,
-                            stream: name,
+                            channel: name,
                         });
                     }
                     *attached = true;
@@ -359,13 +359,13 @@ impl PipelineRunner {
                     let Some((idx, comp)) = lookup.get_mut(name) else {
                         return Err(AddDependencyError::DoesntTakeInput {
                             component: sub_id,
-                            stream: Some(name),
+                            channel: Some(name),
                         });
                     };
                     if comp.is_valid() {
                         return Err(AddDependencyError::DuplicateNamedInput {
                             component: sub_id,
-                            stream: name,
+                            channel: name,
                         });
                     }
                     if kind.is_multi() {
@@ -404,7 +404,7 @@ impl PipelineRunner {
                     }
                 }
             };
-            if let Some(name) = pub_stream {
+            if let Some(name) = pub_channel {
                 c1.dependents
                     .entry(name.to_string())
                     .or_default()
@@ -420,13 +420,13 @@ impl PipelineRunner {
             else {
                 return Err(AddDependencyError::DoesntTakeInput {
                     component: sub_id,
-                    stream: None,
+                    channel: None,
                 });
             };
             if *attached {
                 return Err(AddDependencyError::DuplicatePrimaryInput { component: sub_id });
             }
-            if let Some(name) = pub_stream {
+            if let Some(name) = pub_channel {
                 c1.dependents
                     .entry(name.to_string())
                     .or_default()

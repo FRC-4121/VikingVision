@@ -24,12 +24,12 @@ pub enum ParseSourceError {
 #[serde(try_from = "&str")]
 pub struct Source {
     pub component: String,
-    pub stream: Option<String>,
+    pub channel: Option<String>,
 }
 impl Display for Source {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if let Some(stream) = &self.stream {
-            write!(f, "{}.{stream}", self.component)
+        if let Some(channel) = &self.channel {
+            write!(f, "{}.{channel}", self.component)
         } else {
             f.write_str(&self.component)
         }
@@ -55,7 +55,7 @@ impl TryFrom<&str> for Source {
             }
             Ok(Source {
                 component: component.to_string(),
-                stream: Some(channel.to_string()),
+                channel: Some(channel.to_string()),
             })
         } else {
             if let Some((n, _)) = value
@@ -66,7 +66,7 @@ impl TryFrom<&str> for Source {
             }
             Ok(Source {
                 component: value.to_string(),
-                stream: None,
+                channel: None,
             })
         }
     }
@@ -146,17 +146,17 @@ impl ConfigFile {
                         .get(s.component.as_str())
                         .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                     runner
-                        .add_dependency(pub_id, s.stream.as_deref(), sub_id, None)
+                        .add_dependency(pub_id, s.channel.as_deref(), sub_id, None)
                         .map_err(BuildRunnerError::AddDependencyError)?;
                 }
                 InputConfig::Multiple(m) => {
-                    for (stream, s) in m {
+                    for (channel, s) in m {
                         let pub_id = *runner
                             .components()
                             .get(s.component.as_str())
                             .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                         runner
-                            .add_dependency(pub_id, s.stream.as_deref(), sub_id, Some(stream))
+                            .add_dependency(pub_id, s.channel.as_deref(), sub_id, Some(channel))
                             .map_err(BuildRunnerError::AddDependencyError)?;
                     }
                 }

@@ -7,13 +7,13 @@ struct Print2;
 struct BroadcastVec;
 struct CheckContains;
 
-// Print is a simple component that takes a value on its input stream and prints it.
+// Print is a simple component that takes a value on its pimary input and prints it.
 impl Component for Print {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
     fn output_kind(&self, _name: Option<&str>) -> OutputKind {
-        OutputKind::None // our printing component doesn't return anything on any streams
+        OutputKind::None // our printing component doesn't return anything on any channels
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
         let Ok(val) = context.get_res(None).and_log_err() else {
@@ -22,7 +22,7 @@ impl Component for Print {
         tracing::info!(?val, "print");
     }
 }
-// Print2 is a simple component that takes a value on its input stream and prints it.
+// Print2 is a simple component that takes a value on its "a" and "b" inputs and prints them.
 impl Component for Print2 {
     fn inputs(&self) -> Inputs {
         Inputs::Named(vec!["a".to_string(), "b".to_string()])
@@ -40,7 +40,7 @@ impl Component for Print2 {
         tracing::info!(?a, ?b, "print");
     }
 }
-// BroadcastVec is a component that takes a Vec<i32> in (downcasting as necessary) and outputs the vector on its primary output stream, along with each element on its "elem" stream.
+// BroadcastVec is a component that takes a Vec<i32> in (downcasting as necessary) and outputs the vector on its primary output channel, along with each element on its "elem" channel.
 impl Component for BroadcastVec {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
@@ -56,13 +56,13 @@ impl Component for BroadcastVec {
         let Ok(val) = context.get_as::<Vec<i32>>(None).and_log_err() else {
             return;
         };
-        context.submit(None, val.clone()); // here we submit the vector on our primary output stream
+        context.submit(None, val.clone()); // here we submit the vector on our primary output channel
         for &elem in &*val {
             context.submit(Some("elem"), Arc::new(elem)); // we can also call submit() multiple times, which will trigger any dependent components
         }
     }
 }
-// CheckContains takes two named inputs rather than a primary one: a Vec<i32> and an i32 that might be in it. It then sends a single output on its output stream.
+// CheckContains takes two named inputs rather than a primary one: a Vec<i32> and an i32 that might be in it. It then sends a single output on its output channel.
 impl Component for CheckContains {
     fn inputs(&self) -> Inputs {
         Inputs::Named(vec!["vec".to_string(), "elem".to_string()])

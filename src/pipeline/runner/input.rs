@@ -14,36 +14,36 @@ use std::sync::Arc;
 /// - [`Vec`], and
 /// - tuples of up to twelve elements
 pub trait InputSpecifier {
-    fn get(&self, stream: &str) -> Option<Arc<dyn Data>>;
+    fn get(&self, channel: &str) -> Option<Arc<dyn Data>>;
 }
 impl<D: Clone + IntoData> InputSpecifier for (&str, D) {
-    fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
-        (stream == self.0).then(|| self.1.clone().into_data())
+    fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
+        (channel == self.0).then(|| self.1.clone().into_data())
     }
 }
 impl<T: InputSpecifier> InputSpecifier for &T {
-    fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
-        T::get(self, stream)
+    fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
+        T::get(self, channel)
     }
 }
 impl<T: InputSpecifier> InputSpecifier for [T] {
-    fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
-        self.iter().find_map(|i| i.get(stream))
+    fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
+        self.iter().find_map(|i| i.get(channel))
     }
 }
 impl<T: InputSpecifier, const N: usize> InputSpecifier for [T; N] {
-    fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
-        self.iter().find_map(|i| i.get(stream))
+    fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
+        self.iter().find_map(|i| i.get(channel))
     }
 }
 impl<T: InputSpecifier> InputSpecifier for Vec<T> {
-    fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
-        self.iter().find_map(|i| i.get(stream))
+    fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
+        self.iter().find_map(|i| i.get(channel))
     }
 }
 impl<S: Borrow<str> + Hash + Eq, D: Clone + Into<Arc<dyn Data>>> InputSpecifier for HashMap<S, D> {
-    fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
-        HashMap::get(self, stream).map(|d| d.clone().into())
+    fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
+        HashMap::get(self, channel).map(|d| d.clone().into())
     }
 }
 
@@ -52,13 +52,13 @@ macro_rules! impl_for_tuple {
     ($head:ident $(, $tail:ident)*) => {
         impl<$head: InputSpecifier, $($tail: InputSpecifier,)*> InputSpecifier for ($head, $($tail,)*) {
             #[allow(non_snake_case)]
-            fn get(&self, stream: &str) -> Option<Arc<dyn Data>> {
+            fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
                 let ($head, $($tail,)*) = self;
-                if let Some(val) = $head.get(stream) {
+                if let Some(val) = $head.get(channel) {
                     return Some(val);
                 }
                 $(
-                    if let Some(val) = $tail.get(stream) {
+                    if let Some(val) = $tail.get(channel) {
                         return Some(val);
                     }
                 )*
@@ -77,10 +77,10 @@ pub enum PackArgsError<'a> {
     #[error("No component {0}")]
     NoComponent(ComponentId),
     /// The component takes data through its primary input.
-    #[error("Component expects an input on the pimary stream")]
+    #[error("Component expects a primary input")]
     ExpectingPrimary,
     /// The component needs an input, but it wasn't given.
-    #[error("Component needs {0:?} as an input stream, but none was specified")]
+    #[error("Component needs an input named {0:?}, but none was specified")]
     MissingInput(&'a str),
 }
 

@@ -21,7 +21,7 @@ impl Drop for Cleanup<'_> {
 #[derive(Debug, Clone, Error)]
 pub enum DowncastInputError<'a> {
     /// The input wasn't given.
-    #[error("Component doesn't have a {} input stream", if let Some(name) = .0 { format!("{name:?}") } else { "primary".to_string() })]
+    #[error("Component doesn't have a{}", if let Some(name) = .0 { format!("n input named {name:?}") } else { " primary input".to_string() })]
     MissingInput(Option<&'a str>),
     /// The stored type doesn't match the requested one.
     #[error(transparent)]
@@ -239,26 +239,26 @@ impl<'r> ComponentContextInner<'r> {
     pub fn name(&self) -> &'r triomphe::Arc<str> {
         &self.component.name
     }
-    /// Get the current value from a given stream.
-    pub fn get<'b>(&self, stream: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
+    /// Get the current value from a given channel.
+    pub fn get<'b>(&self, channel: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
         if self.finished {
             tracing::error!("get() was called after finish() for a component");
             return None;
         }
-        let req_stream = stream.into();
+        let req_channel = channel.into();
         match self.input {
             InputKind::Empty => None,
             InputKind::Single(ref data) => {
                 let InputMode::Single { name, .. } = &self.component.input_mode else {
                     unreachable!()
                 };
-                (name.as_deref() == req_stream).then(|| data.clone())
+                (name.as_deref() == req_channel).then(|| data.clone())
             }
-            InputKind::Multiple(run_idx, ref arg) => req_stream.and_then(|name| {
+            InputKind::Multiple(run_idx, ref arg) => req_channel.and_then(|name| {
                 let InputMode::Multiple { lookup, multi } = &self.component.input_mode else {
                     unreachable!()
                 };
-                if multi.as_ref().map(|x| x.0.as_str()) == req_stream {
+                if multi.as_ref().map(|x| x.0.as_str()) == req_channel {
                     return arg.clone();
                 }
                 let field_idx = lookup.get(name)?.0;
@@ -277,30 +277,30 @@ impl<'r> ComponentContextInner<'r> {
     /// Same as [`get`](Self::get) but returns a `Result` that implements [`LogErr`].
     pub fn get_res<'b>(
         &self,
-        stream: impl Into<Option<&'b str>>,
+        channel: impl Into<Option<&'b str>>,
     ) -> Result<Arc<dyn Data>, DowncastInputError<'b>> {
-        let stream = stream.into();
-        self.get(stream)
-            .ok_or(DowncastInputError::MissingInput(stream))
+        let channel = channel.into();
+        self.get(channel)
+            .ok_or(DowncastInputError::MissingInput(channel))
     }
-    /// Get the current value from a given stream and attempt to downcast it.
+    /// Get the current value from a given channel and attempt to downcast it.
     ///
     /// For even more convenience, [`DowncastInputError::log_err`] and the let-else pattern can be used.
     pub fn get_as<'b, T: Data>(
         &self,
-        stream: impl Into<Option<&'b str>>,
+        channel: impl Into<Option<&'b str>>,
     ) -> Result<Arc<T>, DowncastInputError<'b>> {
-        self.get_res(stream)?.downcast_arc().map_err(From::from)
+        self.get_res(channel)?.downcast_arc().map_err(From::from)
     }
-    /// Check whether publishing on a given stream will have an effect.
+    /// Check whether publishing on a given channel will have an effect.
     ///
     /// After [`finish`](Self::finish) is called, this will always return false.
-    pub fn listening<'b>(&self, stream: impl Into<Option<&'b str>>) -> bool {
+    pub fn listening<'b>(&self, channel: impl Into<Option<&'b str>>) -> bool {
         if self.finished {
             return false;
         }
-        let stream: Option<&'b str> = stream.into();
-        stream.map_or_else(
+        let channel: Option<&'b str> = channel.into();
+        channel.map_or_else(
             || self.component.primary_dependents.is_empty(),
             |name| {
                 self.component
@@ -310,21 +310,21 @@ impl<'r> ComponentContextInner<'r> {
             },
         )
     }
-    /// Publish a result on a given stream.
+    /// Publish a result on a given channel.
     ///
     /// After [`finish`](Self::finish) is called, this will become a no-op and log an error.
     #[inline(always)]
     pub fn submit<'b, 's>(
         &self,
-        stream: impl Into<Option<&'b str>>,
+        channel: impl Into<Option<&'b str>>,
         data: Arc<dyn Data>,
         scope: &rayon::Scope<'s>,
     ) where
         'r: 's,
     {
-        self.submit_impl(stream.into(), data, scope);
+        self.submit_impl(channel.into(), data, scope);
     }
-    fn submit_impl<'s>(&self, stream: Option<&str>, data: Arc<dyn Data>, scope: &rayon::Scope<'s>)
+    fn submit_impl<'s>(&self, channel: Option<&str>, data: Arc<dyn Data>, scope: &rayon::Scope<'s>)
     where
         'r: 's,
     {
@@ -332,7 +332,7 @@ impl<'r> ComponentContextInner<'r> {
             tracing::error!("submit() was called after finish() for a component");
             return;
         }
-        let dependents = stream.map_or_else(
+        let dependents = channel.map_or_else(
             || self.component.primary_dependents.as_slice(),
             |name| {
                 self.component
@@ -341,9 +341,9 @@ impl<'r> ComponentContextInner<'r> {
                     .map_or(&[], Vec::as_slice)
             },
         );
-        for &(comp_id, stream) in dependents {
+        for &(comp_id, channel) in dependents {
             let next_comp = &self.runner.components[comp_id.0];
-            match stream {
+            match channel {
                 InputChannel::Primary(multi) => self.spawn_next(
                     next_comp,
                     InputKind::Single(data.clone()),
@@ -530,10 +530,10 @@ impl<'r> Deref for ComponentContext<'r, '_, '_> {
     }
 }
 impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
-    /// Publish a result on a given stream.
+    /// Publish a result on a given channel.
     #[inline(always)]
-    pub fn submit<'b>(&self, stream: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
-        self.inner.submit(stream, data, self.scope);
+    pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
+        self.inner.submit(channel, data, self.scope);
     }
     pub fn finish(&mut self) {
         self.inner.finish();
