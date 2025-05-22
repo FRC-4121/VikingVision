@@ -24,7 +24,11 @@ fn midteal_rgb2all() {
     assert_close(hsv, [128, 133, 59], "HSV mismatch");
     assert_close(gray, [48], "gray mismatch");
     assert_close(luma, [46], "luma mismatch");
-    dbg!(ycc, hsv, gray, luma);
+    let mut rgb2 = [0; 3];
+    ycc::rgb(&ycc, &mut rgb2);
+    assert_close(rgb, rgb2, "YCbCr roundtrip mismatch");
+    hsv::rgb(&hsv, &mut rgb2);
+    assert_close(rgb, rgb2, "HSV roundtrip mismatch");
 }
 
 #[test]
