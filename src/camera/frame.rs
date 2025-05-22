@@ -2,7 +2,6 @@ use super::CameraImpl;
 use super::config::BasicConfig;
 use crate::buffer::{Buffer, PixelFormat};
 use crate::delegate_camera_config;
-use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::io;
@@ -78,64 +77,50 @@ impl super::Config for FrameCameraConfig {
             }
             ImageSource::Path(path) => {
                 let _guard = info_span!("loading image", path = %path.display());
-                let image = image::ImageReader::open(path)
-                    .inspect_err(|err| error!(%err, "failed to open file"))?
-                    .with_guessed_format()
-                    .inspect_err(|err| error!(%err, "failed to guess format"))?
-                    .decode()
-                    .map_err(|err| {
-                        error!(%err, "error decoding image");
+                let buf =
+                    std::fs::read(path).inspect_err(|err| error!(%err, "failed to open file"))?;
+                let options = zune_jpeg::zune_core::options::DecoderOptions::new_fast();
+                if buf.starts_with(&[0xff, 0xd8]) {
+                    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(buf, options);
+                    decoder.decode_headers().map_err(|err| {
+                        error!(%err, "failed to decode JPEG headers");
                         io::Error::new(io::ErrorKind::InvalidData, err)
                     })?;
-                let width = image.width();
-                let height = image.height();
-                let (format, data) = match image {
-                    DynamicImage::ImageLuma8(img) => (PixelFormat::Luma, img.into_raw()),
-                    DynamicImage::ImageLumaA8(img) => (PixelFormat::LumaA, img.into_raw()),
-                    DynamicImage::ImageRgb8(img) => (PixelFormat::Rgb, img.into_raw()),
-                    DynamicImage::ImageRgba8(img) => (PixelFormat::Rgba, img.into_raw()),
-                    DynamicImage::ImageLuma16(img) => (
-                        PixelFormat::Luma,
-                        img.into_raw().into_iter().map(|p| (p >> 8) as u8).collect(),
-                    ),
-                    DynamicImage::ImageLumaA16(img) => (
-                        PixelFormat::LumaA,
-                        img.into_raw().into_iter().map(|p| (p >> 8) as u8).collect(),
-                    ),
-                    DynamicImage::ImageRgb16(img) => (
-                        PixelFormat::Rgb,
-                        img.into_raw().into_iter().map(|p| (p >> 8) as u8).collect(),
-                    ),
-                    DynamicImage::ImageRgba16(img) => (
-                        PixelFormat::Rgba,
-                        img.into_raw().into_iter().map(|p| (p >> 8) as u8).collect(),
-                    ),
-                    DynamicImage::ImageRgb32F(img) => (
-                        PixelFormat::Rgb,
-                        img.into_raw()
-                            .into_iter()
-                            .map(|p| (p * 256.0).min(255.0) as u8)
-                            .collect(),
-                    ),
-                    DynamicImage::ImageRgba32F(img) => (
-                        PixelFormat::Rgba,
-                        img.into_raw()
-                            .into_iter()
-                            .map(|p| (p * 256.0).min(255.0) as u8)
-                            .collect(),
-                    ),
-                    _ => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "invalid image type",
-                        ));
+                    let (width, height) = decoder.dimensions().unwrap();
+                    let mut data = vec![0u8; width * height * 3];
+                    decoder.decode_into(&mut data).map_err(|err| {
+                        error!(%err, "failed to decode JPEG body");
+                        io::Error::new(io::ErrorKind::InvalidData, err)
+                    })?;
+                    Buffer {
+                        width: width as _,
+                        height: height as _,
+                        format: PixelFormat::Rgb,
+                        data: data.into(),
                     }
-                };
-                Buffer {
-                    width,
-                    height,
-                    format,
-                    data: data.into(),
+                } else if buf.starts_with(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) {
+                    let mut decoder = zune_png::PngDecoder::new_with_options(buf, options);
+                    decoder.decode_headers().map_err(|err| {
+                        error!(%err, "failed to decode PNG headers");
+                        io::Error::new(io::ErrorKind::InvalidData, err)
+                    })?;
+                    let (width, height) = decoder.get_dimensions().unwrap();
+                    let mut data = vec![0u8; width * height * 3];
+                    decoder.decode_into(&mut data).map_err(|err| {
+                        error!(%err, "failed to decode PNG body");
+                        io::Error::new(io::ErrorKind::InvalidData, err)
+                    })?;
+                    Buffer {
+                        width: width as _,
+                        height: height as _,
+                        format: PixelFormat::Rgb,
+                        data: data.into(),
+                    }
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "couldn't determine file format",
+                    ));
                 }
             }
         };
