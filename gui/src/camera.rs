@@ -410,7 +410,7 @@ impl Worker<Context> for CameraWorker {
                                         .intervals
                                         .iter()
                                         .position(|i| i.numerator == n && i.denominator == d)
-                                        .unwrap();
+                                        .unwrap_or(0);
                                 }
                             }
                         }

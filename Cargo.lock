@@ -3830,6 +3830,7 @@ dependencies = [
  "triomphe",
  "typetag",
  "v4l",
+ "zune-jpeg",
 ]
 
 [[package]]

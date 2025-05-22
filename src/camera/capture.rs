@@ -16,6 +16,7 @@ use v4l::prelude::MmapStream;
 use v4l::video::Capture;
 use v4l::video::capture::Parameters;
 use v4l::{Device, FourCC, Fraction};
+use zune_jpeg::{JpegDecoder, zune_core::options::DecoderOptions};
 
 mod fourcc_serde {
     use serde::de::{Deserializer, Error, Unexpected, Visitor};
@@ -178,6 +179,9 @@ pub struct CaptureCameraConfig {
     pub basic: BasicConfig,
     #[serde(with = "fourcc_serde")]
     pub fourcc: FourCC,
+    pub pixel_format: Option<PixelFormat>,
+    #[serde(default)]
+    pub decode_jpeg: bool,
     pub exposure: Option<i64>,
     #[serde(with = "interval_serde", flatten)]
     pub interval: Option<Fraction>,
@@ -199,6 +203,7 @@ impl Config for CaptureCameraConfig {
             config: self.clone(),
             stream: None,
             device,
+            jpeg_buf: None,
         };
         cam.config_device()?;
         Ok(Box::new(cam))
@@ -209,10 +214,15 @@ pub struct CaptureCamera {
     pub config: CaptureCameraConfig,
     pub device: Device,
     pub stream: Option<MmapStream<'static>>,
+    pub jpeg_buf: Option<Buffer<'static>>,
 }
 impl CaptureCamera {
     pub fn from_device(device: Device) -> io::Result<Self> {
         let format = device.format()?;
+        let fmt = format
+            .fourcc
+            .try_into()
+            .map_err(|err| io::Error::new(io::ErrorKind::Unsupported, err))?;
         let config = CaptureCameraConfig {
             basic: BasicConfig {
                 width: format.width,
@@ -221,6 +231,8 @@ impl CaptureCamera {
                 max_fps: None,
             },
             fourcc: format.fourcc,
+            pixel_format: Some(fmt),
+            decode_jpeg: &format.fourcc.repr == b"MJPG",
             interval: None,
             exposure: None,
             source: Arc::new(NoSource),
@@ -229,6 +241,7 @@ impl CaptureCamera {
             config,
             device,
             stream: None,
+            jpeg_buf: None,
         })
     }
     /// Configure the device based on the configuration.
@@ -264,34 +277,44 @@ impl CaptureCamera {
         ))?;
         let interval = self.interval_mut()?;
         self.device.set_params(&Parameters::new(interval))?;
+        let fmt = self
+            .config
+            .fourcc
+            .try_into()
+            .map_err(|err| io::Error::new(io::ErrorKind::Unsupported, err))?;
+        self.config.pixel_format = Some(fmt);
+        self.config.decode_jpeg = &self.config.fourcc.repr == b"MJPG";
         Ok(())
     }
-    pub fn stream(&mut self) -> io::Result<&mut MmapStream<'static>> {
-        let res =
-            polonius::<_, _, ForLt!(&'_ mut MmapStream<'static>)>(&mut self.stream, |stream| {
-                if let Some(stream) = stream {
-                    PoloniusResult::Borrowing(stream)
-                } else {
-                    PoloniusResult::Owned {
-                        value: (),
-                        input_borrow: Placeholder,
-                    }
+    /// Initialize a stream from a device if it's not available.
+    pub fn make_stream<'a>(
+        stream: &'a mut Option<MmapStream<'static>>,
+        device: &Device,
+    ) -> io::Result<&'a mut MmapStream<'static>> {
+        let res = polonius::<_, _, ForLt!(&'_ mut MmapStream<'static>)>(stream, |stream| {
+            if let Some(stream) = stream {
+                PoloniusResult::Borrowing(stream)
+            } else {
+                PoloniusResult::Owned {
+                    value: (),
+                    input_borrow: Placeholder,
                 }
-            });
+            }
+        });
         match res {
             PoloniusResult::Borrowing(stream) => Ok(stream),
             PoloniusResult::Owned {
                 value: _,
                 input_borrow,
             } => {
-                *input_borrow = Some(MmapStream::with_buffers(
-                    &self.device,
-                    Type::VideoCapture,
-                    4,
-                )?);
+                *input_borrow = Some(MmapStream::with_buffers(&device, Type::VideoCapture, 4)?);
                 Ok(input_borrow.as_mut().unwrap())
             }
         }
+    }
+    /// Get the video stream, creating it if it's not available.
+    pub fn stream(&mut self) -> io::Result<&mut MmapStream<'static>> {
+        Self::make_stream(&mut self.stream, &self.device)
     }
     /// Set the width and height. Changes won't take effect until `config_device` is called.
     pub const fn set_resolution(&mut self, width: u32, height: u32) {
@@ -348,14 +371,26 @@ impl CameraImpl for CaptureCamera {
     fn read_frame(&mut self) -> io::Result<Buffer<'_>> {
         let width = self.width();
         let height = self.height();
-        let (frame, _meta) = self
-            .stream()?
+        let (frame, _meta) = Self::make_stream(&mut self.stream, &self.device)?
             .next()
             .inspect_err(|err| error!(%err, "failed to read from stream"))?;
+        if self.config.decode_jpeg {
+            let px_buf = self.jpeg_buf.get_or_insert_default();
+            let mut decoder = JpegDecoder::new_with_options(frame, DecoderOptions::new_fast());
+            let px_data = px_buf.data.to_mut();
+            px_buf.width = width;
+            px_buf.height = height;
+            px_buf.format = PixelFormat::Rgb;
+            px_data.resize(width as usize * height as usize * 3, 0);
+            if let Err(err) = decoder.decode_into(&mut *px_data) {
+                error!(%err, "failed to decode JPEG data");
+            }
+            return Ok(px_buf.borrow());
+        }
         Ok(Buffer {
             width,
             height,
-            format: PixelFormat::Yuyv,
+            format: self.config.pixel_format.unwrap(),
             data: frame.into(),
         })
     }

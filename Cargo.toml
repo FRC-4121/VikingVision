@@ -22,6 +22,7 @@ tracing.workspace = true
 triomphe = "0.1.14"
 typetag = "0.2.20"
 v4l.workspace = true
+zune-jpeg = "0.4.14"
 
 [workspace.dependencies]
 serde = { version = "1.0.219", features = ["derive", "rc"] }
