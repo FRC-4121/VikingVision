@@ -1,10 +1,28 @@
 use crate::broadcast::*;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 use tracing::warn;
 
 pub mod conv;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UnrecognizedFourCC(pub [u8; 4]);
+impl Display for UnrecognizedFourCC {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("Unrecognized fourcc: \"")?;
+        for ch in &self.0 {
+            if ch.is_ascii_alphanumeric() {
+                f.write_str(std::str::from_utf8(std::slice::from_ref(ch)).unwrap())?;
+            } else {
+                write!(f, "\\x{ch:0>2}")?;
+            }
+        }
+        f.write_str("\"")
+    }
+}
+impl Error for UnrecognizedFourCC {}
 
 /// A format for the pixels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,6 +76,21 @@ impl PixelFormat {
             Self::Hsv => Some(Self::Hsva),
             Self::YCbCr => Some(Self::YCbCrA),
             _ => None,
+        }
+    }
+    pub const fn known_fourcc(fourcc: v4l::FourCC) -> bool {
+        matches!(&fourcc.repr, b"YUYV" | b"RGB8" | b"RGBA" | b"MJPG")
+    }
+}
+impl TryFrom<v4l::FourCC> for PixelFormat {
+    type Error = UnrecognizedFourCC;
+    fn try_from(value: v4l::FourCC) -> Result<Self, Self::Error> {
+        match &value.repr {
+            b"YUYV" => Ok(Self::Yuyv),
+            b"RGB8" => Ok(Self::Rgb),
+            b"RGBA" => Ok(Self::Rgba),
+            b"MJPG" => Ok(Self::Rgb), // we decode JPEG to RGB
+            &repr => Err(UnrecognizedFourCC(repr)),
         }
     }
 }
