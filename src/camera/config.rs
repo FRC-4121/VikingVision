@@ -5,7 +5,7 @@ use std::time::Duration;
 
 /// Serializable configuration for a camera.
 #[typetag::serde(tag = "type")]
-pub trait Config {
+pub trait CameraConfig {
     fn width(&self) -> u32;
     fn height(&self) -> u32;
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>>;
