@@ -1,0 +1,29 @@
+use crate::pipeline::runner::ComponentId;
+
+pub mod group;
+pub mod utils;
+
+/// An identifier for a component.
+///
+/// Loading from a name is likely more useful for serialization, but these components should be easily
+/// usable from code, so they can be configured using component IDs, too.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComponentIdentifier {
+    Name(String),
+    Id(ComponentId),
+}
+impl From<String> for ComponentIdentifier {
+    fn from(value: String) -> Self {
+        Self::Name(value)
+    }
+}
+impl From<ComponentId> for ComponentIdentifier {
+    fn from(value: ComponentId) -> Self {
+        Self::Id(value)
+    }
+}
+
+pub mod prelude {
+    pub use super::group::GroupComponent;
+    pub use super::utils::{CloneComponent, DebugComponent};
+}

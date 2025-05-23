@@ -19,7 +19,7 @@ pub struct TypeMismatch<A> {
 }
 impl<A> LogErr for TypeMismatch<A> {
     fn log_err(&self) {
-        tracing::error!(id = ?self.id, "Couldn't downcast data to {}", self.expected);
+        tracing::error!(id = ?self.id, "couldn't downcast data to {}", self.expected);
     }
 }
 

@@ -9,12 +9,13 @@ use std::ops::{Deref, DerefMut};
 struct Cleanup<'a> {
     runner: &'a PipelineRunner,
     callback: Option<Callback<'a>>,
+    run_id: u32,
 }
 
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
         if let Some(callback) = self.callback.take() {
-            callback(self.runner);
+            callback(self.runner, self.run_id);
         }
         self.runner.running.fetch_sub(1, Ordering::AcqRel);
     }
@@ -37,7 +38,16 @@ pub enum DowncastInputError<'a> {
 impl LogErr for DowncastInputError<'_> {
     fn log_err(&self) {
         match self {
-            Self::MissingInput(_) => tracing::error!("{self}"),
+            Self::MissingInput(name) => {
+                tracing::error!(
+                    "Component doesn't have a{}",
+                    if let Some(name) = name {
+                        format!("n input named {name:?}")
+                    } else {
+                        " primary input".to_string()
+                    }
+                )
+            }
             Self::TypeMismatch(m) => m.log_err(),
         }
     }
@@ -73,7 +83,7 @@ impl<'a> RunParams<'a> {
     /// Add a completion callback to the parameters.
     pub fn with_callback(
         mut self,
-        callback: impl FnOnce(&'a PipelineRunner) + Send + Sync + 'a,
+        callback: impl FnOnce(&'a PipelineRunner, u32) + Send + Sync + 'a,
     ) -> Self {
         self.callback = Some(Box::new(callback));
         self
@@ -264,7 +274,7 @@ pub struct ComponentContextInner<'r> {
     runner: &'r PipelineRunner,
     component: &'r ComponentData,
     input: InputKind,
-    decr: Arc<Cleanup<'r>>,
+    decr: Option<Arc<Cleanup<'r>>>,
     run_id: RunId,
     invoc: AtomicU32,
     finished: bool,
@@ -367,6 +377,29 @@ impl<'r> ComponentContextInner<'r> {
         channel: impl Into<Option<&'b str>>,
     ) -> Result<Arc<T>, DowncastInputError<'b>> {
         self.get_res(channel)?.downcast_arc().map_err(From::from)
+    }
+
+    /// Get the packed [`ComponentArgs`].
+    ///
+    /// This is only really useful for forwarding to another component with the same specified inputs.
+    pub fn packed_args(&self) -> ComponentArgs {
+        match &self.input {
+            InputKind::Empty => ComponentArgs::empty(),
+            InputKind::Single(arg) => ComponentArgs::single(arg.clone()),
+            InputKind::Multiple(run_idx, last) => {
+                let InputMode::Multiple { lookup, .. } = &self.component.input_mode else {
+                    unreachable!()
+                };
+                let num_fields = lookup.len();
+                let lock = self.component.partial.lock().unwrap();
+                let mut vec =
+                    lock.data[(*run_idx * num_fields)..((*run_idx + 1) * num_fields)].to_vec();
+                if let Some(last) = last {
+                    vec.push(Some(last.clone()));
+                }
+                ComponentArgs(vec)
+            }
+        }
     }
 
     /// Check if any components are listening on a given channel.
@@ -584,6 +617,7 @@ impl<'r> ComponentContextInner<'r> {
         }
         self.runner.cleanup_runs(self.component, &self.run_id);
         self.input = InputKind::Empty;
+        self.decr = None;
     }
 
     /// Create a tracing span for this component execution.
@@ -739,11 +773,13 @@ impl PipelineRunner {
             component,
             mut args,
         } = params;
-        let decr = Arc::new(Cleanup {
+        let run_id = self.run_id.fetch_add(1, Ordering::Relaxed);
+        let decr = Some(Arc::new(Cleanup {
             runner: self,
             callback,
-        });
-        let run_id = RunId::new(self.run_id.fetch_add(1, Ordering::Relaxed));
+            run_id,
+        }));
+        let run_id = RunId::new(run_id);
         let input = match args.len() {
             0 => InputKind::Empty,
             1 => InputKind::Single(args.0.pop().unwrap().unwrap()),

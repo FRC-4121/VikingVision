@@ -4,7 +4,7 @@ pub mod runner;
 
 pub mod prelude {
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
-    pub use super::runner::{ComponentContext, PipelineRunner, RunParams};
+    pub use super::runner::{ComponentContext, ComponentId, PipelineRunner, RunParams};
     pub use crate::utils::LogErr;
 
     #[doc(hidden)]
