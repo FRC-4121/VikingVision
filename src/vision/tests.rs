@@ -145,4 +145,31 @@ mod blob {
             }]
         );
     }
+    #[test]
+    fn fermata() {
+        let img = [
+            [false, true, true, true, false],
+            [true, false, false, false, true],
+            [false, false, true, false, false],
+        ];
+        assert_eq!(
+            BlobsIterator::new(img).collect::<Vec<_>>(),
+            &[
+                Blob {
+                    min_x: 0,
+                    max_x: 5,
+                    min_y: 0,
+                    max_y: 2,
+                    pixels: 5,
+                },
+                Blob {
+                    min_x: 2,
+                    max_x: 3,
+                    min_y: 2,
+                    max_y: 3,
+                    pixels: 1,
+                },
+            ]
+        )
+    }
 }

@@ -1,6 +1,7 @@
 use crate::broadcast::par_broadcast2;
 use crate::buffer::{Buffer, PixelFormat};
 use serde::{Deserialize, Serialize};
+use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
 
@@ -281,7 +282,7 @@ pub struct Blob {
     pub pixels: usize,
 }
 impl Blob {
-    pub fn from_row(min_x: u32, max_x: u32, y: u32) -> Self {
+    fn from_row(min_x: u32, max_x: u32, y: u32) -> Self {
         Self {
             min_x,
             max_x,
@@ -291,6 +292,8 @@ impl Blob {
         }
     }
     /// Merge another blob into this one.
+    ///
+    /// This creates a bounding box that covers both and adds their pixel counts.
     pub fn absorb(&mut self, other: Self) {
         if other.min_x < self.min_x {
             self.min_x = other.min_x
@@ -308,40 +311,133 @@ impl Blob {
     }
 }
 
+/// State returned from [`BlobWithBottom::eat`]
+#[derive(Debug)]
+enum EatState {
+    /// We absorbed the range into the current blob, push it back to the front
+    Absorbed,
+    /// We may have done some rotation, push this to the front and re-order as necessary
+    QueueFront,
+    /// We're done with this blob and found something, push it to the back
+    QueueBack,
+    /// We're done with this blob and it's not touching the bottom, push it to the back
+    Return,
+}
+
+/// A [`Blob`] with tracking for where it touches the bottom row
 #[derive(Debug)]
 struct BlobWithBottom {
     blob: Blob,
-    min: u32,
-    max: u32,
+    ranges: SmallVec<[(u32, u32, bool); 2]>,
 }
 impl BlobWithBottom {
     fn from_row(min: u32, max: u32, y: u32) -> Self {
         Self {
-            min,
-            max,
             blob: Blob::from_row(min, max, y),
+            ranges: smallvec![(min, max, false)],
         }
     }
-    fn eat_new(&mut self, min: u32, max: u32, y: u32) {
-        self.min = min;
-        self.max = max;
-        self.blob.absorb(Blob::from_row(min, max, y));
-    }
-    fn eat_curr(&mut self, min: u32, max: u32) {
-        self.max = max;
-        if max > self.blob.max_x {
-            self.blob.max_x = max
+    /// Try to absorb this new span into the current blob
+    fn eat(&mut self, min: u32, max: u32, y: u32, do_absorb: bool) -> EatState {
+        let mut seen_curr = false;
+        for _ in 0..self.ranges.len() {
+            let (rmin, rmax, curr) = self.ranges[0];
+            if curr {
+                seen_curr = true;
+            }
+            if rmax < min {
+                if curr {
+                    self.ranges.rotate_left(1);
+                } else {
+                    self.ranges.remove(0);
+                }
+                continue;
+            }
+            if rmin > max {
+                return EatState::QueueFront;
+            }
+            if do_absorb {
+                self.ranges.push((min, max, true));
+                self.blob.absorb(Blob::from_row(min, max, y));
+            }
+            return EatState::Absorbed;
         }
-        self.blob.pixels += (max - min) as usize;
+        if seen_curr {
+            if do_absorb {
+                self.ranges.retain_mut(|(_, _, v)| std::mem::take(v));
+            }
+            return EatState::QueueBack;
+        }
+        if self.ranges.iter().any(|x| x.2) {
+            if do_absorb {
+                self.ranges.retain_mut(|(_, _, v)| std::mem::take(v));
+            }
+            EatState::QueueBack
+        } else {
+            EatState::Return
+        }
     }
 }
 
+fn search(slice: &[BlobWithBottom], min: u32) -> usize {
+    if slice.len() > 4 {
+        slice
+            .binary_search_by_key(&min, |b| b.ranges[0].0)
+            .unwrap_err()
+    } else {
+        slice
+            .iter()
+            .position(|i| i.ranges[0].0 > min)
+            .unwrap_or(slice.len())
+    }
+}
+
+/// Rotate the value at the front of an otherwise-sorted dequeue to where it needs to be
+fn queue_front(remaining: usize, new_min: u32, incomplete: &mut VecDeque<BlobWithBottom>) -> bool {
+    if remaining > 1 {
+        let (front, back) = incomplete.as_mut_slices();
+        if let Some(slice) = front.get_mut(..remaining) {
+            let idx = search(&slice[1..], new_min);
+            if idx > 0 {
+                slice[..idx].rotate_left(1);
+                return true;
+            }
+            false
+        } else {
+            let idx = search(&front[1..], new_min);
+            if idx < front.len() - 1 {
+                front[..idx].rotate_left(1);
+                idx > 0
+            } else {
+                let slice = &mut back[..(remaining - front.len())];
+                let idx = search(slice, new_min);
+                if idx == 0 {
+                    front.rotate_left(1);
+                } else {
+                    std::mem::swap(&mut slice[0], &mut front[0]);
+                    front.rotate_left(1);
+                    slice[..idx].rotate_left(1);
+                }
+                true
+            }
+        }
+    } else {
+        false
+    }
+}
+
+/// Different states the [`BlobsInRowState`] can be in
 #[derive(Debug, Clone, Copy)]
 enum State {
+    /// We just started
     Init,
+    /// We're going through background pixels
     EatingFalse,
+    /// We're going through foreground pixels, with the given start
     EatingTrue(u32),
+    /// We're coalescing the given range into the previous row
     Coalescing(u32, u32),
+    /// The row is finished, now we're just draining any old blobs
     Draining,
 }
 
@@ -391,61 +487,89 @@ impl BlobsInRowState {
                     }
                 },
                 State::Coalescing(min, max) => {
-                    if self.remaining < incomplete.len() {
-                        let mut blob = incomplete.pop_back().unwrap();
-                        if blob.max >= min && blob.min <= max {
-                            blob.eat_curr(min, max);
-                            while self.remaining > 0 {
-                                let b2 = incomplete.pop_front().unwrap();
-                                if b2.min > max {
-                                    incomplete.push_front(b2);
-                                    break;
-                                }
-                                blob.blob.absorb(b2.blob);
-                                self.remaining -= 1;
-                            }
-                            incomplete.push_back(blob);
-                            self.state = State::EatingFalse;
-                            continue;
-                        } else {
-                            incomplete.push_back(blob);
-                        }
-                    }
                     if self.remaining == 0 {
                         incomplete.push_back(BlobWithBottom::from_row(min, max, self.y));
                     } else {
+                        let mut push = true;
                         while self.remaining > 0 {
                             let mut blob = incomplete.pop_front().unwrap();
-                            if blob.max < min {
-                                self.remaining -= 1;
-                                return Some(blob.blob);
-                            } else if blob.min > max {
-                                incomplete.push_front(blob);
-                                incomplete.push_back(BlobWithBottom::from_row(min, max, self.y));
-                                break;
-                            } else {
-                                self.remaining -= 1;
-                                blob.eat_new(min, max, self.y);
-                                while self.remaining > 0 {
-                                    let b2 = incomplete.pop_front().unwrap();
-                                    if b2.min > max {
-                                        incomplete.push_front(b2);
-                                        break;
+                            match blob.eat(min, max, self.y, true) {
+                                EatState::Absorbed => {
+                                    while self.remaining > 1 {
+                                        let mut b2 = incomplete.pop_front().unwrap();
+                                        match b2.eat(min, max, self.y, false) {
+                                            EatState::Absorbed => {
+                                                blob.blob.absorb(b2.blob);
+                                                let point = blob.ranges.partition_point(|x| x.2);
+                                                blob.ranges.insert_many(
+                                                    point,
+                                                    b2.ranges.drain_filter(|x| !x.2),
+                                                );
+                                                let idx = blob.ranges.len();
+                                                blob.ranges
+                                                    .extend(b2.ranges.into_iter().filter(|x| x.2));
+                                                blob.ranges[idx..].sort_unstable_by_key(|r| r.0);
+                                                self.remaining -= 1;
+                                            }
+                                            EatState::QueueFront => {
+                                                let new_min = b2.ranges[0].0;
+                                                incomplete.push_front(b2);
+                                                let acted = queue_front(
+                                                    self.remaining - 1,
+                                                    new_min,
+                                                    incomplete,
+                                                );
+                                                if !acted {
+                                                    break;
+                                                }
+                                            }
+                                            EatState::QueueBack | EatState::Return => {
+                                                unreachable!()
+                                            }
+                                        }
                                     }
-                                    blob.blob.absorb(b2.blob);
-                                    self.remaining -= 1;
+                                    incomplete.push_front(blob);
+                                    push = false;
+                                    break;
                                 }
-                                incomplete.push_back(blob);
-                                break;
+                                EatState::QueueFront => {
+                                    let new_min = blob.ranges[0].0;
+                                    incomplete.push_front(blob);
+                                    queue_front(self.remaining, new_min, incomplete);
+                                    incomplete
+                                        .push_back(BlobWithBottom::from_row(min, max, self.y));
+                                    push = false;
+                                    break;
+                                }
+                                EatState::QueueBack => {
+                                    self.remaining -= 1;
+                                    incomplete.push_back(blob);
+                                }
+                                EatState::Return => {
+                                    self.remaining -= 1;
+                                    return Some(blob.blob);
+                                }
                             }
+                        }
+                        if push {
+                            incomplete.push_back(BlobWithBottom::from_row(min, max, self.y));
                         }
                     }
                     self.state = State::EatingFalse;
                 }
                 State::Draining => {
-                    if self.remaining > 0 {
+                    while self.remaining > 0 {
+                        let mut blob = incomplete.pop_front().unwrap();
                         self.remaining -= 1;
-                        return Some(incomplete.pop_front().unwrap().blob);
+                        blob.ranges.retain_mut(|(_, _, c)| std::mem::take(c));
+                        if blob.ranges.is_empty() {
+                            return Some(blob.blob);
+                        } else {
+                            while blob.ranges[0].0 > blob.ranges.last().unwrap().0 {
+                                blob.ranges.rotate_left(1);
+                            }
+                            incomplete.push_back(blob);
+                        }
                     }
                     return None;
                 }
@@ -454,6 +578,15 @@ impl BlobsInRowState {
     }
 }
 
+/// An iterator over the blobs in an "image".
+///
+/// This iterator wraps an iterator whose items implement [`IntoIterator`], which should in turn have items that are `bool`.
+/// This gives the maximum flexibility since it makes no assumptions about where the image came from or how its pixels are stored.
+/// If for some reason the rows are different lengths, it'll still work, and it'll pad the rest of the row as being part of the background.
+///
+/// For the simplest, most common cases, this will only allocate its queue for incomplete blobs, with a space complexity being proportional
+/// to the maximum number of blobs in a row. Certain pathological patterns, where the bottom of a connected blob splits apart, can lead to more
+/// allocation, but it's still bounded by a space complexity linear to the width of the image.
 pub struct BlobsIterator<I: Iterator<Item: IntoIterator>> {
     iter: I,
     row: Option<<I::Item as IntoIterator>::IntoIter>,

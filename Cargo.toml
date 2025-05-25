@@ -17,7 +17,7 @@ disqualified = "1.0.0"
 polonius-the-crab = "0.4.2"
 rayon = "1.10.0"
 serde.workspace = true
-smallvec = "1.15.0"
+smallvec = { version = "1.15.0", features = ["drain_filter"] }
 thiserror = "2.0.12"
 tracing.workspace = true
 triomphe = "0.1.14"
