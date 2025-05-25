@@ -5,3 +5,4 @@ pub mod components;
 pub mod pipeline;
 pub mod serialized;
 pub mod utils;
+pub mod vision;

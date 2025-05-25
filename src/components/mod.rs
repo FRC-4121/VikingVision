@@ -2,6 +2,7 @@ use crate::pipeline::runner::ComponentId;
 
 pub mod group;
 pub mod utils;
+pub mod vision;
 
 /// An identifier for a component.
 ///

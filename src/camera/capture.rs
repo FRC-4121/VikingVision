@@ -377,11 +377,10 @@ impl CameraImpl for CaptureCamera {
         if self.config.decode_jpeg {
             let px_buf = self.jpeg_buf.get_or_insert_default();
             let mut decoder = JpegDecoder::new_with_options(frame, DecoderOptions::new_fast());
-            let px_data = px_buf.data.to_mut();
             px_buf.width = width;
             px_buf.height = height;
             px_buf.format = PixelFormat::Rgb;
-            px_data.resize(width as usize * height as usize * 3, 0);
+            let px_data = px_buf.resize_data();
             if let Err(err) = decoder.decode_into(&mut *px_data) {
                 error!(%err, "failed to decode JPEG data");
             }

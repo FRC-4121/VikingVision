@@ -26,6 +26,7 @@ impl Error for UnrecognizedFourCC {}
 
 /// A format for the pixels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PixelFormat {
     Luma,
     LumaA,
@@ -40,7 +41,9 @@ pub enum PixelFormat {
     Hsva,
 
     Yuyv,
+    #[serde(rename = "ycc")]
     YCbCr,
+    #[serde(rename = "ycca")]
     YCbCrA,
 }
 impl Display for PixelFormat {
@@ -380,10 +383,21 @@ impl Buffer<'_> {
             *self = buf;
         }
     }
+    /// Convert this buffer into one with another format.
+    ///
+    /// This always allocates a new buffer.
     pub fn convert(&self, format: PixelFormat) -> Buffer<'static> {
         let mut out = Buffer::zeroed(self.width, self.height, format);
         self.convert_into(&mut out);
         out
+    }
+    /// Convert this buffer into another format, or borrow from this one if the formats match.
+    pub fn convert_cow(&self, format: PixelFormat) -> Buffer<'_> {
+        if self.format == format {
+            self.borrow()
+        } else {
+            self.convert(format)
+        }
     }
     /// Copy the contents of another buffer into this one, taking ownership of the current buffer.
     pub fn copy_from(&mut self, src: Buffer<'_>) {
@@ -414,5 +428,11 @@ impl Buffer<'_> {
                 data.copy_from_slice(&src.data);
             }
         }
+    }
+    /// Resize the internal data to match the size, shape, and pixel format, returning the mutable buffer.
+    pub fn resize_data(&mut self) -> &mut Vec<u8> {
+        let vec = self.data.to_mut();
+        vec.resize(self.width as usize * self.height as usize, 0);
+        vec
     }
 }
