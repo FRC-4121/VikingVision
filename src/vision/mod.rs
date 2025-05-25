@@ -1,5 +1,6 @@
 use crate::broadcast::par_broadcast2;
 use crate::buffer::{Buffer, PixelFormat};
+use crate::pipeline::prelude::Data;
 use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
@@ -10,7 +11,7 @@ mod tests;
 
 /// A filter, along with a color space to filter in.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", tag = "space")]
 pub enum ColorFilter {
     #[serde(rename_all = "kebab-case")]
     Luma { min_l: u8, max_l: u8 },
@@ -291,6 +292,14 @@ impl Blob {
             pixels: (max_x - min_x) as _,
         }
     }
+    /// Get the width of this blob.
+    pub const fn width(&self) -> u32 {
+        self.max_x - self.min_x
+    }
+    /// Get the height of this blob.
+    pub const fn height(&self) -> u32 {
+        self.max_y - self.min_y
+    }
     /// Merge another blob into this one.
     ///
     /// This creates a bounding box that covers both and adds their pixel counts.
@@ -310,6 +319,7 @@ impl Blob {
         self.pixels += other.pixels;
     }
 }
+impl Data for Blob {}
 
 /// State returned from [`BlobWithBottom::eat`]
 #[derive(Debug)]
