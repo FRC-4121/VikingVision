@@ -3,6 +3,7 @@ use crate::pipeline::prelude::*;
 use crate::vision::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use thiserror::Error;
 
 /// A simple component to change the color space of a buffer.
 ///
@@ -197,5 +198,232 @@ impl Component for BlobComponent {
 impl ComponentFactory for BlobComponent {
     fn build(&self, _: &str) -> Box<dyn Component> {
         Box::new(*self)
+    }
+}
+
+#[derive(Deserialize)]
+struct FilterShim {
+    width: usize,
+    height: usize,
+    index: usize,
+}
+#[derive(Deserialize)]
+struct BlurShim {
+    width: usize,
+    height: usize,
+}
+
+#[derive(Debug, Error)]
+enum FromFilterError {
+    #[error("window width must odd")]
+    EvenWidth,
+    #[error("window height must odd")]
+    EvenHeight,
+    #[error("pixel index must be less than the window size")]
+    IndexOob,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "FilterShim")]
+pub struct PercentileFilterComponent {
+    pub width: usize,
+    pub height: usize,
+    pub index: usize,
+}
+impl TryFrom<FilterShim> for PercentileFilterComponent {
+    type Error = FromFilterError;
+
+    fn try_from(value: FilterShim) -> Result<Self, Self::Error> {
+        if value.width & 1 == 0 {
+            return Err(FromFilterError::EvenWidth);
+        }
+        if value.height & 1 == 0 {
+            return Err(FromFilterError::EvenHeight);
+        }
+        let Some(len) = value.width.checked_mul(value.height) else {
+            return Err(FromFilterError::IndexOob);
+        };
+        if value.index > len {
+            return Err(FromFilterError::IndexOob);
+        }
+        Ok(Self {
+            width: value.width,
+            height: value.height,
+            index: value.index,
+        })
+    }
+}
+impl Component for PercentileFilterComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        if name.is_none() {
+            OutputKind::Single
+        } else {
+            OutputKind::Multiple
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
+            return;
+        };
+        let mut dst = Buffer::empty_rgb();
+        percentile_filter(img.borrow(), &mut dst, self.width, self.height, self.index);
+        context.submit(None, Arc::new(dst));
+    }
+}
+#[typetag::serde(name = "percent-filter")]
+impl ComponentFactory for PercentileFilterComponent {
+    fn build(&self, _: &str) -> Box<dyn Component> {
+        Box::new(*self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "BlurShim")]
+pub struct BoxBlurComponent {
+    pub width: usize,
+    pub height: usize,
+}
+impl TryFrom<BlurShim> for BoxBlurComponent {
+    type Error = FromFilterError;
+
+    fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
+        if value.width & 1 == 0 {
+            return Err(FromFilterError::EvenWidth);
+        }
+        if value.height & 1 == 0 {
+            return Err(FromFilterError::EvenHeight);
+        }
+        Ok(Self {
+            width: value.width,
+            height: value.height,
+        })
+    }
+}
+impl Component for BoxBlurComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        if name.is_none() {
+            OutputKind::Single
+        } else {
+            OutputKind::Multiple
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
+            return;
+        };
+        let mut dst = Buffer::empty_rgb();
+        box_blur(img.borrow(), &mut dst, self.width, self.height);
+        context.submit(None, Arc::new(dst));
+    }
+}
+#[typetag::serde(name = "box-blur")]
+impl ComponentFactory for BoxBlurComponent {
+    fn build(&self, _: &str) -> Box<dyn Component> {
+        Box::new(*self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "BlurShim")]
+pub struct DilateFactory {
+    pub width: usize,
+    pub height: usize,
+}
+impl TryFrom<BlurShim> for DilateFactory {
+    type Error = FromFilterError;
+
+    fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
+        if value.width & 1 == 0 {
+            return Err(FromFilterError::EvenWidth);
+        }
+        if value.height & 1 == 0 {
+            return Err(FromFilterError::EvenHeight);
+        }
+        Ok(Self {
+            width: value.width,
+            height: value.height,
+        })
+    }
+}
+#[typetag::serde(name = "dilate")]
+impl ComponentFactory for DilateFactory {
+    fn build(&self, _: &str) -> Box<dyn Component> {
+        Box::new(PercentileFilterComponent {
+            width: self.width,
+            height: self.height,
+            index: 0,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "BlurShim")]
+pub struct ErodeFactory {
+    pub width: usize,
+    pub height: usize,
+}
+impl TryFrom<BlurShim> for ErodeFactory {
+    type Error = FromFilterError;
+
+    fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
+        if value.width & 1 == 0 {
+            return Err(FromFilterError::EvenWidth);
+        }
+        if value.height & 1 == 0 {
+            return Err(FromFilterError::EvenHeight);
+        }
+        Ok(Self {
+            width: value.width,
+            height: value.height,
+        })
+    }
+}
+#[typetag::serde(name = "erode")]
+impl ComponentFactory for ErodeFactory {
+    fn build(&self, _: &str) -> Box<dyn Component> {
+        Box::new(PercentileFilterComponent {
+            width: self.width,
+            height: self.height,
+            index: self.width * self.height,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "BlurShim")]
+pub struct MedianFilterFactory {
+    pub width: usize,
+    pub height: usize,
+}
+impl TryFrom<BlurShim> for MedianFilterFactory {
+    type Error = FromFilterError;
+
+    fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
+        if value.width & 1 == 0 {
+            return Err(FromFilterError::EvenWidth);
+        }
+        if value.height & 1 == 0 {
+            return Err(FromFilterError::EvenHeight);
+        }
+        Ok(Self {
+            width: value.width,
+            height: value.height,
+        })
+    }
+}
+#[typetag::serde(name = "median-filter")]
+impl ComponentFactory for MedianFilterFactory {
+    fn build(&self, _: &str) -> Box<dyn Component> {
+        Box::new(PercentileFilterComponent {
+            width: self.width,
+            height: self.height,
+            index: (self.width * self.height) / 2,
+        })
     }
 }

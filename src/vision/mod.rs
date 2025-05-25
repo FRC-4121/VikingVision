@@ -1,6 +1,7 @@
 use crate::broadcast::par_broadcast2;
 use crate::buffer::{Buffer, PixelFormat};
 use crate::pipeline::prelude::Data;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
@@ -638,3 +639,116 @@ impl<I: Iterator<Item: IntoIterator<Item = bool>>> Iterator for BlobsIterator<I>
     }
 }
 impl<I: Iterator<Item: Iterator<Item = bool>>> FusedIterator for BlobsIterator<I> {}
+
+/// Percentile filter an image.
+///
+/// The width and height must be odd numbers, and the index must be less than their product.
+/// An index of 0 is a dilation, an index of `(width * height)` is an erosion, and `(width * height / 2)` is a median filter.
+/// The output buffer will have the same dimensions and format as the input buffer.
+pub fn percentile_filter(
+    src: Buffer<'_>,
+    dst: &mut Buffer<'_>,
+    width: usize,
+    height: usize,
+    index: usize,
+) {
+    assert_ne!(
+        src.format,
+        PixelFormat::Yuyv,
+        "Percentile filtering isn't implemented for YUYV images"
+    );
+    assert!(width & 1 == 1, "Window width must be an odd number");
+    assert!(height & 1 == 1, "Window width must be an odd number");
+    assert!(
+        index < width * height,
+        "Pixel index {index} is out of range for a {width}x{height} window"
+    );
+    dst.width = src.width;
+    dst.height = src.height;
+    dst.format = src.format;
+    let data = dst.resize_data();
+    if width == 1 && height == 1 {
+        data.copy_from_slice(&src.data);
+    }
+    let pxlen = src.format.pixel_size() as usize;
+    let buf_len = width as usize * height as usize;
+    let buf_width = src.width as usize;
+    let buf_height = src.width as usize;
+    let half_width = width as usize / 2;
+    let half_height = height as usize / 2;
+    data.par_chunks_mut(pxlen).enumerate().for_each_init(
+        || vec![Vec::with_capacity(buf_len); pxlen],
+        |bufs, (n, px)| {
+            bufs.iter_mut().for_each(Vec::clear);
+            let y = n / buf_width;
+            let x = n % buf_width;
+            for y in y.saturating_sub(half_height)..=std::cmp::min(y + half_height, buf_height - 1)
+            {
+                for x in x.saturating_sub(half_width)..=std::cmp::min(x + half_width, buf_width - 1)
+                {
+                    for (buf, &val) in bufs.iter_mut().zip(src.pixel(x as _, y as _).unwrap()) {
+                        buf.push(val);
+                    }
+                }
+            }
+            for (buf, val) in bufs.iter_mut().zip(px) {
+                buf.sort_unstable();
+                if buf.len() == buf_len {
+                    *val = buf[index];
+                } else {
+                    *val = buf[index * buf.len() / buf_len];
+                }
+            }
+        },
+    );
+}
+
+/// Box blur an image.
+///
+/// The width and height must be odd numbers.
+/// The output buffer will have the same dimensions and format as the input buffer.
+pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usize) {
+    assert_ne!(
+        src.format,
+        PixelFormat::Yuyv,
+        "Box blurring isn't implemented for YUYV images"
+    );
+    assert!(width & 1 == 1, "Window width must be an odd number");
+    assert!(height & 1 == 1, "Window width must be an odd number");
+    dst.width = src.width;
+    dst.height = src.height;
+    dst.format = src.format;
+    let data = dst.resize_data();
+    if width == 1 && height == 1 {
+        data.copy_from_slice(&src.data);
+    }
+    if src.width == 0 || src.height == 0 {
+        return;
+    }
+    let pxlen = src.format.pixel_size() as usize;
+    let buf_len = width as usize * height as usize;
+    let buf_width = src.width as usize;
+    let buf_height = src.width as usize;
+    let half_width = width as usize / 2;
+    let half_height = height as usize / 2;
+    data.par_chunks_mut(pxlen).enumerate().for_each_init(
+        || vec![Vec::with_capacity(buf_len); pxlen],
+        |bufs, (n, px)| {
+            bufs.iter_mut().for_each(Vec::clear);
+            let y = n / buf_width;
+            let x = n % buf_width;
+            for y in y.saturating_sub(half_height)..=std::cmp::min(y + half_height, buf_height - 1)
+            {
+                for x in x.saturating_sub(half_width)..=std::cmp::min(x + half_width, buf_width - 1)
+                {
+                    for (buf, &val) in bufs.iter_mut().zip(src.pixel(x as _, y as _).unwrap()) {
+                        buf.push(val);
+                    }
+                }
+            }
+            for (buf, val) in bufs.iter_mut().zip(px) {
+                *val = (buf.iter().map(|i| *i as usize).sum::<usize>() / buf.len()) as u8;
+            }
+        },
+    );
+}

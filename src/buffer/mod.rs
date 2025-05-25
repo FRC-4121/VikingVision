@@ -1,4 +1,5 @@
 use crate::broadcast::*;
+use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::error::Error;
@@ -133,7 +134,7 @@ impl Default for Buffer<'_> {
         Self::empty_rgb()
     }
 }
-impl Buffer<'_> {
+impl<'a> Buffer<'a> {
     /// Create an empty buffer with the given format.
     pub const fn empty(format: PixelFormat) -> Self {
         Self {
@@ -431,8 +432,68 @@ impl Buffer<'_> {
     }
     /// Resize the internal data to match the size, shape, and pixel format, returning the mutable buffer.
     pub fn resize_data(&mut self) -> &mut Vec<u8> {
-        let vec = self.data.to_mut();
-        vec.resize(self.width as usize * self.height as usize, 0);
-        vec
+        let len = self.width as usize * self.height as usize;
+        let res = polonius::<_, _, ForLt!(&mut Vec<u8>)>(&mut self.data, |data| {
+            if len == 0 {
+                if let Cow::Owned(vec) = data {
+                    vec.clear();
+                    PoloniusResult::Borrowing(vec)
+                } else {
+                    PoloniusResult::Owned {
+                        value: true,
+                        input_borrow: Placeholder,
+                    }
+                }
+            } else {
+                PoloniusResult::Owned {
+                    value: false,
+                    input_borrow: Placeholder,
+                }
+            }
+        });
+        match res {
+            PoloniusResult::Borrowing(vec) => vec,
+            PoloniusResult::Owned {
+                value: true,
+                input_borrow,
+            } => {
+                *input_borrow = Cow::Owned(Vec::new());
+                input_borrow.to_mut()
+            }
+            PoloniusResult::Owned {
+                value: false,
+                input_borrow,
+            } => {
+                let vec = input_borrow.to_mut();
+                vec.resize(len, 0);
+                vec
+            }
+        }
+    }
+    /// Get the slice of data for a single pixel.
+    pub fn pixel(&self, x: u32, y: u32) -> Option<&[u8]> {
+        if self.format == PixelFormat::Yuyv {
+            return None;
+        }
+        if x > self.width || y > self.height {
+            return None;
+        }
+        let px_idx = y as usize * self.width as usize + x as usize;
+        let px_len = self.format.pixel_size() as usize;
+        self.data.get((px_idx * px_len)..((px_idx + 1) * px_len))
+    }
+    /// Get the mutable slice of data for a single pixel.
+    pub fn pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
+        if self.format == PixelFormat::Yuyv {
+            return None;
+        }
+        if x > self.width || y > self.height {
+            return None;
+        }
+        let px_idx = y as usize * self.width as usize + x as usize;
+        let px_len = self.format.pixel_size() as usize;
+        self.data
+            .to_mut()
+            .get_mut((px_idx * px_len)..((px_idx + 1) * px_len))
     }
 }
