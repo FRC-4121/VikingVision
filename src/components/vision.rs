@@ -38,7 +38,7 @@ impl Component for ColorSpaceComponent {
 #[typetag::serde(name = "colorspace")]
 impl ComponentFactory for ColorSpaceComponent {
     fn build(&self, _: &str) -> Box<dyn Component> {
-        Box::new(self.clone())
+        Box::new(*self)
     }
 }
 

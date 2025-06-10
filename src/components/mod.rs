@@ -1,5 +1,6 @@
 use crate::pipeline::runner::ComponentId;
 
+pub mod apriltag;
 pub mod group;
 pub mod utils;
 pub mod vision;

@@ -1,3 +1,4 @@
+pub mod apriltag;
 pub mod broadcast;
 pub mod buffer;
 pub mod camera;

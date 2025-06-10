@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_else_if)]
 //! Implementation of [`GroupComponent`], a component that acts as a group of other components.
 
 use super::ComponentIdentifier;
