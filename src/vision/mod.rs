@@ -671,11 +671,11 @@ pub fn percentile_filter(
         data.copy_from_slice(&src.data);
     }
     let pxlen = src.format.pixel_size() as usize;
-    let buf_len = width as usize * height as usize;
+    let buf_len = width * height;
     let buf_width = src.width as usize;
     let buf_height = src.width as usize;
-    let half_width = width as usize / 2;
-    let half_height = height as usize / 2;
+    let half_width = width / 2;
+    let half_height = height / 2;
     data.par_chunks_mut(pxlen).enumerate().for_each_init(
         || vec![Vec::with_capacity(buf_len); pxlen],
         |bufs, (n, px)| {
@@ -726,11 +726,11 @@ pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usi
         return;
     }
     let pxlen = src.format.pixel_size() as usize;
-    let buf_len = width as usize * height as usize;
+    let buf_len = width * height;
     let buf_width = src.width as usize;
     let buf_height = src.width as usize;
-    let half_width = width as usize / 2;
-    let half_height = height as usize / 2;
+    let half_width = width / 2;
+    let half_height = height / 2;
     data.par_chunks_mut(pxlen).enumerate().for_each_init(
         || vec![Vec::with_capacity(buf_len); pxlen],
         |bufs, (n, px)| {
