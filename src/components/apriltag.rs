@@ -4,7 +4,7 @@ use crate::apriltag;
 use crate::buffer::Buffer;
 use crate::pipeline::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[derive(Debug)]
 pub struct AprilTagComponent {
@@ -35,7 +35,7 @@ impl Component for AprilTagComponent {
         let listening_vec = context.listening("vec");
         let listening_elem = context.listening(None);
         if context.listening("found") {
-            context.submit("found", Arc::new(it.len()));
+            context.submit("found", it.len());
         }
         let mut vec = Vec::new();
         if listening_vec {
@@ -43,17 +43,17 @@ impl Component for AprilTagComponent {
         }
         for elem in it {
             match [listening_elem, listening_vec] {
-                [true, false] => context.submit(None, Arc::new(elem)),
+                [true, false] => context.submit(None, elem),
                 [false, true] => vec.push(elem),
                 [true, true] => {
                     vec.push(elem.clone());
-                    context.submit(None, Arc::new(elem));
+                    context.submit(None, elem);
                 }
                 [false, false] => {}
             }
         }
         if listening_vec {
-            context.submit("vec", Arc::new(vec));
+            context.submit("vec", vec);
         }
     }
 }
@@ -106,7 +106,7 @@ impl Component for DetectPoseComponent {
         let Ok(detection) = context.get_as::<apriltag::Detection>(None).and_log_err() else {
             return;
         };
-        context.submit(None, Arc::new(detection.estimate_pose(params)));
+        context.submit(None, detection.estimate_pose(params));
     }
 }
 #[typetag::serde(name = "april-pose")]

@@ -2,7 +2,6 @@ use crate::buffer::{Buffer, PixelFormat};
 use crate::pipeline::prelude::*;
 use crate::vision::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use thiserror::Error;
 
 /// A simple component to change the color space of a buffer.
@@ -32,7 +31,7 @@ impl Component for ColorSpaceComponent {
         let Ok(buffer) = context.get_as::<Buffer<'static>>(None).and_log_err() else {
             return;
         };
-        context.submit(None, Arc::new(buffer.convert(self.format)));
+        context.submit(None, buffer.convert(self.format));
     }
 }
 #[typetag::serde(name = "colorspace")]
@@ -71,7 +70,7 @@ impl Component for ColorFilterComponent {
             return;
         };
         let filtered = filter(img.borrow(), self.filter);
-        context.submit(None, Arc::new(filtered));
+        context.submit(None, filtered);
     }
 }
 #[typetag::serde(name = "filter")]
@@ -186,11 +185,11 @@ impl Component for BlobComponent {
                 vec.push(blob);
             }
             if stream {
-                context.submit("elem", Arc::new(blob));
+                context.submit("elem", blob);
             }
         }
         if collect {
-            context.submit(None, Arc::new(vec));
+            context.submit(None, vec);
         }
     }
 }
@@ -270,7 +269,7 @@ impl Component for PercentileFilterComponent {
         };
         let mut dst = Buffer::empty_rgb();
         percentile_filter(img.borrow(), &mut dst, self.width, self.height, self.index);
-        context.submit(None, Arc::new(dst));
+        context.submit(None, dst);
     }
 }
 #[typetag::serde(name = "percent-filter")]
@@ -319,7 +318,7 @@ impl Component for BoxBlurComponent {
         };
         let mut dst = Buffer::empty_rgb();
         box_blur(img.borrow(), &mut dst, self.width, self.height);
-        context.submit(None, Arc::new(dst));
+        context.submit(None, dst);
     }
 }
 #[typetag::serde(name = "box-blur")]

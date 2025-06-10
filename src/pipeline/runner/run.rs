@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::component::TypeMismatch;
+use crate::pipeline::component::{IntoData, TypeMismatch};
 use crate::utils::LogErr;
 use std::convert::Infallible;
 use std::ops::{Deref, DerefMut};
@@ -419,6 +419,25 @@ impl<'r> ComponentContextInner<'r> {
         )
     }
 
+    /// Run a callback to submit to a channel, if there's a listener on the channel.
+    pub fn submit_if_listening<'b, 's, D: IntoData, F: FnOnce() -> D>(
+        &self,
+        channel: impl Into<Option<&'b str>>,
+        create: F,
+        scope: &rayon::Scope<'s>,
+    ) -> bool
+    where
+        'r: 's,
+    {
+        let channel = channel.into();
+        let listening = self.listening(channel);
+        if listening {
+            let data = create().into_data();
+            self.submit_impl(channel, data, scope);
+        }
+        listening
+    }
+
     /// Publish a result on a given channel.
     ///
     /// This immediately runs any listening components if possible.
@@ -426,12 +445,12 @@ impl<'r> ComponentContextInner<'r> {
     pub fn submit<'b, 's>(
         &self,
         channel: impl Into<Option<&'b str>>,
-        data: Arc<dyn Data>,
+        data: impl IntoData,
         scope: &rayon::Scope<'s>,
     ) where
         'r: 's,
     {
-        self.submit_impl(channel.into(), data, scope);
+        self.submit_impl(channel.into(), data.into_data(), scope);
     }
 
     /// Internal implementation of `submit` that handles data distribution and scheduling.
@@ -665,8 +684,18 @@ impl<'r> DerefMut for ComponentContext<'r, '_, '_> {
 impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
     /// Publish a result on a given channel.
     #[inline(always)]
-    pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
+    pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: impl IntoData) {
         self.inner.submit(channel, data, self.scope);
+    }
+
+    /// Publish a result on a given channel, if there's a listener.
+    #[inline(always)]
+    pub fn submit_if_listening<'b, D: IntoData, F: FnOnce() -> D>(
+        &self,
+        channel: impl Into<Option<&'b str>>,
+        create: F,
+    ) {
+        self.inner.submit_if_listening(channel, create, self.scope);
     }
 
     /// Defer an operation to run later on the thread pool.
