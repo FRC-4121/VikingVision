@@ -191,7 +191,8 @@ impl Component for GroupComponent {
         let flag_clone = Arc::clone(&flag);
         let params = RunParams::new(state.input_component)
             .with_args(inner.packed_args())
-            .with_callback(move |_, run| flag.store(run, Ordering::Release));
+            .with_callback(move |ctx| flag.store(ctx.run_id, Ordering::Release))
+            .with_context(inner.context.clone());
         if let Err(err) = inner.runner().run(params, scope) {
             error!(%err, "failed to start sub-run");
         } else {

@@ -136,9 +136,6 @@ impl Display for RunId {
     }
 }
 
-/// A callback function to be called after a pipeline completes.
-pub type Callback<'a> = Box<dyn FnOnce(&'a PipelineRunner, u32) + Send + Sync + 'a>;
-
 /// A pipeline execution system for managing interdependent components.
 ///
 /// PipelineRunner manages component registration, dependencies, and parallel execution. Components

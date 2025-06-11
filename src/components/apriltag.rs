@@ -2,9 +2,11 @@
 
 use crate::apriltag;
 use crate::buffer::Buffer;
+use crate::camera::Camera;
 use crate::pipeline::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use supply::ProviderExt;
 
 #[derive(Debug)]
 pub struct AprilTagComponent {
@@ -98,9 +100,28 @@ impl Component for DetectPoseComponent {
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
         let params = match *self {
             Self::Fixed(p) => p,
-            Self::Infer { .. } => {
-                tracing::error!("inferred pose parameters aren't yet supported!");
-                return;
+            Self::Infer { tag_size } => {
+                if let Some(cam) = context.context.request::<Camera>() {
+                    let cfg = cam.config();
+                    if let Some(fov) = cfg.fov() {
+                        apriltag::PoseParams {
+                            tag_size,
+                            ..apriltag::PoseParams::from_dimensions(
+                                cfg.width(),
+                                cfg.height(),
+                                fov as _,
+                            )
+                        }
+                    } else {
+                        tracing::error!(
+                            "attempted to infer parameters for a camera without an FOV"
+                        );
+                        return;
+                    }
+                } else {
+                    tracing::error!("a camera wasn't passed as context!");
+                    return;
+                }
             }
         };
         let Ok(detection) = context.get_as::<apriltag::Detection>(None).and_log_err() else {

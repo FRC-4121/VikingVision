@@ -6,7 +6,7 @@ use thiserror::Error;
 
 /// A simple component to change the color space of a buffer.
 ///
-/// This is useful for downstream components that use [`Buffer::clone_cow`].
+/// This is useful for downstream components that use [`Buffer::convert_cow`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ColorSpaceComponent {
     pub format: PixelFormat,

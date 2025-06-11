@@ -3100,6 +3100,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "supply"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ace62a6fb0a502889d6bb7e823a0073fb4611df7d30e72b54ac36850395d252e"
+dependencies = [
+ "ty-tag",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3334,6 +3343,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
+name = "ty-tag"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea5706af16f769b59b19a9a85a15a0b985d24bc9d97ce4bbf692b1c18472b21"
+dependencies = [
+ "ty-tag-macros",
+]
+
+[[package]]
+name = "ty-tag-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8567e2991018431655bb63b713f979cad21cf3895e25ca1c5f7fa721e0367fb8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "type-map"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3480,10 +3509,12 @@ dependencies = [
  "rayon",
  "serde",
  "smallvec",
+ "supply",
  "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",
  "triomphe",
+ "ty-tag",
  "typetag",
  "v4l",
  "zune-jpeg",
