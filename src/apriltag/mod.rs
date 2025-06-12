@@ -1,6 +1,6 @@
 #![cfg(feature = "apriltag")]
 
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, PixelFormat};
 use crate::pipeline::prelude::Data;
 use apriltag_sys::*;
 use serde::{Deserialize, Serialize};
@@ -8,6 +8,9 @@ use std::fmt::{self, Debug, Display, Formatter};
 use std::mem::MaybeUninit;
 use std::str::FromStr;
 use thiserror::Error;
+
+#[cfg(test)]
+mod tests;
 
 /// A pose calculated by the apriltag pose estimator.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -378,26 +381,36 @@ impl Detector {
         }
         self
     }
+    pub fn set_refine(&mut self, refine: bool) -> &mut Self {
+        unsafe {
+            (*self.ptr).refine_edges = refine as _;
+        }
+        self
+    }
     /// Take an image and detect any april tags in it.
-    ///
-    /// For multi-channel images, a channel can be extracted.
-    pub fn detect(&mut self, buffer: Buffer<'_>, channel: usize) -> DetectionIterator {
-        let px_len = buffer.format.pixel_size() as usize;
+    pub fn detect(&mut self, mut buffer: Buffer<'_>) -> DetectionIterator {
+        match buffer.format {
+            PixelFormat::Gray | PixelFormat::Luma => {}
+            PixelFormat::GrayA
+            | PixelFormat::Rgb
+            | PixelFormat::Rgba
+            | PixelFormat::Hsv
+            | PixelFormat::Hsva => buffer.convert_inplace(PixelFormat::Gray),
+            PixelFormat::LumaA | PixelFormat::YCbCr | PixelFormat::YCbCrA | PixelFormat::Yuyv => {
+                buffer.convert_inplace(PixelFormat::Luma)
+            }
+        }
         assert_eq!(
-            buffer.width as usize * buffer.height as usize * px_len,
+            buffer.width as usize * buffer.height as usize,
             buffer.data.len(),
             "Buffer lengths don't match"
-        );
-        assert!(
-            channel < px_len,
-            "Out of range channel {channel} for a {px_len}-channel image"
         );
         unsafe {
             let raw = image_u8 {
                 width: buffer.width as _,
                 height: buffer.height as _,
-                stride: px_len as _,
-                buf: (buffer.data.as_ptr() as *mut u8).byte_add(channel),
+                stride: buffer.width as _,
+                buf: buffer.data.as_ptr() as *mut u8,
             };
             DetectionIterator::new(apriltag_detector_detect(
                 self.ptr,
@@ -450,6 +463,14 @@ impl DetectionIterator {
     /// This pointer must be to a valid array, holding [`Detection`]s, and the indices must match the number of elements taken.
     pub const unsafe fn from_raw(ptr: *mut zarray_t, min: usize, max: usize) -> Self {
         Self { ptr, min, max }
+    }
+    /// Create an empty iterator.
+    pub const fn empty() -> Self {
+        Self {
+            ptr: std::ptr::null_mut(),
+            min: 0,
+            max: 0,
+        }
     }
     /// Convert this array back into its inner pointer, along with its start and end indices.
     pub fn into_raw(mut self) -> (*mut zarray_t, usize, usize) {

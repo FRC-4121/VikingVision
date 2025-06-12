@@ -11,7 +11,6 @@ use supply::ProviderExt;
 #[derive(Debug)]
 pub struct AprilTagComponent {
     pub detector: Mutex<apriltag::Detector>,
-    pub channel: usize,
 }
 impl Component for AprilTagComponent {
     fn inputs(&self) -> Inputs {
@@ -33,7 +32,7 @@ impl Component for AprilTagComponent {
             tracing::warn!("poisoned mutex for detector");
             return;
         };
-        let it = lock.detect(img.borrow(), self.channel);
+        let it = lock.detect(img.borrow());
         let listening_vec = context.listening("vec");
         let listening_elem = context.listening(None);
         if context.listening("found") {
@@ -64,15 +63,12 @@ impl Component for AprilTagComponent {
 pub struct AprilTagFactory {
     #[serde(flatten)]
     pub config: apriltag::DetectorConfig,
-    #[serde(default)]
-    pub channel: usize,
 }
 #[typetag::serde(name = "apriltag")]
 impl ComponentFactory for AprilTagFactory {
     fn build(&self, _: &str) -> Box<dyn Component> {
         Box::new(AprilTagComponent {
             detector: Mutex::new(apriltag::Detector::from_config(&self.config)),
-            channel: self.channel,
         })
     }
 }

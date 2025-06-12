@@ -79,49 +79,7 @@ impl super::CameraConfig for FrameCameraConfig {
                 let _guard = info_span!("loading image", path = %path.display());
                 let buf =
                     std::fs::read(path).inspect_err(|err| error!(%err, "failed to open file"))?;
-                let options = zune_jpeg::zune_core::options::DecoderOptions::new_fast();
-                if buf.starts_with(&[0xff, 0xd8]) {
-                    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(buf, options);
-                    decoder.decode_headers().map_err(|err| {
-                        error!(%err, "failed to decode JPEG headers");
-                        io::Error::new(io::ErrorKind::InvalidData, err)
-                    })?;
-                    let (width, height) = decoder.dimensions().unwrap();
-                    let mut data = vec![0u8; width * height * 3];
-                    decoder.decode_into(&mut data).map_err(|err| {
-                        error!(%err, "failed to decode JPEG body");
-                        io::Error::new(io::ErrorKind::InvalidData, err)
-                    })?;
-                    Buffer {
-                        width: width as _,
-                        height: height as _,
-                        format: PixelFormat::Rgb,
-                        data: data.into(),
-                    }
-                } else if buf.starts_with(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) {
-                    let mut decoder = zune_png::PngDecoder::new_with_options(buf, options);
-                    decoder.decode_headers().map_err(|err| {
-                        error!(%err, "failed to decode PNG headers");
-                        io::Error::new(io::ErrorKind::InvalidData, err)
-                    })?;
-                    let (width, height) = decoder.get_dimensions().unwrap();
-                    let mut data = vec![0u8; width * height * 3];
-                    decoder.decode_into(&mut data).map_err(|err| {
-                        error!(%err, "failed to decode PNG body");
-                        io::Error::new(io::ErrorKind::InvalidData, err)
-                    })?;
-                    Buffer {
-                        width: width as _,
-                        height: height as _,
-                        format: PixelFormat::Rgb,
-                        data: data.into(),
-                    }
-                } else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "couldn't determine file format",
-                    ));
-                }
+                Buffer::decode_img_data(&buf)?
             }
         };
         let mut config = self.clone();

@@ -4,7 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
-use tracing::warn;
+use std::io;
+use thiserror::Error;
+use tracing::{error, info_span, warn};
+use zune_jpeg::{JpegDecoder, errors::DecodeErrors as JpegDecodeErrors};
+use zune_png::zune_core::{colorspace::ColorSpace, options::DecoderOptions};
+use zune_png::{PngDecoder, error::PngDecodeErrors};
 
 pub mod conv;
 
@@ -98,6 +103,38 @@ impl TryFrom<v4l::FourCC> for PixelFormat {
         }
     }
 }
+impl TryFrom<ColorSpace> for PixelFormat {
+    type Error = ColorSpace;
+    fn try_from(value: ColorSpace) -> Result<Self, Self::Error> {
+        match value {
+            ColorSpace::RGB => Ok(PixelFormat::Rgb),
+            ColorSpace::RGBA => Ok(PixelFormat::Rgba),
+            ColorSpace::Luma => Ok(PixelFormat::Luma),
+            ColorSpace::LumaA => Ok(PixelFormat::LumaA),
+            ColorSpace::HSV => Ok(PixelFormat::Hsv),
+            v => Err(v),
+        }
+    }
+}
+
+/// An error that can occur while decoding image data.
+#[derive(Debug, Error)]
+pub enum DecodeDataError {
+    /// The magic bytes didn't match a recognized format.
+    #[error("Unknown image format")]
+    UnknownFormat,
+    /// An error occurred decoding a PNG image.
+    #[error(transparent)]
+    Png(#[from] zune_png::error::PngDecodeErrors),
+    /// An error occurred decoding a JPEG image.
+    #[error(transparent)]
+    Jpeg(#[from] zune_jpeg::errors::DecodeErrors),
+}
+impl From<DecodeDataError> for io::Error {
+    fn from(value: DecodeDataError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, value)
+    }
+}
 
 /// A maybe-owned frame buffer.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -165,6 +202,67 @@ impl<'a> Buffer<'a> {
             height,
             format,
             data: color.repeat(width as usize * height as usize).into(),
+        }
+    }
+    /// Decode data in the PNG format.
+    pub fn decode_png_data(data: &[u8]) -> Result<Self, PngDecodeErrors> {
+        let _guard = info_span!("decoding PNG image", data.len = data.len()).entered();
+        let mut decoder = PngDecoder::new_with_options(
+            data,
+            DecoderOptions::new_fast()
+                .png_set_strip_to_8bit(false)
+                .png_set_decode_animated(false),
+        );
+        decoder
+            .decode_headers()
+            .inspect_err(|err| error!(%err, "failed to decode PNG headers"))?;
+        let (width, height) = decoder.get_dimensions().unwrap();
+        let data = decoder
+            .decode()
+            .inspect_err(|err| error!(%err, "failed to decode PNG image"))?
+            .u8()
+            .unwrap();
+        let space = decoder.get_colorspace().unwrap();
+        let Ok(format) = space.try_into() else {
+            error!(?space, "unimplemented color space");
+            return Err(PngDecodeErrors::GenericStatic("unknown color space")); // should be unreachable?
+        };
+        Ok(Self {
+            width: width as _,
+            height: height as _,
+            format,
+            data: Cow::Owned(data),
+        })
+    }
+    /// Decode data in the PNG format.
+    pub fn decode_jpeg_data(data: &[u8]) -> Result<Self, JpegDecodeErrors> {
+        let _guard = info_span!("decoding PNG image", data.len = data.len()).entered();
+        let mut decoder = JpegDecoder::new_with_options(
+            data,
+            DecoderOptions::new_fast().jpeg_set_out_colorspace(ColorSpace::RGB),
+        );
+        decoder
+            .decode_headers()
+            .inspect_err(|err| error!(%err, "failed to decode JPEG headers"))?;
+        let (width, height) = decoder.dimensions().unwrap();
+        let data = decoder
+            .decode()
+            .inspect_err(|err| error!(%err, "failed to decode JPEG image"))?;
+        Ok(Self {
+            width: width as _,
+            height: height as _,
+            format: PixelFormat::Rgb,
+            data: Cow::Owned(data),
+        })
+    }
+    /// Decode data, guessing the format (currently either PNG or JPEG) from magic bytes.
+    pub fn decode_img_data(data: &[u8]) -> Result<Self, DecodeDataError> {
+        if data.starts_with(&[0xff, 0xd8]) {
+            Self::decode_jpeg_data(data).map_err(From::from)
+        } else if data.starts_with(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) {
+            Self::decode_png_data(data).map_err(From::from)
+        } else {
+            Err(DecodeDataError::UnknownFormat)
         }
     }
     /// Get a `Buffer` that borrows from this one.
@@ -260,6 +358,9 @@ impl<'a> Buffer<'a> {
                     }
                     YCbCr => {
                         base_impl!(@to_rgb ($tr => ycc::rgb, 3 + $iadd, $oadd), $to, $yuyv_out);
+                    }
+                    Rgb => {
+                        base_impl!(@to_rgb ($tr => iden3, 3 + $iadd, $oadd), $to, $yuyv_out);
                     }
                     _ => unreachable!("attempted to convert {} to {}", $from, $to),
                 }
