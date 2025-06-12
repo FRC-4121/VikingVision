@@ -3,7 +3,7 @@ use crate::buffer::Buffer;
 use crate::utils::LogErr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, TryLockError};
 use thiserror::Error;
 
 /// A pretty error for when downcasts fail.
@@ -123,6 +123,7 @@ impl_via_debug!(
     i16,
     i32,
     i64,
+    isize,
     u8,
     u16,
     u32,
@@ -138,6 +139,24 @@ impl<T: Data> Data for Vec<T> {
         f.debug_list()
             .entries(self.iter().map(|e| e as &dyn Data))
             .finish()
+    }
+}
+impl<T: Data> Data for Mutex<T> {
+    fn debug(&self, f: &mut Formatter) -> fmt::Result {
+        let mut d = f.debug_struct("Mutex");
+        match self.try_lock() {
+            Ok(guard) => {
+                d.field("data", &(&*guard as &dyn Data) as &dyn Debug);
+            }
+            Err(TryLockError::Poisoned(err)) => {
+                d.field("data", &(&**err.get_ref() as &dyn Data) as &dyn Debug);
+            }
+            Err(TryLockError::WouldBlock) => {
+                d.field("data", &format_args!("<locked>"));
+            }
+        }
+        d.field("poisoned", &self.is_poisoned());
+        d.finish_non_exhaustive()
     }
 }
 macro_rules! impl_for_tuple {

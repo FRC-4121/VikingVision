@@ -581,20 +581,48 @@ impl<'a> Buffer<'a> {
         }
         let px_idx = y as usize * self.width as usize + x as usize;
         let px_len = self.format.pixel_size() as usize;
-        self.data.get((px_idx * px_len)..((px_idx + 1) * px_len))
+        if self.format == PixelFormat::Yuyv {
+            let start = (px_idx * px_len) & !1;
+            self.data.get(start..(start + 4))
+        } else {
+            self.data.get((px_idx * px_len)..((px_idx + 1) * px_len))
+        }
     }
     /// Get the mutable slice of data for a single pixel.
     pub fn pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
-        if self.format == PixelFormat::Yuyv {
-            return None;
-        }
         if x > self.width || y > self.height {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;
         let px_len = self.format.pixel_size() as usize;
-        self.data
-            .to_mut()
-            .get_mut((px_idx * px_len)..((px_idx + 1) * px_len))
+        let data = self.data.to_mut();
+        if self.format == PixelFormat::Yuyv {
+            let start = (px_idx * px_len) & !1;
+            data.get_mut(start..(start + 4))
+        } else {
+            data.get_mut((px_idx * px_len)..((px_idx + 1) * px_len))
+        }
+    }
+    /// Set the pixel with a given color, if it's available.
+    ///
+    /// This is similar to `self.pixel_mut(x, y)?.copy_from_slice(color)`, but it handles YUYV buffers properly.
+    pub fn set_pixel(&mut self, x: u32, y: u32, color: &[u8]) -> bool {
+        let is_yuyv = self.format == PixelFormat::Yuyv;
+        let Some(px) = self.pixel_mut(x, y) else {
+            return false;
+        };
+        if is_yuyv {
+            let &[y, u, v] = color else { return false };
+            px[1] = u;
+            px[3] = v;
+            if x & 1 != 0 {
+                px[2] = y;
+            } else {
+                px[0] = y;
+            }
+        } else {
+            px.copy_from_slice(color);
+        }
+        true
     }
 }

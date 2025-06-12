@@ -6,9 +6,57 @@ use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
+use std::ops::{Deref, DerefMut};
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Clone, Copy)]
+pub enum ColorBytes {
+    One([u8; 1]),
+    Two([u8; 2]),
+    Three([u8; 3]),
+    Four([u8; 4]),
+}
+impl Deref for ColorBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::One(s) => s,
+            Self::Two(s) => s,
+            Self::Three(s) => s,
+            Self::Four(s) => s,
+        }
+    }
+}
+impl DerefMut for ColorBytes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::One(s) => s,
+            Self::Two(s) => s,
+            Self::Three(s) => s,
+            Self::Four(s) => s,
+        }
+    }
+}
+
+/// Create a [`ColorBytes`] with the given values.
+#[macro_export]
+macro_rules! color_bytes {
+    [$b0:expr $(,)?] => {
+        $crate::vision::ColorBytes::One([$b0])
+    };
+    [$b0:expr, $b1:expr  $(,)?] => {
+        $crate::vision::ColorBytes::Two([$b0, $b1])
+    };
+    [$b0:expr, $b1:expr, $b2:expr  $(,)?] => {
+        $crate::vision::ColorBytes::Three([$b0, $b1, $b2])
+    };
+    [$b0:expr, $b1:expr, $b2:expr, $b3:expr  $(,)?] => {
+        $crate::vision::ColorBytes::Four([$b0, $b1, $b2, $b3])
+    };
+}
 
 /// A filter, along with a color space to filter in.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -115,6 +163,98 @@ impl ColorFilter {
             Self::YCbCr { .. } => PixelFormat::YCbCr,
             Self::YCbCrA { .. } => PixelFormat::YCbCrA,
             Self::Yuyv { .. } => PixelFormat::Yuyv,
+        }
+    }
+}
+
+/// A color, along with its color space.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", tag = "space")]
+pub enum Color {
+    Luma {
+        l: u8,
+    },
+    LumaA {
+        l: u8,
+        a: u8,
+    },
+    Gray {
+        v: u8,
+    },
+    GrayA {
+        v: u8,
+        a: u8,
+    },
+    Rgb {
+        r: u8,
+        g: u8,
+        b: u8,
+    },
+    Rgba {
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    },
+    Hsv {
+        h: u8,
+        s: u8,
+        v: u8,
+    },
+    Hsva {
+        h: u8,
+        s: u8,
+        v: u8,
+        a: u8,
+    },
+    Yuyv {
+        y: u8,
+        u: u8,
+        v: u8,
+    },
+    #[serde(rename = "ycc")]
+    YCbCr {
+        y: u8,
+        b: u8,
+        r: u8,
+    },
+    #[serde(rename = "ycca")]
+    YCbCrA {
+        y: u8,
+        b: u8,
+        r: u8,
+        a: u8,
+    },
+}
+impl Color {
+    pub fn pixel_format(&self) -> PixelFormat {
+        match self {
+            Self::Luma { .. } => PixelFormat::Luma,
+            Self::LumaA { .. } => PixelFormat::LumaA,
+            Self::Gray { .. } => PixelFormat::Gray,
+            Self::GrayA { .. } => PixelFormat::GrayA,
+            Self::Rgb { .. } => PixelFormat::Rgb,
+            Self::Rgba { .. } => PixelFormat::Rgba,
+            Self::Hsv { .. } => PixelFormat::Hsv,
+            Self::Hsva { .. } => PixelFormat::Hsva,
+            Self::YCbCr { .. } => PixelFormat::YCbCr,
+            Self::YCbCrA { .. } => PixelFormat::YCbCrA,
+            Self::Yuyv { .. } => PixelFormat::Yuyv,
+        }
+    }
+    pub fn bytes(&self) -> ColorBytes {
+        match *self {
+            Self::Luma { l } => color_bytes![l],
+            Self::LumaA { l, a } => color_bytes![l, a],
+            Self::Gray { v } => color_bytes![v],
+            Self::GrayA { v, a } => color_bytes![v, a],
+            Self::Rgb { r, g, b } => color_bytes![r, g, b],
+            Self::Rgba { r, g, b, a } => color_bytes![r, g, b, a],
+            Self::Hsv { h, s, v } => color_bytes![h, s, v],
+            Self::Hsva { h, s, v, a } => color_bytes![h, s, v, a],
+            Self::Yuyv { y, u, v } => color_bytes![y, u, v],
+            Self::YCbCr { y, b, r } => color_bytes![y, b, r],
+            Self::YCbCrA { y, b, r, a } => color_bytes![y, b, r, a],
         }
     }
 }
@@ -318,6 +458,9 @@ impl Blob {
             self.max_y = other.max_y
         }
         self.pixels += other.pixels;
+    }
+    pub fn filled(&self) -> f64 {
+        self.pixels as f64 / (self.width() as u64 * self.height() as u64) as f64
     }
 }
 impl Data for Blob {}

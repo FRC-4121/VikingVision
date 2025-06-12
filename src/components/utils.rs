@@ -1,6 +1,7 @@
 //! Basic utility components.
 
 use super::ComponentIdentifier;
+use crate::buffer::Buffer;
 use crate::pipeline::prelude::*;
 use crate::utils::{Configurable, Configure};
 use serde::{Deserialize, Serialize};
@@ -107,5 +108,119 @@ pub struct CloneFactory {
 impl ComponentFactory for CloneFactory {
     fn build(&self, _: &str) -> Box<dyn Component> {
         Box::new(CloneComponent::new(self.name.clone().into()))
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct WrapMutexComponent<T> {
+    _marker: PhantomData<fn(T) -> T>,
+}
+impl<T: Data + Clone> WrapMutexComponent<T> {
+    pub const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+    pub fn new_boxed() -> Box<dyn Component> {
+        Box::new(Self::new())
+    }
+}
+impl<T: Data + Clone> Component for WrapMutexComponent<T> {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        if name.is_none() {
+            OutputKind::Single
+        } else {
+            OutputKind::None
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(data) = context.get_as::<T>(None).and_log_err() else {
+            return;
+        };
+        context.submit(None, std::sync::Mutex::new(T::clone(&data)));
+    }
+}
+
+/// Convenience component factory to make a `WrapMutexComponent<Buffer>`
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct CanvasFactory;
+#[typetag::serde(name = "canvas")]
+impl ComponentFactory for CanvasFactory {
+    fn build(&self, _: &str) -> Box<dyn Component> {
+        Box::new(WrapMutexComponent::<Buffer>::new())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "WMFShim")]
+pub struct WrapMutexFactory {
+    /// The serialized type name.
+    ///
+    /// Currently supported types are:
+    /// - integer types
+    /// - `f32` and `f64`
+    /// - [`String`] as `string`
+    /// - [`Buffer`] as `buffer`
+    /// - a [`Vec`] of any of the previous types, as the previous wrapped in brackets e.g. `[string]` for `Vec<String>`
+    pub r#type: String,
+    /// The actual construction function.
+    ///
+    /// This is skipped in de/serialization, and looked up based on the type name
+    #[serde(skip)]
+    pub factory: fn() -> Box<dyn Component>,
+}
+#[typetag::serde(name = "wrap-mutex")]
+impl ComponentFactory for WrapMutexFactory {
+    fn build(&self, _: &str) -> Box<dyn Component> {
+        (self.factory)()
+    }
+}
+
+#[derive(Deserialize)]
+struct WMFShim {
+    r#type: String,
+}
+impl TryFrom<WMFShim> for WrapMutexFactory {
+    type Error = String;
+
+    fn try_from(value: WMFShim) -> Result<Self, Self::Error> {
+        let factory = match &*value.r#type {
+            "i8" => WrapMutexComponent::<i8>::new_boxed,
+            "i16" => WrapMutexComponent::<i16>::new_boxed,
+            "i32" => WrapMutexComponent::<i32>::new_boxed,
+            "i64" => WrapMutexComponent::<i64>::new_boxed,
+            "isize" => WrapMutexComponent::<isize>::new_boxed,
+            "u8" => WrapMutexComponent::<u8>::new_boxed,
+            "u16" => WrapMutexComponent::<u16>::new_boxed,
+            "u32" => WrapMutexComponent::<u32>::new_boxed,
+            "u64" => WrapMutexComponent::<u64>::new_boxed,
+            "usize" => WrapMutexComponent::<usize>::new_boxed,
+            "f32" => WrapMutexComponent::<f32>::new_boxed,
+            "f64" => WrapMutexComponent::<f64>::new_boxed,
+            "buffer" => WrapMutexComponent::<Buffer>::new_boxed,
+            "string" => WrapMutexComponent::<String>::new_boxed,
+            "[i8]" => WrapMutexComponent::<Vec<i8>>::new_boxed,
+            "[i16]" => WrapMutexComponent::<Vec<i16>>::new_boxed,
+            "[i32]" => WrapMutexComponent::<Vec<i32>>::new_boxed,
+            "[i64]" => WrapMutexComponent::<Vec<i64>>::new_boxed,
+            "[isize]" => WrapMutexComponent::<Vec<isize>>::new_boxed,
+            "[u8]" => WrapMutexComponent::<Vec<u8>>::new_boxed,
+            "[u16]" => WrapMutexComponent::<Vec<u16>>::new_boxed,
+            "[u32]" => WrapMutexComponent::<Vec<u32>>::new_boxed,
+            "[u64]" => WrapMutexComponent::<Vec<u64>>::new_boxed,
+            "[usize]" => WrapMutexComponent::<Vec<usize>>::new_boxed,
+            "[f32]" => WrapMutexComponent::<Vec<f32>>::new_boxed,
+            "[f64]" => WrapMutexComponent::<Vec<f64>>::new_boxed,
+            "[buffer]" => WrapMutexComponent::<Vec<Buffer>>::new_boxed,
+            "[string]" => WrapMutexComponent::<Vec<String>>::new_boxed,
+            name => return Err(format!("Unrecognized type {name:?}")),
+        };
+        Ok(WrapMutexFactory {
+            r#type: value.r#type,
+            factory,
+        })
     }
 }
