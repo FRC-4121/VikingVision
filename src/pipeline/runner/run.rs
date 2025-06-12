@@ -31,13 +31,6 @@ impl<'r, F: FnOnce(CleanupContext<'r>) + Send + Sync + 'r> CallbackInner<'r> for
 
 type ProviderTrait<'c> = dyn for<'a> ProviderDyn<'a> + Send + Sync + 'c;
 
-struct NoContext;
-impl<'r> Provider<'r> for NoContext {
-    type Lifetimes = l!['r];
-
-    fn provide(&'r self, _want: &mut dyn Want<Self::Lifetimes>) {}
-}
-
 /// Context to be passed around between components.
 ///
 /// This dereferences to [`Provider`] and can have typed fields requested from it.
@@ -63,7 +56,7 @@ impl<'c> Deref for Context<'c> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::None => &NoContext,
+            Self::None => &crate::utils::NoContext,
             Self::Borrowed(p) => *p,
             Self::Owned(p) => &**p,
         }

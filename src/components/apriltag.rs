@@ -66,7 +66,7 @@ pub struct AprilTagFactory {
 }
 #[typetag::serde(name = "apriltag")]
 impl ComponentFactory for AprilTagFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(AprilTagComponent {
             detector: Mutex::new(apriltag::Detector::from_config(&self.config)),
         })
@@ -128,7 +128,7 @@ impl Component for DetectPoseComponent {
 }
 #[typetag::serde(name = "april-pose")]
 impl ComponentFactory for DetectPoseComponent {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(self.clone())
     }
 }

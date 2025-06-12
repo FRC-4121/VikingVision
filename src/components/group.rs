@@ -295,7 +295,7 @@ impl From<GroupFactory> for GroupConfig {
 }
 #[typetag::serde(name = "group")]
 impl ComponentFactory for GroupFactory {
-    fn build(&self, _name: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(GroupComponent::new(self.clone().into()))
     }
 }

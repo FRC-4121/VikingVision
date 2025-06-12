@@ -6,6 +6,7 @@ pub mod prelude {
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
     pub use super::runner::{ComponentContext, ComponentId, PipelineRunner, RunParams};
     pub use crate::utils::LogErr;
+    pub use supply::prelude::*;
 
     #[doc(hidden)]
     use std::sync::Arc;

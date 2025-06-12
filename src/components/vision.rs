@@ -36,7 +36,7 @@ impl Component for ColorSpaceComponent {
 }
 #[typetag::serde(name = "colorspace")]
 impl ComponentFactory for ColorSpaceComponent {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
@@ -75,7 +75,7 @@ impl Component for ColorFilterComponent {
 }
 #[typetag::serde(name = "filter")]
 impl ComponentFactory for ColorFilterComponent {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
@@ -195,7 +195,7 @@ impl Component for BlobComponent {
 }
 #[typetag::serde(name = "blob")]
 impl ComponentFactory for BlobComponent {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
@@ -274,7 +274,7 @@ impl Component for PercentileFilterComponent {
 }
 #[typetag::serde(name = "percent-filter")]
 impl ComponentFactory for PercentileFilterComponent {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
@@ -323,7 +323,7 @@ impl Component for BoxBlurComponent {
 }
 #[typetag::serde(name = "box-blur")]
 impl ComponentFactory for BoxBlurComponent {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
@@ -352,7 +352,7 @@ impl TryFrom<BlurShim> for DilateFactory {
 }
 #[typetag::serde(name = "dilate")]
 impl ComponentFactory for DilateFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(PercentileFilterComponent {
             width: self.width,
             height: self.height,
@@ -385,7 +385,7 @@ impl TryFrom<BlurShim> for ErodeFactory {
 }
 #[typetag::serde(name = "erode")]
 impl ComponentFactory for ErodeFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(PercentileFilterComponent {
             width: self.width,
             height: self.height,
@@ -418,7 +418,7 @@ impl TryFrom<BlurShim> for MedianFilterFactory {
 }
 #[typetag::serde(name = "median-filter")]
 impl ComponentFactory for MedianFilterFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(PercentileFilterComponent {
             width: self.width,
             height: self.height,

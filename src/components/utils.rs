@@ -5,8 +5,10 @@ use crate::buffer::Buffer;
 use crate::pipeline::prelude::*;
 use crate::utils::{Configurable, Configure};
 use serde::{Deserialize, Serialize};
+use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use supply::{Request, prelude::*};
 use tracing::{error, info};
 
 /// A simple component that prints an info-level span with the information in it.
@@ -32,7 +34,7 @@ impl Component for DebugComponent {
 pub struct DebugFactory {}
 #[typetag::serde(name = "debug")]
 impl ComponentFactory for DebugFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(DebugComponent)
     }
 }
@@ -106,7 +108,7 @@ pub struct CloneFactory {
 }
 #[typetag::serde(name = "clone")]
 impl ComponentFactory for CloneFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(CloneComponent::new(self.name.clone().into()))
     }
 }
@@ -149,7 +151,7 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
 pub struct CanvasFactory;
 #[typetag::serde(name = "canvas")]
 impl ComponentFactory for CanvasFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(WrapMutexComponent::<Buffer>::new())
     }
 }
@@ -174,7 +176,7 @@ pub struct WrapMutexFactory {
 }
 #[typetag::serde(name = "wrap-mutex")]
 impl ComponentFactory for WrapMutexFactory {
-    fn build(&self, _: &str) -> Box<dyn Component> {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         (self.factory)()
     }
 }
@@ -222,5 +224,98 @@ impl TryFrom<WMFShim> for WrapMutexFactory {
             r#type: value.r#type,
             factory,
         })
+    }
+}
+
+enum ChannelKind<T> {
+    None,
+    Bounded(mpsc::SyncSender<T>),
+    Unbounded(mpsc::Sender<T>),
+}
+
+/// A consumer for the result of a channel.
+///
+/// This is meant to be passed as context for [`ChannelBuilder`].
+pub struct ChannelReceiver<'a, T>(pub &'a mut dyn FnMut(mpsc::Receiver<T>));
+
+pub trait DataKind: Data {
+    fn extract(value: Arc<dyn Data>) -> Option<Arc<Self>>;
+}
+impl<T: Data> DataKind for T {
+    fn extract(value: Arc<dyn Data>) -> Option<Arc<Self>> {
+        value.downcast_arc().and_log_err().ok()
+    }
+}
+impl DataKind for dyn Data {
+    fn extract(value: Arc<dyn Data>) -> Option<Arc<Self>> {
+        Some(value)
+    }
+}
+
+/// A component that sends its input data to a channel, along with context from the pipeline.
+#[allow(clippy::type_complexity)]
+pub struct ChannelComponent<T, R: for<'a> Request<l!['a], Output: 'static>> {
+    kind: ChannelKind<(Arc<T>, <R as Request<l!['static]>>::Output)>,
+}
+impl<T, R: for<'a> Request<l!['a], Output: 'static>> Debug for ChannelComponent<T, R> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChannelComponent").finish_non_exhaustive()
+    }
+}
+#[allow(clippy::type_complexity)]
+impl<T, R: for<'a> Request<l!['a], Output: Send + 'static>> ChannelComponent<T, R> {
+    /// Create a dummy component, with no receiver.
+    pub const fn dummy() -> Self {
+        Self {
+            kind: ChannelKind::None,
+        }
+    }
+    /// Create a new component with a possibly-bounded channel.
+    pub fn new(
+        bound: Option<usize>,
+    ) -> (
+        Self,
+        mpsc::Receiver<(Arc<T>, <R as Request<l!['static]>>::Output)>,
+    ) {
+        let (kind, rx) = if let Some(bound) = bound {
+            let (tx, rx) = mpsc::sync_channel(bound);
+            (ChannelKind::Bounded(tx), rx)
+        } else {
+            let (tx, rx) = mpsc::channel();
+            (ChannelKind::Unbounded(tx), rx)
+        };
+        (Self { kind }, rx)
+    }
+}
+impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> Component
+    for ChannelComponent<T, R>
+{
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+        OutputKind::None
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Some(val) = context
+            .get_res(None)
+            .and_log_err()
+            .ok()
+            .and_then(T::extract)
+        else {
+            return;
+        };
+        // SAFETY: we enforce that the output of this component is 'static in all cases, so it can't return a different type here.
+        let ctx = unsafe {
+            std::mem::transmute::<&dyn for<'a> ProviderDyn<'a>, &'static dyn ProviderDyn<'static>>(
+                &*context.context,
+            )
+        }
+        .request::<R>();
+        match &self.kind {
+            ChannelKind::None => {}
+            ChannelKind::Bounded(s) => drop(s.send((val, ctx))),
+            ChannelKind::Unbounded(s) => drop(s.send((val, ctx))),
+        }
     }
 }

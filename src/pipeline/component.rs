@@ -4,6 +4,7 @@ use crate::utils::LogErr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::{Arc, Mutex, TryLockError};
+use supply::prelude::*;
 use thiserror::Error;
 
 /// A pretty error for when downcasts fail.
@@ -182,7 +183,7 @@ impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 /// This is useful for serialization and deserialization of components, but isn't required for their use in pipelines.
 #[typetag::serde(tag = "type")]
 pub trait ComponentFactory {
-    fn build(&self, name: &str) -> Box<dyn Component>;
+    fn build(&self, ctx: &mut dyn ProviderDyn) -> Box<dyn Component>;
 }
 
 /// What will come from an output channel.

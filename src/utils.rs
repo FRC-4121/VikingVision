@@ -4,6 +4,7 @@ use std::fmt::Display;
 use std::mem::ManuallyDrop;
 use std::sync::Once;
 use std::time::{Duration, Instant};
+use supply::prelude::*;
 
 /// A simple counter to find the average framerate over a period of time
 #[derive(Debug, Clone)]
@@ -164,4 +165,13 @@ impl<C, S, T> Configurable<C, Option<S>, T> {
     pub fn get_state_flat(&self) -> Option<&S> {
         self.get_state()?.as_ref()
     }
+}
+
+/// A [`Provider`] that doesn't supply any values.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoContext;
+impl<'r> Provider<'r> for NoContext {
+    type Lifetimes = l!['r];
+
+    fn provide(&'r self, _want: &mut dyn Want<Self::Lifetimes>) {}
 }
