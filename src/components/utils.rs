@@ -233,11 +233,6 @@ enum ChannelKind<T> {
     Unbounded(mpsc::Sender<T>),
 }
 
-/// A consumer for the result of a channel.
-///
-/// This is meant to be passed as context for [`ChannelBuilder`].
-pub struct ChannelReceiver<'a, T>(pub &'a mut dyn FnMut(mpsc::Receiver<T>));
-
 pub trait DataKind: Data {
     fn extract(value: Arc<dyn Data>) -> Option<Arc<Self>>;
 }
