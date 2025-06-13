@@ -1,0 +1,401 @@
+//! Basic utility components.
+
+use super::ComponentIdentifier;
+use crate::buffer::Buffer;
+use crate::pipeline::{PipelineId, prelude::*};
+use crate::utils::{Configurable, Configure, FpsCounter};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt::{self, Debug, Formatter};
+use std::marker::PhantomData;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
+use supply::{Request, prelude::*};
+use tracing::{error, info};
+
+/// A simple component that prints an info-level span with the information in it.
+#[derive(Debug, Clone, Copy)]
+pub struct DebugComponent;
+impl Component for DebugComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, _: Option<&str>) -> OutputKind {
+        OutputKind::None
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(val) = context.get_res(None).and_log_err() else {
+            return;
+        };
+        info!(?val, "debug");
+    }
+}
+
+/// A factory to build a [`DebugComponent`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DebugFactory {}
+#[typetag::serde(name = "debug")]
+impl ComponentFactory for DebugFactory {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(DebugComponent)
+    }
+}
+
+impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRunner>
+    for PhantomData<CloneComponent>
+{
+    fn name(&self) -> impl std::fmt::Display {
+        "CloneComponent"
+    }
+    fn configure(
+        &self,
+        config: ComponentIdentifier,
+        arg: &mut PipelineRunner,
+    ) -> Option<Arc<dyn Component>> {
+        match config {
+            ComponentIdentifier::Id(id) => {
+                let component = arg.component(id);
+                if component.is_none() {
+                    error!(%id, "component ID out of range");
+                }
+                component.cloned()
+            }
+            ComponentIdentifier::Name(name) => {
+                let id = arg.components().get(&*name);
+                if id.is_none() {
+                    error!(name = name, "couldn't resolve component name");
+                }
+                id.and_then(|&id| arg.component(id)).cloned()
+            }
+        }
+    }
+}
+
+/// A component that refers to another component, but has its own dependencies.
+pub struct CloneComponent {
+    inner: Configurable<ComponentIdentifier, Option<Arc<dyn Component>>, PhantomData<Self>>,
+}
+impl CloneComponent {
+    pub const fn new(id: ComponentIdentifier) -> Self {
+        Self {
+            inner: Configurable::new(id, PhantomData),
+        }
+    }
+}
+impl Component for CloneComponent {
+    fn inputs(&self) -> Inputs {
+        self.inner
+            .get_state_flat()
+            .map_or(Inputs::none(), |c| c.inputs())
+    }
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        self.inner
+            .get_state_flat()
+            .map_or(OutputKind::None, |c| c.output_kind(name))
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        if let Some(comp) = self.inner.get_state_flat() {
+            comp.run(context);
+        }
+    }
+    fn initialize(&self, runner: &mut PipelineRunner, _self_id: ComponentId) {
+        self.inner.init(runner);
+    }
+}
+
+/// A factory to build a [`CloneComponent`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloneFactory {
+    pub name: String,
+}
+#[typetag::serde(name = "clone")]
+impl ComponentFactory for CloneFactory {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(CloneComponent::new(self.name.clone().into()))
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct WrapMutexComponent<T> {
+    _marker: PhantomData<fn(T) -> T>,
+}
+impl<T: Data + Clone> WrapMutexComponent<T> {
+    pub const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+    pub fn new_boxed() -> Box<dyn Component> {
+        Box::new(Self::new())
+    }
+}
+impl<T: Data + Clone> Component for WrapMutexComponent<T> {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        if name.is_none() {
+            OutputKind::Single
+        } else {
+            OutputKind::None
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(data) = context.get_as::<T>(None).and_log_err() else {
+            return;
+        };
+        context.submit(None, Mutex::new(T::clone(&data)));
+    }
+}
+
+/// Convenience component factory to make a `WrapMutexComponent<Buffer>`
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct CanvasFactory;
+#[typetag::serde(name = "canvas")]
+impl ComponentFactory for CanvasFactory {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(WrapMutexComponent::<Buffer>::new())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "WMFShim")]
+pub struct WrapMutexFactory {
+    /// The inner type.
+    ///
+    /// Currently supported types are:
+    /// - integer types
+    /// - `f32` and `f64`
+    /// - [`String`] as `string`
+    /// - [`Buffer`] as `buffer`
+    /// - a [`Vec`] of any of the previous types, as the previous wrapped in brackets e.g. `[string]` for `Vec<String>`
+    pub inner: String,
+    /// The actual construction function.
+    ///
+    /// This is skipped in de/serialization, and looked up based on the type name
+    #[serde(skip)]
+    pub factory: fn() -> Box<dyn Component>,
+}
+#[typetag::serde(name = "wrap-mutex")]
+impl ComponentFactory for WrapMutexFactory {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        (self.factory)()
+    }
+}
+
+#[derive(Deserialize)]
+struct WMFShim {
+    inner: String,
+}
+impl TryFrom<WMFShim> for WrapMutexFactory {
+    type Error = String;
+
+    fn try_from(value: WMFShim) -> Result<Self, Self::Error> {
+        let factory = match &*value.inner {
+            "i8" => WrapMutexComponent::<i8>::new_boxed,
+            "i16" => WrapMutexComponent::<i16>::new_boxed,
+            "i32" => WrapMutexComponent::<i32>::new_boxed,
+            "i64" => WrapMutexComponent::<i64>::new_boxed,
+            "isize" => WrapMutexComponent::<isize>::new_boxed,
+            "u8" => WrapMutexComponent::<u8>::new_boxed,
+            "u16" => WrapMutexComponent::<u16>::new_boxed,
+            "u32" => WrapMutexComponent::<u32>::new_boxed,
+            "u64" => WrapMutexComponent::<u64>::new_boxed,
+            "usize" => WrapMutexComponent::<usize>::new_boxed,
+            "f32" => WrapMutexComponent::<f32>::new_boxed,
+            "f64" => WrapMutexComponent::<f64>::new_boxed,
+            "buffer" => WrapMutexComponent::<Buffer>::new_boxed,
+            "string" => WrapMutexComponent::<String>::new_boxed,
+            "[i8]" => WrapMutexComponent::<Vec<i8>>::new_boxed,
+            "[i16]" => WrapMutexComponent::<Vec<i16>>::new_boxed,
+            "[i32]" => WrapMutexComponent::<Vec<i32>>::new_boxed,
+            "[i64]" => WrapMutexComponent::<Vec<i64>>::new_boxed,
+            "[isize]" => WrapMutexComponent::<Vec<isize>>::new_boxed,
+            "[u8]" => WrapMutexComponent::<Vec<u8>>::new_boxed,
+            "[u16]" => WrapMutexComponent::<Vec<u16>>::new_boxed,
+            "[u32]" => WrapMutexComponent::<Vec<u32>>::new_boxed,
+            "[u64]" => WrapMutexComponent::<Vec<u64>>::new_boxed,
+            "[usize]" => WrapMutexComponent::<Vec<usize>>::new_boxed,
+            "[f32]" => WrapMutexComponent::<Vec<f32>>::new_boxed,
+            "[f64]" => WrapMutexComponent::<Vec<f64>>::new_boxed,
+            "[buffer]" => WrapMutexComponent::<Vec<Buffer>>::new_boxed,
+            "[string]" => WrapMutexComponent::<Vec<String>>::new_boxed,
+            name => return Err(format!("Unrecognized type {name:?}")),
+        };
+        Ok(WrapMutexFactory {
+            inner: value.inner,
+            factory,
+        })
+    }
+}
+
+enum ChannelKind<T> {
+    None,
+    Bounded(mpsc::SyncSender<T>),
+    Unbounded(mpsc::Sender<T>),
+}
+
+pub trait DataKind: Data {
+    fn extract(value: Arc<dyn Data>) -> Option<Arc<Self>>;
+}
+impl<T: Data> DataKind for T {
+    fn extract(value: Arc<dyn Data>) -> Option<Arc<Self>> {
+        value.downcast_arc().and_log_err().ok()
+    }
+}
+impl DataKind for dyn Data {
+    fn extract(value: Arc<dyn Data>) -> Option<Arc<Self>> {
+        Some(value)
+    }
+}
+
+/// A component that sends its input data to a channel, along with context from the pipeline.
+#[allow(clippy::type_complexity)]
+pub struct ChannelComponent<T, R: for<'a> Request<l!['a], Output: 'static>> {
+    kind: ChannelKind<(Arc<T>, <R as Request<l!['static]>>::Output)>,
+}
+impl<T, R: for<'a> Request<l!['a], Output: 'static>> Debug for ChannelComponent<T, R> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChannelComponent").finish_non_exhaustive()
+    }
+}
+#[allow(clippy::type_complexity)]
+impl<T, R: for<'a> Request<l!['a], Output: Send + 'static>> ChannelComponent<T, R> {
+    /// Create a dummy component, with no receiver.
+    pub const fn dummy() -> Self {
+        Self {
+            kind: ChannelKind::None,
+        }
+    }
+    /// Create a new component with a possibly-bounded channel.
+    pub fn new(
+        bound: Option<usize>,
+    ) -> (
+        Self,
+        mpsc::Receiver<(Arc<T>, <R as Request<l!['static]>>::Output)>,
+    ) {
+        let (kind, rx) = if let Some(bound) = bound {
+            let (tx, rx) = mpsc::sync_channel(bound);
+            (ChannelKind::Bounded(tx), rx)
+        } else {
+            let (tx, rx) = mpsc::channel();
+            (ChannelKind::Unbounded(tx), rx)
+        };
+        (Self { kind }, rx)
+    }
+}
+impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> Component
+    for ChannelComponent<T, R>
+{
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+        OutputKind::None
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Some(val) = context
+            .get_res(None)
+            .and_log_err()
+            .ok()
+            .and_then(T::extract)
+        else {
+            return;
+        };
+        // SAFETY: we enforce that the output of this component is 'static in all cases, so it can't return a different type here.
+        let ctx = unsafe {
+            std::mem::transmute::<&dyn for<'a> ProviderDyn<'a>, &'static dyn ProviderDyn<'static>>(
+                &*context.context,
+            )
+        }
+        .request::<R>();
+        match &self.kind {
+            ChannelKind::None => {}
+            ChannelKind::Bounded(s) => drop(s.send((val, ctx))),
+            ChannelKind::Unbounded(s) => drop(s.send((val, ctx))),
+        }
+    }
+}
+
+/// A component that tracks the frequency that it's called at.
+#[derive(Debug)]
+pub struct FpsComponent {
+    inner: Mutex<HashMap<Option<PipelineId>, crate::utils::FpsCounter>>,
+    max_duration: Duration,
+}
+impl Default for FpsComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl FpsComponent {
+    pub fn with_max_duration(max_duration: Duration) -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            max_duration,
+        }
+    }
+    pub fn new() -> Self {
+        Self::with_max_duration(default_fps_dur())
+    }
+    pub fn set_max_duration(&mut self, duration: Duration) {
+        let Ok(inner) = self.inner.get_mut() else {
+            error!("poisoned FPS counter lock");
+            return;
+        };
+        for val in inner.values_mut() {
+            val.set_max_duration(duration);
+        }
+    }
+}
+impl Component for FpsComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        if name.is_some_and(|n| ["min", "max", "fps", "pretty"].contains(&n)) {
+            OutputKind::Single
+        } else {
+            OutputKind::None
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(mut lock) = self.inner.lock() else {
+            error!("poisoned FPS counter lock");
+            return;
+        };
+        let fps = lock
+            .entry(context.context.request::<PipelineId>())
+            .or_insert(FpsCounter::new(self.max_duration));
+        fps.tick();
+        let mut minmax = None;
+        if context.listening("min") || context.listening("max") {
+            let [min, max] = fps.minmax().unwrap_or_default();
+            context.submit("min", min);
+            context.submit("max", max);
+            minmax = Some([min, max]);
+        }
+        context.submit_if_listening("fps", || fps.fps());
+        context.submit_if_listening("pretty", || {
+            let [min, max] = minmax.or_else(|| fps.minmax()).unwrap_or_default();
+            format!("{min:.2}/{max:.2}/{} FPS", fps.fps())
+        });
+    }
+}
+
+#[inline(always)]
+const fn default_fps_dur() -> Duration {
+    Duration::from_secs(10)
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct FpsFactory {
+    #[serde(alias = "period", default, with = "humantime_serde")]
+    pub duration: Duration,
+}
+#[typetag::serde(name = "fps")]
+impl ComponentFactory for FpsFactory {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(FpsComponent::with_max_duration(self.duration))
+    }
+}

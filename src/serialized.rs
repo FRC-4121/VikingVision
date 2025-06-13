@@ -4,6 +4,7 @@ use crate::pipeline::runner::{AddComponentError, AddDependencyError, PipelineRun
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
+use supply::prelude::*;
 use thiserror::Error;
 
 fn default_running() -> usize {
@@ -117,6 +118,31 @@ pub struct RunConfig {
     pub max_running: usize,
 }
 
+/// The name of a component, able to be requested from the context.
+pub struct ComponentName<'a>(pub &'a str);
+
+/// Type tag for [`ComponentName`].
+#[ty_tag::tag]
+pub type ComponentNameTag<'a> = ComponentName<'a>;
+
+pub struct InjectName<'a, 'b> {
+    inner: &'a mut dyn ProviderDyn<'b>,
+    name: &'a str,
+}
+impl<'r, 'a> Provider<'r> for InjectName<'a, 'r> {
+    type Lifetimes = l!['r];
+
+    fn provide(&'r self, want: &mut dyn Want<Self::Lifetimes>) {
+        want.provide_value(ComponentName(self.name));
+        self.inner.provide(want);
+    }
+
+    fn provide_mut(&'r mut self, want: &mut dyn Want<Self::Lifetimes>) {
+        want.provide_value(ComponentName(self.name));
+        self.inner.provide_mut(want);
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ConfigFile {
     pub config: RunConfig,
@@ -126,9 +152,16 @@ pub struct ConfigFile {
     pub components: HashMap<String, ComponentConfig>,
 }
 impl ConfigFile {
-    pub fn add_to_runner(&self, runner: &mut PipelineRunner) -> Result<(), BuildRunnerError<'_>> {
+    pub fn add_to_runner(
+        &self,
+        runner: &mut PipelineRunner,
+        context: &mut dyn ProviderDyn,
+    ) -> Result<(), BuildRunnerError<'_>> {
         for (name, config) in &self.components {
-            let component = config.factory.build(name);
+            let component = config.factory.build(&mut InjectName {
+                inner: context,
+                name,
+            });
             runner
                 .add_component(name.clone(), component.into())
                 .map_err(BuildRunnerError::AddComponentError)?;
@@ -165,8 +198,11 @@ impl ConfigFile {
         Ok(())
     }
     #[inline(always)]
-    pub fn build_runner(&self) -> Result<PipelineRunner, BuildRunnerError<'_>> {
+    pub fn build_runner(
+        &self,
+        context: &mut dyn ProviderDyn,
+    ) -> Result<PipelineRunner, BuildRunnerError<'_>> {
         let mut runner = PipelineRunner::new();
-        self.add_to_runner(&mut runner).map(|_| runner)
+        self.add_to_runner(&mut runner, context).map(|_| runner)
     }
 }

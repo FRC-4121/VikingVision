@@ -30,6 +30,13 @@ impl Debug for dyn CameraImpl {
     }
 }
 
+/// Type tag for a camera, allowing it to be requested using [`supply`].
+#[ty_tag::tag]
+pub type CameraTag = Camera;
+
+/// A source of frames.
+///
+/// A [`Camera`] wraps a [`CameraImpl`] and handles framerate throttling and reloading with exponential backoff.
 #[derive(Debug)]
 pub struct Camera {
     name: String,

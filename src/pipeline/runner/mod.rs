@@ -136,9 +136,6 @@ impl Display for RunId {
     }
 }
 
-/// A callback function to be called after a pipeline completes.
-pub type Callback<'a> = Box<dyn FnOnce(&'a PipelineRunner) + Send + Sync + 'a>;
-
 /// A pipeline execution system for managing interdependent components.
 ///
 /// PipelineRunner manages component registration, dependencies, and parallel execution. Components
@@ -220,5 +217,20 @@ impl PipelineRunner {
     #[inline(always)]
     pub fn run_count(&self) -> u32 {
         self.run_id.load(Ordering::Relaxed)
+    }
+    /// Get the component associated with an ID.
+    #[inline(always)]
+    pub fn component(&self, id: ComponentId) -> Option<&Arc<dyn Component>> {
+        self.components.get(id.0).map(|c| &c.component)
+    }
+    /// Get the chain of a component's multi-output nodes.
+    ///
+    /// This originally returns `start`, then the last multi-output component that indirectly leads to `start`,
+    /// then the last multi-output component that indirectly leads to *that* node, and so on.
+    pub fn branch_chain(&self, start: ComponentId) -> impl Iterator<Item = ComponentId> {
+        std::iter::successors(Some(start), |&id| {
+            let data = self.components.get(id.0)?;
+            data.multi_input_from
+        })
     }
 }

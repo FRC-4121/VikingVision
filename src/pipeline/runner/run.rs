@@ -1,22 +1,83 @@
 use super::*;
-use crate::pipeline::component::TypeMismatch;
+use crate::pipeline::component::{IntoData, TypeMismatch};
 use crate::utils::LogErr;
 use std::convert::Infallible;
 use std::ops::{Deref, DerefMut};
+use supply::prelude::*;
 
-/// Internal cleanup handler for pipeline runs that executes callbacks and
-/// decrements the running pipeline counter on drop.
-struct Cleanup<'a> {
-    runner: &'a PipelineRunner,
-    callback: Option<Callback<'a>>,
+#[derive(Debug)]
+pub struct CleanupContext<'r> {
+    pub runner: &'r PipelineRunner,
+    pub run_id: u32,
+    pub context: Context<'r>,
 }
 
-impl Drop for Cleanup<'_> {
-    fn drop(&mut self) {
-        if let Some(callback) = self.callback.take() {
-            callback(self.runner);
+/// A callback function to be called after a pipeline completes.
+pub type Callback<'a> = Arc<dyn CallbackInner<'a>>;
+
+/// Implementation detail for cleanup callbacks.
+///
+/// This consumes a reference to an [`Arc`], calling `self` if it's unique.
+pub trait CallbackInner<'r>: Send + Sync + 'r {
+    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>);
+}
+impl<'r, F: FnOnce(CleanupContext<'r>) + Send + Sync + 'r> CallbackInner<'r> for F {
+    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>) {
+        if let Some(this) = Arc::into_inner(self) {
+            this(ctx);
         }
-        self.runner.running.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+type ProviderTrait<'c> = dyn for<'a> ProviderDyn<'a> + Send + Sync + 'c;
+
+/// Context to be passed around between components.
+///
+/// This dereferences to [`Provider`] and can have typed fields requested from it.
+#[derive(Default, Clone)]
+pub enum Context<'c> {
+    /// No context was passed.
+    #[default]
+    None,
+
+    /// An external reference is passing context.
+    Borrowed(&'c ProviderTrait<'c>),
+
+    /// An shared reference holds the context.
+    Owned(Arc<ProviderTrait<'c>>),
+}
+impl Debug for Context<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Context").finish_non_exhaustive()
+    }
+}
+impl<'c> Deref for Context<'c> {
+    type Target = ProviderTrait<'c>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::None => &crate::utils::NoContext,
+            Self::Borrowed(p) => *p,
+            Self::Owned(p) => &**p,
+        }
+    }
+}
+impl<'c> From<&'c ProviderTrait<'c>> for Context<'c> {
+    #[inline(always)]
+    fn from(value: &'c ProviderTrait) -> Self {
+        Self::Borrowed(value)
+    }
+}
+impl<'c> From<Arc<ProviderTrait<'c>>> for Context<'c> {
+    #[inline(always)]
+    fn from(value: Arc<ProviderTrait<'c>>) -> Self {
+        Self::Owned(value)
+    }
+}
+impl<'c> From<()> for Context<'c> {
+    #[inline(always)]
+    fn from(_value: ()) -> Self {
+        Self::None
     }
 }
 
@@ -37,7 +98,16 @@ pub enum DowncastInputError<'a> {
 impl LogErr for DowncastInputError<'_> {
     fn log_err(&self) {
         match self {
-            Self::MissingInput(_) => tracing::error!("{self}"),
+            Self::MissingInput(name) => {
+                tracing::error!(
+                    "Component doesn't have a{}",
+                    if let Some(name) = name {
+                        format!("n input named {name:?}")
+                    } else {
+                        " primary input".to_string()
+                    }
+                )
+            }
             Self::TypeMismatch(m) => m.log_err(),
         }
     }
@@ -57,43 +127,59 @@ pub struct RunParams<'a> {
 
     /// Input arguments for the component
     pub args: ComponentArgs,
+
+    /// Shared context for the run.
+    pub context: Context<'a>,
 }
 
 impl<'a> RunParams<'a> {
     /// Create a new set of parameters with no run limit or callback.
+    #[inline(always)]
     pub const fn new(component: ComponentId) -> Self {
         Self {
             component,
             args: ComponentArgs::empty(),
             max_running: None,
             callback: None,
+            context: Context::None,
         }
     }
 
     /// Add a completion callback to the parameters.
+    #[inline(always)]
     pub fn with_callback(
         mut self,
-        callback: impl FnOnce(&'a PipelineRunner) + Send + Sync + 'a,
+        callback: impl FnOnce(CleanupContext) + Send + Sync + 'a,
     ) -> Self {
-        self.callback = Some(Box::new(callback));
+        self.callback = Some(Arc::new(callback));
         self
     }
 
     /// Add a pre-boxed callback to the parameters.
+    #[inline(always)]
     pub fn with_boxed_callback(mut self, callback: Callback<'a>) -> Self {
         self.callback = Some(callback);
         self
     }
 
     /// Set a limit on concurrent pipeline executions.
+    #[inline(always)]
     pub fn with_max_running(mut self, max_running: usize) -> Self {
         self.max_running = Some(max_running);
         self
     }
 
     /// Set the input arguments for the component.
-    pub fn with_args(mut self, args: ComponentArgs) -> Self {
-        self.args = args;
+    #[inline(always)]
+    pub fn with_args(mut self, args: impl Into<ComponentArgs>) -> Self {
+        self.args = args.into();
+        self
+    }
+
+    /// Set the context for the pipeline run.
+    #[inline(always)]
+    pub fn with_context(mut self, context: impl Into<Context<'a>>) -> Self {
+        self.context = context.into();
         self
     }
 }
@@ -112,19 +198,8 @@ impl Debug for RunParams<'_> {
             .field("max_running", &self.max_running)
             .field("component", &self.component)
             .field("args", &self.args)
+            .field("context", &self.context)
             .finish()
-    }
-}
-
-impl From<ComponentId> for RunParams<'_> {
-    fn from(value: ComponentId) -> Self {
-        Self::new(value)
-    }
-}
-
-impl<A: Into<ComponentArgs>> From<(ComponentId, A)> for RunParams<'_> {
-    fn from(value: (ComponentId, A)) -> Self {
-        Self::new(value.0).with_args(value.1.into())
     }
 }
 
@@ -181,19 +256,29 @@ impl<'a> IntoRunParams<'a, ()> for RunParams<'a> {
         Ok(self)
     }
 }
-
+impl<'a> IntoRunParams<'a, ()> for ComponentId {
+    type Error = Infallible;
+    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        Ok(RunParams::new(self))
+    }
+}
 impl<'a, A: Into<ComponentArgs>> IntoRunParams<'a, markers::ArgListMarker> for (ComponentId, A) {
     type Error = Infallible;
     fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
         Ok(RunParams::new(self.0).with_args(self.1.into()))
     }
 }
-
 impl<'a, I: InputSpecifier> IntoRunParams<'a, markers::InputMapMarker> for (ComponentId, I) {
     type Error = PackArgsError<'a>;
     fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
         let args = runner.pack_args(self.0, self.1)?;
         Ok(RunParams::new(self.0).with_args(args))
+    }
+}
+impl<'a, A: Into<Context<'a>>> IntoRunParams<'a, Context<'static>> for (ComponentId, A) {
+    type Error = Infallible;
+    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        Ok(RunParams::new(self.0).with_context(self.1.into()))
     }
 }
 
@@ -264,9 +349,11 @@ pub struct ComponentContextInner<'r> {
     runner: &'r PipelineRunner,
     component: &'r ComponentData,
     input: InputKind,
-    decr: Arc<Cleanup<'r>>,
+    callback: Option<Callback<'r>>,
     run_id: RunId,
     invoc: AtomicU32,
+    /// Context to be passed in and shared between components.
+    pub context: Context<'r>,
     finished: bool,
 }
 
@@ -283,8 +370,9 @@ impl Debug for ComponentContextInner<'_> {
 
 impl Drop for ComponentContextInner<'_> {
     fn drop(&mut self) {
-        use tracing::subscriber::*;
-        with_default(NoSubscriber::new(), || self.finish());
+        if !self.finished {
+            self.finish();
+        }
     }
 }
 
@@ -293,7 +381,7 @@ impl<'r> ComponentContextInner<'r> {
     pub fn comp_id(&self) -> ComponentId {
         ComponentId(
             (self.component as *const ComponentData as usize
-                / self.runner.components.as_ptr() as usize)
+                - self.runner.components.as_ptr() as usize)
                 / size_of::<ComponentData>(),
         )
     }
@@ -369,6 +457,29 @@ impl<'r> ComponentContextInner<'r> {
         self.get_res(channel)?.downcast_arc().map_err(From::from)
     }
 
+    /// Get the packed [`ComponentArgs`].
+    ///
+    /// This is only really useful for forwarding to another component with the same specified inputs.
+    pub fn packed_args(&self) -> ComponentArgs {
+        match &self.input {
+            InputKind::Empty => ComponentArgs::empty(),
+            InputKind::Single(arg) => ComponentArgs::single(arg.clone()),
+            InputKind::Multiple(run_idx, last) => {
+                let InputMode::Multiple { lookup, .. } = &self.component.input_mode else {
+                    unreachable!()
+                };
+                let num_fields = lookup.len();
+                let lock = self.component.partial.lock().unwrap();
+                let mut vec =
+                    lock.data[(*run_idx * num_fields)..((*run_idx + 1) * num_fields)].to_vec();
+                if let Some(last) = last {
+                    vec.push(Some(last.clone()));
+                }
+                ComponentArgs(vec)
+            }
+        }
+    }
+
     /// Check if any components are listening on a given channel.
     pub fn listening<'b>(&self, channel: impl Into<Option<&'b str>>) -> bool {
         if self.finished {
@@ -386,6 +497,25 @@ impl<'r> ComponentContextInner<'r> {
         )
     }
 
+    /// Run a callback to submit to a channel, if there's a listener on the channel.
+    pub fn submit_if_listening<'b, 's, D: IntoData, F: FnOnce() -> D>(
+        &self,
+        channel: impl Into<Option<&'b str>>,
+        create: F,
+        scope: &rayon::Scope<'s>,
+    ) -> bool
+    where
+        'r: 's,
+    {
+        let channel = channel.into();
+        let listening = self.listening(channel);
+        if listening {
+            let data = create().into_data();
+            self.submit_impl(channel, data, scope);
+        }
+        listening
+    }
+
     /// Publish a result on a given channel.
     ///
     /// This immediately runs any listening components if possible.
@@ -393,12 +523,12 @@ impl<'r> ComponentContextInner<'r> {
     pub fn submit<'b, 's>(
         &self,
         channel: impl Into<Option<&'b str>>,
-        data: Arc<dyn Data>,
+        data: impl IntoData,
         scope: &rayon::Scope<'s>,
     ) where
         'r: 's,
     {
-        self.submit_impl(channel.into(), data, scope);
+        self.submit_impl(channel.into(), data.into_data(), scope);
     }
 
     /// Internal implementation of `submit` that handles data distribution and scheduling.
@@ -540,7 +670,8 @@ impl<'r> ComponentContextInner<'r> {
         'r: 's,
     {
         let runner = self.runner;
-        let decr = self.decr.clone();
+        let decr = self.callback.clone();
+        let context = self.context.clone();
         let mut run_id = self.run_id.clone();
         if let Some(run) = push_run {
             run_id.push(run);
@@ -550,9 +681,10 @@ impl<'r> ComponentContextInner<'r> {
                 input,
                 runner,
                 component,
-                decr,
+                callback: decr,
                 run_id,
                 invoc: AtomicU32::new(0),
+                context,
                 finished: false,
             }
             .run(scope);
@@ -584,6 +716,14 @@ impl<'r> ComponentContextInner<'r> {
         }
         self.runner.cleanup_runs(self.component, &self.run_id);
         self.input = InputKind::Empty;
+        if let Some(callback) = self.callback.take() {
+            callback.call_if_unique(CleanupContext {
+                runner: self.runner,
+                run_id: self.run_id.base_run(),
+                context: std::mem::take(&mut self.context),
+            });
+        }
+        self.runner.running.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// Create a tracing span for this component execution.
@@ -631,8 +771,18 @@ impl<'r> DerefMut for ComponentContext<'r, '_, '_> {
 impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
     /// Publish a result on a given channel.
     #[inline(always)]
-    pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: Arc<dyn Data>) {
+    pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: impl IntoData) {
         self.inner.submit(channel, data, self.scope);
+    }
+
+    /// Publish a result on a given channel, if there's a listener.
+    #[inline(always)]
+    pub fn submit_if_listening<'b, D: IntoData, F: FnOnce() -> D>(
+        &self,
+        channel: impl Into<Option<&'b str>>,
+        create: F,
+    ) {
+        self.inner.submit_if_listening(channel, create, self.scope);
     }
 
     /// Defer an operation to run later on the thread pool.
@@ -738,12 +888,10 @@ impl PipelineRunner {
             max_running: _,
             component,
             mut args,
+            context,
         } = params;
-        let decr = Arc::new(Cleanup {
-            runner: self,
-            callback,
-        });
-        let run_id = RunId::new(self.run_id.fetch_add(1, Ordering::Relaxed));
+        let run_id = self.run_id.fetch_add(1, Ordering::Relaxed);
+        let run_id = RunId::new(run_id);
         let input = match args.len() {
             0 => InputKind::Empty,
             1 => InputKind::Single(args.0.pop().unwrap().unwrap()),
@@ -766,9 +914,10 @@ impl PipelineRunner {
                 runner: self,
                 component: data,
                 input,
-                decr,
+                callback,
                 run_id,
                 invoc: AtomicU32::new(0),
+                context,
                 finished: false,
             }
             .run(scope);

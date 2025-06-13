@@ -3,7 +3,8 @@ use crate::buffer::Buffer;
 use crate::utils::LogErr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, TryLockError};
+use supply::prelude::*;
 use thiserror::Error;
 
 /// A pretty error for when downcasts fail.
@@ -19,7 +20,7 @@ pub struct TypeMismatch<A> {
 }
 impl<A> LogErr for TypeMismatch<A> {
     fn log_err(&self) {
-        tracing::error!(id = ?self.id, "Couldn't downcast data to {}", self.expected);
+        tracing::error!(id = ?self.id, "couldn't downcast data to {}", self.expected);
     }
 }
 
@@ -123,6 +124,7 @@ impl_via_debug!(
     i16,
     i32,
     i64,
+    isize,
     u8,
     u16,
     u32,
@@ -138,6 +140,24 @@ impl<T: Data> Data for Vec<T> {
         f.debug_list()
             .entries(self.iter().map(|e| e as &dyn Data))
             .finish()
+    }
+}
+impl<T: Data> Data for Mutex<T> {
+    fn debug(&self, f: &mut Formatter) -> fmt::Result {
+        let mut d = f.debug_struct("Mutex");
+        match self.try_lock() {
+            Ok(guard) => {
+                d.field("data", &(&*guard as &dyn Data) as &dyn Debug);
+            }
+            Err(TryLockError::Poisoned(err)) => {
+                d.field("data", &(&**err.get_ref() as &dyn Data) as &dyn Debug);
+            }
+            Err(TryLockError::WouldBlock) => {
+                d.field("data", &format_args!("<locked>"));
+            }
+        }
+        d.field("poisoned", &self.is_poisoned());
+        d.finish_non_exhaustive()
     }
 }
 macro_rules! impl_for_tuple {
@@ -163,7 +183,7 @@ impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 /// This is useful for serialization and deserialization of components, but isn't required for their use in pipelines.
 #[typetag::serde(tag = "type")]
 pub trait ComponentFactory {
-    fn build(&self, name: &str) -> Box<dyn Component>;
+    fn build(&self, ctx: &mut dyn ProviderDyn) -> Box<dyn Component>;
 }
 
 /// What will come from an output channel.
