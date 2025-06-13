@@ -94,7 +94,7 @@ impl Configure<GroupConfig, Option<GroupState>, (&mut PipelineRunner, ComponentI
                 }
                 ComponentIdentifier::Id(id) => id,
             };
-            let Some(component) = runner.component(input_component) else {
+            let Some(component) = runner.component(id) else {
                 error!(%id, "output component ID out of range");
                 return None;
             };

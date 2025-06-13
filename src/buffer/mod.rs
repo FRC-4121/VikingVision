@@ -573,10 +573,7 @@ impl<'a> Buffer<'a> {
     }
     /// Get the slice of data for a single pixel.
     pub fn pixel(&self, x: u32, y: u32) -> Option<&[u8]> {
-        if self.format == PixelFormat::Yuyv {
-            return None;
-        }
-        if x > self.width || y > self.height {
+        if x >= self.width || y >= self.height {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;
@@ -590,7 +587,7 @@ impl<'a> Buffer<'a> {
     }
     /// Get the mutable slice of data for a single pixel.
     pub fn pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
-        if x > self.width || y > self.height {
+        if x >= self.width || y >= self.height {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;

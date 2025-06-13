@@ -201,13 +201,14 @@ impl Component for FfmpegComponent {
 }
 impl Drop for FfmpegComponent {
     fn drop(&mut self) {
-        for (_, (mut child, _)) in self
+        for (_, (mut child, stdin)) in self
             .running
             .get_mut()
             .inspect_err(|_| warn!("poisoned FFMPEG component lock"))
             .unwrap_or_else(PoisonError::into_inner)
             .drain()
         {
+            drop(stdin);
             match child
                 .get_mut()
                 .inspect_err(|_| warn!("poisoned FFMPEG child lock"))

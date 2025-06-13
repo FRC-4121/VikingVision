@@ -129,10 +129,15 @@ unsafe impl<C: Sync, S: Sync, T: Sync> Sync for Configurable<C, S, T> {}
 impl<C, S, T> Drop for Configurable<C, S, T> {
     fn drop(&mut self) {
         unsafe {
-            if self.once.is_completed() {
+            let mut drop_state = true;
+            self.once.call_once_force(|s| {
+                drop_state = false;
+                if !s.is_poisoned() {
+                    ManuallyDrop::drop(&mut self.inner.get_mut().config);
+                }
+            });
+            if drop_state {
                 ManuallyDrop::drop(&mut self.inner.get_mut().state);
-            } else {
-                ManuallyDrop::drop(&mut self.inner.get_mut().config);
             }
         }
     }

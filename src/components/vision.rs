@@ -62,7 +62,7 @@ impl Component for ColorFilterComponent {
         if name.is_none() {
             OutputKind::Single
         } else {
-            OutputKind::Multiple
+            OutputKind::None
         }
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
@@ -93,10 +93,10 @@ const fn max_f32() -> f32 {
     1.0
 }
 
-/// A component that filters an image in a given color space.
+/// A component that detects and filters blobs in binary images.
 ///
-/// It outputs a [`Buffer`] with the [`Gray`](PixelFormat::Gray) format, with a value of 255 for pixels within the range and 0 for pixels
-/// outside of it.
+/// It can output blobs either as a collected vector on the primary channel or stream individual
+/// blobs on the "elem" channel, filtered by size, pixel count, and aspect ratio constraints.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct BlobComponent {
@@ -135,7 +135,7 @@ impl Default for BlobComponent {
             min_px: 0,
             max_px: usize::MAX,
             min_aspect: 0.0,
-            max_aspect: 1.0,
+            max_aspect: f32::INFINITY,
         }
     }
 }
@@ -175,8 +175,11 @@ impl Component for BlobComponent {
             if blob.pixels < self.min_px || blob.pixels > self.max_px {
                 continue;
             }
-            if self.min_aspect > 0.0 || self.max_aspect < 1.0 {
-                let frac = h as f32 / w as f32;
+            if self.min_aspect > 0.0 || self.max_aspect < f32::INFINITY {
+                let mut frac = h as f32 / w as f32;
+                if frac.is_nan() {
+                    frac = f32::INFINITY;
+                }
                 if frac < self.min_aspect || frac > self.max_aspect {
                     continue;
                 }
@@ -242,7 +245,7 @@ impl TryFrom<FilterShim> for PercentileFilterComponent {
         let Some(len) = value.width.checked_mul(value.height) else {
             return Err(FromFilterError::IndexOob);
         };
-        if value.index > len {
+        if value.index >= len {
             return Err(FromFilterError::IndexOob);
         }
         Ok(Self {
@@ -260,7 +263,7 @@ impl Component for PercentileFilterComponent {
         if name.is_none() {
             OutputKind::Single
         } else {
-            OutputKind::Multiple
+            OutputKind::None
         }
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
@@ -389,7 +392,7 @@ impl ComponentFactory for ErodeFactory {
         Box::new(PercentileFilterComponent {
             width: self.width,
             height: self.height,
-            index: self.width * self.height,
+            index: self.width * self.height - 1,
         })
     }
 }

@@ -174,69 +174,16 @@ pub trait Drawable: Data {
 }
 impl Drawable for Blob {
     fn draw(&self, color: &[u8], buffer: &mut Buffer) {
-        let data = buffer.data.to_mut();
         if buffer.format == PixelFormat::Yuyv {
-            let &[y, u, v] = color else {
-                return;
-            };
-            let yuyv = [y, u, y, v];
-            let width = buffer.width as usize;
-            let start = self.min_x.min(buffer.width.saturating_sub(1)) as usize;
-            let end = self.max_x.min(buffer.width.saturating_sub(1)) as usize;
-            let w = 4;
-            let fill = self.filled();
-            if self.min_y < buffer.width {
-                let row_start = width * self.min_y as usize;
-                let Some(row) = data.get_mut(((row_start + start) * 2)..((row_start + end) * 2))
-                else {
-                    return;
-                };
-                for chunk in row.chunks_exact_mut(4) {
-                    chunk.copy_from_slice(&yuyv);
-                }
-            }
-            if self.max_y < buffer.width {
-                let row_start = width * self.max_y as usize;
-                let Some(row) = data.get_mut(((row_start + start) * w)..((row_start + end) * w))
-                else {
-                    return;
-                };
-                for chunk in row.chunks_exact_mut(w) {
-                    chunk.copy_from_slice(&yuyv);
-                }
-            }
-            for y in self.min_y..self.max_y {
-                let row_start = width * y as usize;
-                let start = row_start + start;
-                let end = row_start + end;
-                let Some(px) = data.get_mut((start * w)..((start + 1) * w)) else {
-                    return;
-                };
-                px.copy_from_slice(color);
-                let Some(px) = data.get_mut(((end - 1) * w)..(end * w)) else {
-                    return;
-                };
-                px.copy_from_slice(color);
-                if fill > 0.0 {
-                    let row = &mut data[((start + 1) * w)..((end - 1) * w)];
-                    for chunk in row.chunks_exact_mut(w) {
-                        if fill == 1.0 {
-                            chunk.copy_from_slice(color);
-                        } else {
-                            for (old, new) in chunk.iter_mut().zip(color) {
-                                *old = (*old as f64 * (1.0 - fill) + *new as f64 * fill) as u8;
-                            }
-                        }
-                    }
-                }
-            }
+            tracing::error!("YUYV blobs aren't supported!");
         } else {
+            let data = buffer.data.to_mut();
             let width = buffer.width as usize;
             let start = self.min_x.min(buffer.width.saturating_sub(1)) as usize;
             let end = self.max_x.min(buffer.width.saturating_sub(1)) as usize;
             let w = color.len();
             let fill = self.filled();
-            if self.min_y < buffer.width {
+            if self.min_y < buffer.height {
                 let row_start = width * self.min_y as usize;
                 let Some(row) = data.get_mut(((row_start + start) * w)..((row_start + end) * w))
                 else {
@@ -246,7 +193,7 @@ impl Drawable for Blob {
                     chunk.copy_from_slice(color);
                 }
             }
-            if self.max_y < buffer.width {
+            if self.max_y < buffer.height {
                 let row_start = width * self.max_y as usize;
                 let Some(row) = data.get_mut(((row_start + start) * w)..((row_start + end) * w))
                 else {

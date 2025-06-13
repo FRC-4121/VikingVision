@@ -816,7 +816,7 @@ pub fn percentile_filter(
     let pxlen = src.format.pixel_size() as usize;
     let buf_len = width * height;
     let buf_width = src.width as usize;
-    let buf_height = src.width as usize;
+    let buf_height = src.height as usize;
     let half_width = width / 2;
     let half_height = height / 2;
     data.par_chunks_mut(pxlen).enumerate().for_each_init(
@@ -871,7 +871,7 @@ pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usi
     let pxlen = src.format.pixel_size() as usize;
     let buf_len = width * height;
     let buf_width = src.width as usize;
-    let buf_height = src.width as usize;
+    let buf_height = src.height as usize;
     let half_width = width / 2;
     let half_height = height / 2;
     data.par_chunks_mut(pxlen).enumerate().for_each_init(
