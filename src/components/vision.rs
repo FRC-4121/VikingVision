@@ -217,9 +217,9 @@ struct BlurShim {
 
 #[derive(Debug, Error)]
 enum FromFilterError {
-    #[error("window width must odd")]
+    #[error("window width must be odd")]
     EvenWidth,
-    #[error("window height must odd")]
+    #[error("window height must be odd")]
     EvenHeight,
     #[error("pixel index must be less than the window size")]
     IndexOob,

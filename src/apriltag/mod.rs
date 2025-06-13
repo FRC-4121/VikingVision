@@ -499,7 +499,7 @@ impl DoubleEndedIterator for DetectionIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
         unsafe {
             (self.min < self.max).then(|| {
-                let idx = self.min;
+                let idx = self.max;
                 self.max -= 1;
                 let arr = *self.ptr;
                 Detection::from_raw(*(arr.data as *mut *mut apriltag_detection_t).add(idx))

@@ -801,7 +801,7 @@ pub fn percentile_filter(
         "Percentile filtering isn't implemented for YUYV images"
     );
     assert!(width & 1 == 1, "Window width must be an odd number");
-    assert!(height & 1 == 1, "Window width must be an odd number");
+    assert!(height & 1 == 1, "Window height must be an odd number");
     assert!(
         index < width * height,
         "Pixel index {index} is out of range for a {width}x{height} window"
@@ -857,7 +857,7 @@ pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usi
         "Box blurring isn't implemented for YUYV images"
     );
     assert!(width & 1 == 1, "Window width must be an odd number");
-    assert!(height & 1 == 1, "Window width must be an odd number");
+    assert!(height & 1 == 1, "Window height must be an odd number");
     dst.width = src.width;
     dst.height = src.height;
     dst.format = src.format;

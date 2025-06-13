@@ -99,7 +99,9 @@ impl Drawable for Line {
     }
 }
 
-/// An iterator that uses Bresenham's line algorithm to draw the pixels in a line
+/// An iterator that uses Bresenham's line algorithm to draw the pixels in a line.
+///
+/// Note that this implementation excludes the last pixel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DrawLineIterator<T: PixelCoordinate> {
     x0: T::Signed,

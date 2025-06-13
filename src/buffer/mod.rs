@@ -236,7 +236,7 @@ impl<'a> Buffer<'a> {
     }
     /// Decode data in the PNG format.
     pub fn decode_jpeg_data(data: &[u8]) -> Result<Self, JpegDecodeErrors> {
-        let _guard = info_span!("decoding PNG image", data.len = data.len()).entered();
+        let _guard = info_span!("decoding JPEG image", data.len = data.len()).entered();
         let mut decoder = JpegDecoder::new_with_options(
             data,
             DecoderOptions::new_fast().jpeg_set_out_colorspace(ColorSpace::RGB),
@@ -533,7 +533,7 @@ impl<'a> Buffer<'a> {
     }
     /// Resize the internal data to match the size, shape, and pixel format, returning the mutable buffer.
     pub fn resize_data(&mut self) -> &mut Vec<u8> {
-        let len = self.width as usize * self.height as usize;
+        let len = self.width as usize * self.height as usize * self.format.pixel_size() as usize;
         let res = polonius::<_, _, ForLt!(&mut Vec<u8>)>(&mut self.data, |data| {
             if len == 0 {
                 if let Cow::Owned(vec) = data {
