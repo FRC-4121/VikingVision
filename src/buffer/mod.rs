@@ -572,21 +572,37 @@ impl<'a> Buffer<'a> {
         }
     }
     /// Get the slice of data for a single pixel.
-    pub fn pixel(&self, x: u32, y: u32) -> Option<&[u8]> {
+    ///
+    /// Note that for YUVY images, it returns the pair of pixels that share the data.
+    pub fn pixel(&self, mut x: u32, y: u32) -> Option<&[u8]> {
+        if self.format == PixelFormat::Yuyv {
+            x &= !1;
+            if x + 1 >= self.width {
+                return None;
+            }
+        }
         if x >= self.width || y >= self.height {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;
         let px_len = self.format.pixel_size() as usize;
         if self.format == PixelFormat::Yuyv {
-            let start = (px_idx * px_len) & !1;
+            let start = px_idx * px_len;
             self.data.get(start..(start + 4))
         } else {
             self.data.get((px_idx * px_len)..((px_idx + 1) * px_len))
         }
     }
     /// Get the mutable slice of data for a single pixel.
-    pub fn pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
+    ///
+    /// Note that for YUVY images, it returns the pair of pixels that share the data.
+    pub fn pixel_mut(&mut self, mut x: u32, y: u32) -> Option<&mut [u8]> {
+        if self.format == PixelFormat::Yuyv {
+            x &= !1;
+            if x + 1 >= self.width {
+                return None;
+            }
+        }
         if x >= self.width || y >= self.height {
             return None;
         }
@@ -594,7 +610,7 @@ impl<'a> Buffer<'a> {
         let px_len = self.format.pixel_size() as usize;
         let data = self.data.to_mut();
         if self.format == PixelFormat::Yuyv {
-            let start = (px_idx * px_len) & !1;
+            let start = px_idx * px_len;
             data.get_mut(start..(start + 4))
         } else {
             data.get_mut((px_idx * px_len)..((px_idx + 1) * px_len))

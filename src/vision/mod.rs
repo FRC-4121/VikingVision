@@ -781,7 +781,7 @@ impl<I: Iterator<Item: IntoIterator<Item = bool>>> Iterator for BlobsIterator<I>
         }
     }
 }
-impl<I: Iterator<Item: Iterator<Item = bool>>> FusedIterator for BlobsIterator<I> {}
+impl<I: Iterator<Item: IntoIterator<Item = bool>>> FusedIterator for BlobsIterator<I> {}
 
 /// Percentile filter an image.
 ///
