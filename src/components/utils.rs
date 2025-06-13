@@ -2,12 +2,14 @@
 
 use super::ComponentIdentifier;
 use crate::buffer::Buffer;
-use crate::pipeline::prelude::*;
-use crate::utils::{Configurable, Configure};
+use crate::pipeline::{PipelineId, prelude::*};
+use crate::utils::{Configurable, Configure, FpsCounter};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 use supply::{Request, prelude::*};
 use tracing::{error, info};
 
@@ -142,7 +144,7 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
         let Ok(data) = context.get_as::<T>(None).and_log_err() else {
             return;
         };
-        context.submit(None, std::sync::Mutex::new(T::clone(&data)));
+        context.submit(None, Mutex::new(T::clone(&data)));
     }
 }
 
@@ -312,5 +314,88 @@ impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> 
             ChannelKind::Bounded(s) => drop(s.send((val, ctx))),
             ChannelKind::Unbounded(s) => drop(s.send((val, ctx))),
         }
+    }
+}
+
+/// A component that tracks the frequency that it's called at.
+#[derive(Debug)]
+pub struct FpsComponent {
+    inner: Mutex<HashMap<Option<PipelineId>, crate::utils::FpsCounter>>,
+    max_duration: Duration,
+}
+impl Default for FpsComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl FpsComponent {
+    pub fn with_max_duration(max_duration: Duration) -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            max_duration,
+        }
+    }
+    pub fn new() -> Self {
+        Self::with_max_duration(default_fps_dur())
+    }
+    pub fn set_max_duration(&mut self, duration: Duration) {
+        let Ok(inner) = self.inner.get_mut() else {
+            error!("poisoned FPS counter lock");
+            return;
+        };
+        for val in inner.values_mut() {
+            val.set_max_duration(duration);
+        }
+    }
+}
+impl Component for FpsComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        if name.is_some_and(|n| ["min", "max", "fps", "pretty"].contains(&n)) {
+            OutputKind::Single
+        } else {
+            OutputKind::None
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+        let Ok(mut lock) = self.inner.lock() else {
+            error!("poisoned FPS counter lock");
+            return;
+        };
+        let fps = lock
+            .entry(context.context.request::<PipelineId>())
+            .or_insert(FpsCounter::new(self.max_duration));
+        fps.tick();
+        let mut minmax = None;
+        if context.listening("min") || context.listening("max") {
+            let [min, max] = fps.minmax().unwrap_or_default();
+            context.submit("min", min);
+            context.submit("max", max);
+            minmax = Some([min, max]);
+        }
+        context.submit_if_listening("fps", || fps.fps());
+        context.submit_if_listening("pretty", || {
+            let [min, max] = minmax.or_else(|| fps.minmax()).unwrap_or_default();
+            format!("{min:.2}/{max:.2}/{} FPS", fps.fps())
+        });
+    }
+}
+
+#[inline(always)]
+const fn default_fps_dur() -> Duration {
+    Duration::from_secs(10)
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct FpsFactory {
+    #[serde(alias = "period", default, with = "humantime_serde")]
+    pub duration: Duration,
+}
+#[typetag::serde(name = "fps")]
+impl ComponentFactory for FpsFactory {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(FpsComponent::with_max_duration(self.duration))
     }
 }

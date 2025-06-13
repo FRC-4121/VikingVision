@@ -74,6 +74,19 @@ impl FpsCounter {
     pub fn fps(&self) -> f64 {
         self.frames.len() as f64 / self.duration.as_secs_f64()
     }
+    pub fn set_max_duration(&mut self, duration: Duration) {
+        if self.duration > duration {
+            let now = Instant::now();
+            while self
+                .frames
+                .front()
+                .is_some_and(|&f| now.duration_since(f) > duration)
+            {
+                self.frames.pop_front();
+            }
+        }
+        self.duration = duration;
+    }
 }
 
 /// A convenience trait to log an error.
