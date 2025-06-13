@@ -161,7 +161,7 @@ impl ComponentFactory for CanvasFactory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "WMFShim")]
 pub struct WrapMutexFactory {
-    /// The serialized type name.
+    /// The inner type.
     ///
     /// Currently supported types are:
     /// - integer types
@@ -169,7 +169,7 @@ pub struct WrapMutexFactory {
     /// - [`String`] as `string`
     /// - [`Buffer`] as `buffer`
     /// - a [`Vec`] of any of the previous types, as the previous wrapped in brackets e.g. `[string]` for `Vec<String>`
-    pub r#type: String,
+    pub inner: String,
     /// The actual construction function.
     ///
     /// This is skipped in de/serialization, and looked up based on the type name
@@ -185,13 +185,13 @@ impl ComponentFactory for WrapMutexFactory {
 
 #[derive(Deserialize)]
 struct WMFShim {
-    r#type: String,
+    inner: String,
 }
 impl TryFrom<WMFShim> for WrapMutexFactory {
     type Error = String;
 
     fn try_from(value: WMFShim) -> Result<Self, Self::Error> {
-        let factory = match &*value.r#type {
+        let factory = match &*value.inner {
             "i8" => WrapMutexComponent::<i8>::new_boxed,
             "i16" => WrapMutexComponent::<i16>::new_boxed,
             "i32" => WrapMutexComponent::<i32>::new_boxed,
@@ -223,7 +223,7 @@ impl TryFrom<WMFShim> for WrapMutexFactory {
             name => return Err(format!("Unrecognized type {name:?}")),
         };
         Ok(WrapMutexFactory {
-            r#type: value.r#type,
+            inner: value.inner,
             factory,
         })
     }

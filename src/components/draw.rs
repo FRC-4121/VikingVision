@@ -351,14 +351,14 @@ impl<T: Drawable> Component for DrawComponent<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "DrawShim")]
 pub struct DrawFactory {
-    /// The serialized type name.
+    /// The type of things to draw.
     ///
     /// Currently supported types are:
     /// - [`Blob`] as `blob`
     /// - [`Line`] as `line`
     /// - [`apriltag::Detection`](crate::apriltag::Detection) as `apriltag`
     /// - a [`Vec`] of any of the previous types, as the previous wrapped in brackets e.g. `[blob]` for `Vec<Blob>`
-    pub r#type: String,
+    pub draw: String,
     /// The color to draw in.
     ///
     /// The image will be converted to the specified colorspace first.
@@ -379,7 +379,7 @@ impl ComponentFactory for DrawFactory {
 
 #[derive(Deserialize)]
 struct DrawShim {
-    r#type: String,
+    draw: String,
     #[serde(flatten)]
     color: Color,
 }
@@ -387,7 +387,7 @@ impl TryFrom<DrawShim> for DrawFactory {
     type Error = String;
 
     fn try_from(value: DrawShim) -> Result<Self, Self::Error> {
-        let factory = match &*value.r#type {
+        let factory = match &*value.draw {
             "blob" => DrawComponent::<Blob>::new_boxed,
             "line" => DrawComponent::<Line>::new_boxed,
             #[cfg(feature = "apriltag")]
@@ -399,7 +399,7 @@ impl TryFrom<DrawShim> for DrawFactory {
             name => return Err(format!("Unrecognized type {name:?}")),
         };
         Ok(DrawFactory {
-            r#type: value.r#type,
+            draw: value.draw,
             color: value.color,
             factory,
         })
