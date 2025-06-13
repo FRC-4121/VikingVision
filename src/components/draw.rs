@@ -328,8 +328,12 @@ impl<T: Drawable> Component for DrawComponent<T> {
     fn inputs(&self) -> Inputs {
         Inputs::Named(vec!["canvas".to_string(), "elem".to_string()])
     }
-    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
-        OutputKind::None
+    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+        if name == Some("echo") {
+            OutputKind::Single
+        } else {
+            OutputKind::None
+        }
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
         let Ok(canvas) = context.get_as::<Mutex<Buffer>>("canvas").and_log_err() else {
@@ -338,13 +342,16 @@ impl<T: Drawable> Component for DrawComponent<T> {
         let Ok(elem) = context.get_as::<T>("elem").and_log_err() else {
             return;
         };
-        let Ok(mut lock) = canvas.lock() else {
-            tracing::error!("attempted to lock poisoned mutex");
-            return;
-        };
-        let fmt = self.color.pixel_format();
-        lock.convert_inplace(fmt);
-        elem.draw(&self.color.bytes(), &mut lock);
+        {
+            let Ok(mut lock) = canvas.lock() else {
+                tracing::error!("attempted to lock poisoned mutex");
+                return;
+            };
+            let fmt = self.color.pixel_format();
+            lock.convert_inplace(fmt);
+            elem.draw(&self.color.bytes(), &mut lock);
+        }
+        context.submit("echo", canvas);
     }
 }
 

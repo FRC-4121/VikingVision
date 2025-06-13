@@ -28,6 +28,15 @@ impl From<ComponentId> for ComponentIdentifier {
 }
 
 pub mod prelude {
+    #[cfg(feature = "apriltag")]
+    pub use super::apriltag::{AprilTagComponent, DetectPoseComponent};
+    pub use super::draw::DrawComponent;
+    pub use super::ffmpeg::FfmpegComponent;
     pub use super::group::GroupComponent;
-    pub use super::utils::{CloneComponent, DebugComponent};
+    pub use super::utils::{
+        ChannelComponent, CloneComponent, DebugComponent, FpsComponent, WrapMutexComponent,
+    };
+    pub use super::vision::{
+        BlobComponent, ColorFilterComponent, ColorSpaceComponent, PercentileFilterComponent,
+    };
 }
