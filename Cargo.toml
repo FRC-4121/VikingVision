@@ -23,6 +23,7 @@ serde.workspace = true
 smallvec = { version = "1.15.0", features = ["drain_filter"] }
 supply = "0.3.1"
 thiserror = "2.0.12"
+time = { version = "0.3.41", features = ["formatting", "local-offset"] }
 tracing.workspace = true
 triomphe = "0.1.14"
 ty-tag = "0.1.1"

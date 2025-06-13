@@ -1,3 +1,4 @@
+use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hash};
 
 pub mod component;
@@ -21,9 +22,41 @@ impl PipelineId {
         Self(val as usize as u64)
     }
 }
+impl Display for PipelineId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:0>16x}", self.0)
+    }
+}
 
+/// A pretty name for a pipeline run.
+#[derive(Clone, Copy)]
+pub struct PipelineName<'a>(pub &'a dyn Display);
+impl Debug for PipelineName<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        struct AsDebug<'a>(&'a dyn Display);
+        impl Debug for AsDebug<'_> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                Display::fmt(self.0, f)
+            }
+        }
+        f.debug_tuple("PipelineName")
+            .field(&AsDebug(self.0))
+            .finish()
+    }
+}
+impl Display for PipelineName<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(self.0, f)
+    }
+}
+
+/// Type tag for [`PipelineId`].
 #[ty_tag::tag]
 pub type PipelineIdTag = PipelineId;
+
+/// Type tag for [`PipelineName`].
+#[ty_tag::tag]
+pub type PipelineNameTag<'a> = PipelineName<'a>;
 
 pub mod prelude {
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
