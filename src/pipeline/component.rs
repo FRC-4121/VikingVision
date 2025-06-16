@@ -272,7 +272,16 @@ impl Inputs {
 /// ```
 pub trait Component: Send + Sync + 'static {
     /// Get the inputs that this component is expecting.
+    ///
+    /// This should specify the values that a component *needs* in order to run.
     fn inputs(&self) -> Inputs;
+    /// Check if this component can take an additional input.
+    ///
+    /// This is only called if an input wasn't specified as an input through [`inputs`](Self::inputs).
+    #[allow(unused_variables)]
+    fn can_take(&self, input: &str) -> bool {
+        false
+    }
     /// Check if an output channel is available.
     fn output_kind(&self, name: Option<&str>) -> OutputKind;
     /// Run a component on a given input.

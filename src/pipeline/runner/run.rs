@@ -379,11 +379,11 @@ impl Drop for ComponentContextInner<'_> {
 impl<'r> ComponentContextInner<'r> {
     /// Get the component identifier of this .
     pub fn comp_id(&self) -> ComponentId {
-        ComponentId(
-            (self.component as *const ComponentData as usize
+        ComponentId {
+            raw: (self.component as *const ComponentData as usize
                 - self.runner.components.as_ptr() as usize)
                 / size_of::<ComponentData>(),
-        )
+        }
     }
 
     /// Returns the unique identifier for this execution run.
@@ -550,7 +550,7 @@ impl<'r> ComponentContextInner<'r> {
             },
         );
         for &(comp_id, channel) in dependents {
-            let next_comp = &self.runner.components[comp_id.0];
+            let next_comp = &self.runner.components[comp_id.index()];
             match channel {
                 InputChannel::Primary(multi) => self.spawn_next(
                     next_comp,
@@ -855,7 +855,7 @@ impl PipelineRunner {
                 params,
             });
         }
-        let Some(data) = self.components.get(params.component.0) else {
+        let Some(data) = self.components.get(params.component.index()) else {
             return Err(RunErrorWithParams {
                 cause: RunErrorCause::NoComponent(params.component),
                 params,
@@ -908,7 +908,7 @@ impl PipelineRunner {
                 InputKind::Multiple(idx, arg)
             }
         };
-        let data = &self.components[component.0];
+        let data = &self.components[component.index()];
         scope.spawn(move |scope| {
             ComponentContextInner {
                 runner: self,
@@ -936,7 +936,7 @@ impl PipelineRunner {
                 continue;
             }
             for (comp, channel) in deps {
-                let component = &self.components[comp.0];
+                let component = &self.components[comp.index()];
                 match *channel {
                     InputChannel::Primary(_) => self.cleanup_runs(component, prefix),
                     InputChannel::Numbered(idx) => {

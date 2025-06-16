@@ -112,7 +112,7 @@ impl Debug for ComponentData {
 #[non_exhaustive]
 pub enum AddComponentError {
     /// A component with the name already exits.
-    #[error("Name already exists with component ID {}", .0.0)]
+    #[error("Name already exists with component ID {0}")]
     AlreadyExists(ComponentId),
 }
 
@@ -181,7 +181,9 @@ impl PipelineRunner {
         component: Arc<dyn Component>,
     ) -> ComponentId {
         tracing::info!(?name, hidden = true, "adding component");
-        let value = ComponentId(self.components.len());
+        let value = ComponentId {
+            raw: self.components.len(),
+        };
         let input_mode = match component.inputs() {
             Inputs::Primary => InputMode::Single {
                 name: None,
@@ -261,7 +263,9 @@ impl PipelineRunner {
         match self.lookup.entry(name.clone()) {
             Entry::Occupied(e) => Err(AddComponentError::AlreadyExists(*e.get())),
             Entry::Vacant(e) => {
-                let value = ComponentId(self.components.len());
+                let value = ComponentId {
+                    raw: self.components.len(),
+                };
                 let input_mode = match component.inputs() {
                     Inputs::Primary => InputMode::Single {
                         name: None,
@@ -316,6 +320,8 @@ impl PipelineRunner {
         sub_id: ComponentId,
         sub_channel: Option<&'a str>,
     ) -> Result<(), AddDependencyError<'a>> {
+        pub_id.assert_normal();
+        sub_id.assert_normal();
         tracing::info!(
             "subscribing {sub_id} ({} output) to {pub_id} ({} input)",
             if let Some(name) = pub_channel {
@@ -329,10 +335,10 @@ impl PipelineRunner {
                 "primary".to_string()
             },
         );
-        if pub_id.0 >= self.components.len() {
+        if pub_id.index() >= self.components.len() {
             return Err(AddDependencyError::NoPublisher(pub_id));
         }
-        if sub_id.0 >= self.components.len() {
+        if sub_id.index() >= self.components.len() {
             return Err(AddDependencyError::NoSubscriber(pub_id));
         }
         if pub_id == sub_id {
@@ -340,7 +346,7 @@ impl PipelineRunner {
         }
         let [c1, c2] = self
             .components
-            .get_disjoint_mut([pub_id.0, sub_id.0])
+            .get_disjoint_mut([pub_id.index(), sub_id.index()])
             .unwrap();
         let kind = c1.component.output_kind(pub_channel);
         if kind.is_none() {
@@ -356,40 +362,66 @@ impl PipelineRunner {
                     name: ex_name,
                     attached,
                 } => {
-                    if ex_name.as_ref().is_none_or(|n| n != name) {
+                    if let Some(ex) = ex_name {
+                        if ex == name {
+                            if *attached {
+                                return Err(AddDependencyError::DuplicateNamedInput {
+                                    component: sub_id,
+                                    channel: name,
+                                });
+                            }
+                            *attached = true;
+                            if kind.is_multi() {
+                                c2.multi_input_from = Some(pub_id);
+                                InputChannel::Primary(true)
+                            } else {
+                                c2.multi_input_from = c1.multi_input_from;
+                                InputChannel::Primary(false)
+                            }
+                        } else {
+                            c2.input_mode = InputMode::Multiple {
+                                lookup: [
+                                    (std::mem::take(ex), (0, ComponentId::PLACEHOLDER)),
+                                    (name.to_string(), (1, pub_id)),
+                                ]
+                                .into(),
+                                multi: kind.is_multi().then(|| (name.to_string(), pub_id)),
+                            };
+                            InputChannel::Numbered(1)
+                        }
+                    } else {
                         return Err(AddDependencyError::DoesntTakeInput {
                             component: sub_id,
                             channel: Some(name),
                         });
-                    }
-                    if *attached {
-                        return Err(AddDependencyError::DuplicateNamedInput {
-                            component: sub_id,
-                            channel: name,
-                        });
-                    }
-                    *attached = true;
-                    if kind.is_multi() {
-                        c2.multi_input_from = Some(pub_id);
-                        InputChannel::Primary(true)
-                    } else {
-                        c2.multi_input_from = c1.multi_input_from;
-                        InputChannel::Primary(false)
                     }
                 }
                 InputMode::Multiple { lookup, multi } => {
-                    let Some((idx, comp)) = lookup.get_mut(name) else {
-                        return Err(AddDependencyError::DoesntTakeInput {
-                            component: sub_id,
-                            channel: Some(name),
-                        });
+                    let (idx, comp) = match lookup.get_mut(name) {
+                        Some(v) => {
+                            if v.1.is_valid() {
+                                return Err(AddDependencyError::DuplicateNamedInput {
+                                    component: sub_id,
+                                    channel: name,
+                                });
+                            }
+                            v
+                        }
+                        None => {
+                            if c2.component.can_take(name) {
+                                let idx = lookup.len();
+                                lookup
+                                    .entry(name.into())
+                                    .insert_entry((idx, pub_id.with_flag()))
+                                    .into_mut()
+                            } else {
+                                return Err(AddDependencyError::DoesntTakeInput {
+                                    component: sub_id,
+                                    channel: Some(name),
+                                });
+                            }
+                        }
                     };
-                    if comp.is_valid() {
-                        return Err(AddDependencyError::DuplicateNamedInput {
-                            component: sub_id,
-                            channel: name,
-                        });
-                    }
                     if kind.is_multi() {
                         if let Some((_, id)) = multi {
                             return Err(AddDependencyError::MultipleMultiInputs {

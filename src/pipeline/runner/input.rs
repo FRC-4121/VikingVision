@@ -124,9 +124,10 @@ impl PipelineRunner {
         component: ComponentId,
         input: I,
     ) -> Result<ComponentArgs, PackArgsError> {
+        component.assert_normal();
         let data = self
             .components
-            .get(component.0)
+            .get(component.index())
             .ok_or(PackArgsError::NoComponent(component))?;
         match &data.input_mode {
             InputMode::Single { name, .. } => {

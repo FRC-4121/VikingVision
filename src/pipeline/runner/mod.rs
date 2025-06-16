@@ -42,6 +42,9 @@ pub use deps::*;
 pub use input::*;
 pub use run::*;
 
+const IDX_MASK: usize = usize::MAX >> 1;
+const FLAG_MASK: usize = !IDX_MASK;
+
 /// A unique identifier for components within a [`PipelineRunner`].
 ///
 /// ComponentId is a transparent wrapper around a `usize` that serves as an index into the
@@ -49,18 +52,55 @@ pub use run::*;
 /// to indicate an unassigned component.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct ComponentId(pub usize);
+pub struct ComponentId {
+    pub raw: usize,
+}
 
 impl ComponentId {
     /// A placeholder component, with a value equal to `usize::MAX`.
-    pub const PLACEHOLDER: Self = Self(usize::MAX);
+    pub const PLACEHOLDER: Self = Self { raw: usize::MAX };
     /// Check if `self == Self::PLACEHOLDER`
     pub const fn is_placeholder(&self) -> bool {
-        self.0 == usize::MAX
+        self.raw == usize::MAX
     }
     /// Opposite of [`is_placeholder`](Self::is_placeholder)
     pub const fn is_valid(&self) -> bool {
-        self.0 != usize::MAX
+        self.raw != usize::MAX
+    }
+    /// Get the value of a boolean flag stored here.
+    pub const fn flag(&self) -> bool {
+        self.is_valid() && self.raw & FLAG_MASK != 0
+    }
+    /// Get the value of the index, without the flag.
+    pub const fn index(&self) -> usize {
+        self.raw & IDX_MASK
+    }
+    pub const fn new(index: usize) -> Self {
+        debug_assert!(index < IDX_MASK, "value is out of range for a component ID");
+        Self {
+            raw: index | FLAG_MASK,
+        }
+    }
+    /// Create a flagged `ComponentId`.
+    pub const fn new_flagged(index: usize) -> Self {
+        debug_assert!(index < IDX_MASK, "value is out of range for a component ID");
+        Self {
+            raw: index | FLAG_MASK,
+        }
+    }
+    /// Create a new component
+    pub const fn with_flag(self) -> Self {
+        Self {
+            raw: self.raw | FLAG_MASK,
+        }
+    }
+    pub(crate) fn assert_normal(&self) {
+        if self.is_placeholder() {
+            tracing::warn!("placeholder component passed where a normal component was expected");
+        }
+        if self.flag() {
+            tracing::warn!("flagged component passed where a normal component was expected");
+        }
     }
 }
 
@@ -69,7 +109,7 @@ impl Display for ComponentId {
         if self.is_placeholder() {
             f.write_str("PLACEHOLDER")
         } else {
-            write!(f, "#{}", self.0)
+            write!(f, "#{}", self.index())
         }
     }
 }
@@ -83,7 +123,7 @@ impl Debug for ComponentId {
         if self.is_placeholder() {
             tuple.field(&PLACEHOLDER);
         } else {
-            tuple.field(&self.0);
+            tuple.field(&self.index());
         }
         tuple.finish()
     }
@@ -226,15 +266,17 @@ impl PipelineRunner {
     /// Get the component associated with an ID.
     #[inline(always)]
     pub fn component(&self, id: ComponentId) -> Option<&Arc<dyn Component>> {
-        self.components.get(id.0).map(|c| &c.component)
+        id.assert_normal();
+        self.components.get(id.index()).map(|c| &c.component)
     }
     /// Get the chain of a component's multi-output nodes.
     ///
     /// This originally returns `start`, then the last multi-output component that indirectly leads to `start`,
     /// then the last multi-output component that indirectly leads to *that* node, and so on.
     pub fn branch_chain(&self, start: ComponentId) -> impl Iterator<Item = ComponentId> {
+        start.assert_normal();
         std::iter::successors(Some(start), |&id| {
-            let data = self.components.get(id.0)?;
+            let data = self.components.get(id.index())?;
             data.multi_input_from
         })
     }
