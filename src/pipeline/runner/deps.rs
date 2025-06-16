@@ -231,8 +231,7 @@ impl PipelineRunner {
     /// # Example
     ///
     /// ```rust
-    /// # use viking_vision::pipeline::prelude::{*, ProduceComponent as ImageProcessor, ConsumeComponent as OtherProcessor};
-    /// # use std::sync::Arc;
+    /// # use viking_vision::pipeline::prelude::for_test::{*, ProduceComponent as ImageProcessor, ConsumeComponent as OtherProcessor};
     ///
     /// let mut runner = PipelineRunner::new();
     ///

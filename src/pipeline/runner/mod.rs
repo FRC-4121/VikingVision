@@ -5,7 +5,7 @@
 //!
 //! # Example
 //! ```rust
-//! # use viking_vision::pipeline::prelude::{*, produce_component as process_image, consume_component as detect_features};
+//! # use viking_vision::pipeline::prelude::for_test::{*, produce_component as process_image, consume_component as detect_features};
 //! let mut runner = PipelineRunner::new();
 //!
 //! // Register components with unique names
@@ -144,7 +144,7 @@ impl Display for RunId {
 /// # Example
 ///
 /// ```rust
-/// # use viking_vision::pipeline::prelude::{*, consume_component as process_component};
+/// # use viking_vision::pipeline::prelude::for_test::{*, consume_component as process_component};
 /// # use std::sync::Arc;
 /// # fn input_component() -> Arc<dyn Component> {
 /// #     pub struct EchoComponent;

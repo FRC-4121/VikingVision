@@ -227,7 +227,7 @@ pub mod markers {
 /// # Examples
 ///
 /// ```rust
-/// # use viking_vision::pipeline::prelude::*;
+/// # use viking_vision::pipeline::prelude::for_test::*;
 /// # let mut runner = PipelineRunner::new();
 /// # let component_id = runner.add_component("processor", produce_component()).unwrap();
 ///
@@ -800,7 +800,7 @@ impl PipelineRunner {
     /// # Example
     ///
     /// ```rust
-    /// # use viking_vision::pipeline::prelude::{*, produce_component as some_component_no_args, consume_component as some_component_with_primary};
+    /// # use viking_vision::pipeline::prelude::for_test::{*, produce_component as some_component_no_args, consume_component as some_component_with_primary};
     /// # use std::sync::Arc;
     /// # fn some_component_with_named() -> Arc<dyn Component> {
     /// #     struct NamedInput;
