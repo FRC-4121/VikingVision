@@ -1,5 +1,6 @@
 use super::*;
-use crate::pipeline::prelude::Inputs;
+use crate::pipeline::prelude::{Inputs, OutputKind};
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum InputChannel {
@@ -69,13 +70,31 @@ impl MutableData {
 pub(super) enum InputMode {
     Single {
         name: Option<String>,
-        attached: bool,
+        attached: ComponentId,
     },
     Multiple {
         lookup: HashMap<String, (usize, ComponentId)>,
         multi: Option<(String, ComponentId)>,
     },
 }
+
+static DEFAULT_COMPONENT: LazyLock<Arc<dyn Component>> = LazyLock::new(|| {
+    struct Placeholder;
+    impl Component for Placeholder {
+        fn inputs(&self) -> Inputs {
+            Inputs::none()
+        }
+        fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+            OutputKind::None
+        }
+        fn run<'s, 'r: 's>(&self, _context: ComponentContext<'r, '_, 's>) {
+            tracing::error!("called a placeholder component");
+        }
+    }
+    Arc::new(Placeholder)
+});
+static DEFAULT_NAME: LazyLock<triomphe::Arc<str>> =
+    LazyLock::new(|| triomphe::Arc::from("<placeholder>"));
 
 /// Data associated with components.
 pub struct ComponentData {
@@ -104,6 +123,34 @@ impl Debug for ComponentData {
             .field("multi_input_from", &self.multi_input_from)
             .field("input_mode", &self.input_mode)
             .finish_non_exhaustive()
+    }
+}
+impl ComponentData {
+    /// Whether this component data is a placeholder.
+    ///
+    /// When a component is removed, it will be replaced with a placeholder value and can be overwritten.
+    #[inline(always)]
+    pub fn is_placeholder(&self) -> bool {
+        Arc::ptr_eq(&self.component, &DEFAULT_COMPONENT)
+    }
+
+    fn placeholder() -> Self {
+        Self {
+            component: DEFAULT_COMPONENT.clone(),
+            primary_dependents: Vec::new(),
+            dependents: HashMap::new(),
+            partial: Mutex::new(MutableData {
+                data: Vec::new(),
+                per_run: Vec::new(),
+                first: 0,
+            }),
+            name: DEFAULT_NAME.clone(),
+            input_mode: InputMode::Single {
+                name: None,
+                attached: ComponentId::PLACEHOLDER,
+            },
+            multi_input_from: None,
+        }
     }
 }
 
@@ -180,20 +227,17 @@ impl PipelineRunner {
         name: triomphe::Arc<str>,
         component: Arc<dyn Component>,
     ) -> ComponentId {
-        tracing::info!(?name, hidden = true, "adding component");
-        let value = ComponentId {
-            raw: self.components.len(),
-        };
+        tracing::info!(name = &*name, hidden = true, "adding component");
         let input_mode = match component.inputs() {
             Inputs::Primary => InputMode::Single {
                 name: None,
-                attached: false,
+                attached: ComponentId::PLACEHOLDER,
             },
             Inputs::Named(mut v) => {
                 if v.len() == 1 {
                     InputMode::Single {
                         name: v.pop(),
-                        attached: false,
+                        attached: ComponentId::PLACEHOLDER,
                     }
                 } else {
                     InputMode::Multiple {
@@ -208,20 +252,11 @@ impl PipelineRunner {
             }
         };
         let component_clone = component.clone();
+        let (data, value) = Self::push_data(&mut self.components, &mut self.first_open);
         let span = tracing::info_span!("initializing component", %name, component = %value);
-        self.components.push(ComponentData {
-            component,
-            primary_dependents: Vec::new(),
-            dependents: HashMap::new(),
-            partial: Mutex::new(MutableData {
-                data: Vec::new(),
-                per_run: Vec::new(),
-                first: 0,
-            }),
-            name,
-            input_mode,
-            multi_input_from: None,
-        });
+        data.component = component;
+        data.name = name;
+        data.input_mode = input_mode;
         span.in_scope(|| component_clone.initialize(self, value));
         value
     }
@@ -259,23 +294,20 @@ impl PipelineRunner {
         name: triomphe::Arc<str>,
         component: Arc<dyn Component>,
     ) -> Result<ComponentId, AddComponentError> {
-        tracing::info!(?name, hidden = false, "adding component");
+        tracing::info!(name = &*name, hidden = false, "adding component");
         match self.lookup.entry(name.clone()) {
             Entry::Occupied(e) => Err(AddComponentError::AlreadyExists(*e.get())),
             Entry::Vacant(e) => {
-                let value = ComponentId {
-                    raw: self.components.len(),
-                };
                 let input_mode = match component.inputs() {
                     Inputs::Primary => InputMode::Single {
                         name: None,
-                        attached: false,
+                        attached: ComponentId::PLACEHOLDER,
                     },
                     Inputs::Named(mut v) => {
                         if v.len() == 1 {
                             InputMode::Single {
                                 name: v.pop(),
-                                attached: false,
+                                attached: ComponentId::PLACEHOLDER,
                             }
                         } else {
                             InputMode::Multiple {
@@ -290,20 +322,11 @@ impl PipelineRunner {
                     }
                 };
                 let component_clone = component.clone();
+                let (data, value) = Self::push_data(&mut self.components, &mut self.first_open);
                 let span = tracing::info_span!("initializing component", %name, component = %value);
-                self.components.push(ComponentData {
-                    component,
-                    primary_dependents: Vec::new(),
-                    dependents: HashMap::new(),
-                    partial: Mutex::new(MutableData {
-                        data: Vec::new(),
-                        per_run: Vec::new(),
-                        first: 0,
-                    }),
-                    name,
-                    input_mode,
-                    multi_input_from: None,
-                });
+                data.component = component;
+                data.name = name;
+                data.input_mode = input_mode;
                 e.insert(value);
                 span.in_scope(|| component_clone.initialize(self, value));
                 Ok(value)
@@ -322,6 +345,8 @@ impl PipelineRunner {
     ) -> Result<(), AddDependencyError<'a>> {
         pub_id.assert_normal();
         sub_id.assert_normal();
+        let pub_id = pub_id.drop_flag();
+        let sub_id = sub_id.drop_flag();
         tracing::info!(
             "subscribing {sub_id} ({} output) to {pub_id} ({} input)",
             if let Some(name) = pub_channel {
@@ -364,13 +389,13 @@ impl PipelineRunner {
                 } => {
                     if let Some(ex) = ex_name {
                         if ex == name {
-                            if *attached {
+                            if attached.is_valid() {
                                 return Err(AddDependencyError::DuplicateNamedInput {
                                     component: sub_id,
                                     channel: name,
                                 });
                             }
-                            *attached = true;
+                            *attached = pub_id;
                             if kind.is_multi() {
                                 c2.multi_input_from = Some(pub_id);
                                 InputChannel::Primary(true)
@@ -477,7 +502,7 @@ impl PipelineRunner {
                     channel: None,
                 });
             };
-            if *attached {
+            if attached.is_valid() {
                 return Err(AddDependencyError::DuplicatePrimaryInput { component: sub_id });
             }
             if let Some(name) = pub_channel {
@@ -491,5 +516,197 @@ impl PipelineRunner {
             }
         }
         Ok(())
+    }
+
+    fn push_data<'a>(
+        components: &'a mut Vec<ComponentData>,
+        first_open: &mut usize,
+    ) -> (&'a mut ComponentData, ComponentId) {
+        let len = components.len();
+        if *first_open == len {
+            *first_open += 1;
+            components.push(ComponentData::placeholder());
+            (components.last_mut().unwrap(), ComponentId::new(len))
+        } else {
+            let idx = *first_open;
+            *first_open = components[idx..]
+                .iter()
+                .position(ComponentData::is_placeholder)
+                .map_or(components.len(), |i| i + idx);
+            let data = &mut components[idx];
+            (data, ComponentId::new(idx))
+        }
+    }
+
+    /// Remove a component from the pipeline.
+    ///
+    /// Any [`ComponentId`]s pointing to this component will be invalidated.
+    pub fn remove_component(&mut self, id: ComponentId) -> Option<Arc<dyn Component>> {
+        tracing::info!(%id, "removing component");
+        let data = self.components.get_mut(id.index())?;
+        if data.is_placeholder() {
+            return None;
+        }
+        data.name = DEFAULT_NAME.clone();
+        data.multi_input_from = None;
+        let component = std::mem::replace(&mut data.component, DEFAULT_COMPONENT.clone());
+        let input = std::mem::replace(
+            &mut data.input_mode,
+            InputMode::Single {
+                name: None,
+                attached: ComponentId::PLACEHOLDER,
+            },
+        );
+        let refs = data
+            .dependents
+            .drain()
+            .flat_map(|(_, v)| v)
+            .chain(data.primary_dependents.drain(..))
+            .collect::<Vec<_>>();
+        for (component, channel) in refs {
+            let data = &mut self.components[component.index()];
+            match (channel, &mut data.input_mode) {
+                (InputChannel::Primary(_), InputMode::Single { attached, .. }) => {
+                    *attached = ComponentId::PLACEHOLDER
+                }
+                (InputChannel::Numbered(idx), InputMode::Multiple { lookup, .. }) => {
+                    let (_, &mut (idx, ref mut id)) =
+                        lookup.iter_mut().find(|x| x.1.0 == idx).unwrap();
+                    if id.flag() {
+                        lookup.retain(|_, (i, _)| {
+                            use std::cmp::Ordering;
+                            match idx.cmp(i) {
+                                Ordering::Less => {
+                                    *i -= 1;
+                                    true
+                                }
+                                Ordering::Greater => true,
+                                Ordering::Equal => false,
+                            }
+                        })
+                    } else {
+                        *id = ComponentId::PLACEHOLDER;
+                    }
+                }
+                (InputChannel::Multiple, InputMode::Multiple { lookup, multi }) => {
+                    let (channel, _) = multi.take().unwrap();
+                    let idx = lookup.len();
+                    lookup.insert(channel, (idx, ComponentId::PLACEHOLDER));
+                }
+                _ => unreachable!(),
+            }
+        }
+        match input {
+            InputMode::Multiple { lookup, multi } => {
+                for id2 in lookup
+                    .into_iter()
+                    .map(|(_, (_, x))| x)
+                    .chain(multi.map(|m| m.1))
+                {
+                    let data = &mut self.components[id2.index()];
+                    for vec in data
+                        .dependents
+                        .values_mut()
+                        .chain(std::iter::once(&mut data.primary_dependents))
+                    {
+                        vec.retain(|(i, _)| *i != id);
+                    }
+                }
+            }
+            InputMode::Single { attached, .. } => {
+                let data = &mut self.components[attached.index()];
+                for vec in data
+                    .dependents
+                    .values_mut()
+                    .chain(std::iter::once(&mut data.primary_dependents))
+                {
+                    vec.retain(|(i, _)| *i != id);
+                }
+            }
+        }
+        Some(component)
+    }
+    /// Disconnect a component without removing it.
+    pub fn disconnect_component(&mut self, id: ComponentId) -> bool {
+        tracing::info!(%id, "removing component");
+        let Some(data) = self.components.get_mut(id.index()) else {
+            return false;
+        };
+        if data.is_placeholder() {
+            return false;
+        }
+        let refs = data
+            .dependents
+            .drain()
+            .flat_map(|(_, v)| v)
+            .chain(data.primary_dependents.drain(..))
+            .collect::<Vec<_>>();
+        for (component, channel) in refs {
+            let data = &mut self.components[component.index()];
+            match (channel, &mut data.input_mode) {
+                (InputChannel::Primary(_), InputMode::Single { attached, .. }) => {
+                    *attached = ComponentId::PLACEHOLDER
+                }
+                (InputChannel::Numbered(idx), InputMode::Multiple { lookup, .. }) => {
+                    let (_, &mut (idx, ref mut id)) =
+                        lookup.iter_mut().find(|x| x.1.0 == idx).unwrap();
+                    if id.flag() {
+                        lookup.retain(|_, (i, _)| {
+                            use std::cmp::Ordering;
+                            match idx.cmp(i) {
+                                Ordering::Less => {
+                                    *i -= 1;
+                                    true
+                                }
+                                Ordering::Greater => true,
+                                Ordering::Equal => false,
+                            }
+                        })
+                    } else {
+                        *id = ComponentId::PLACEHOLDER;
+                    }
+                }
+                (InputChannel::Multiple, InputMode::Multiple { lookup, multi }) => {
+                    let (channel, _) = multi.take().unwrap();
+                    let idx = lookup.len();
+                    lookup.insert(channel, (idx, ComponentId::PLACEHOLDER));
+                }
+                _ => unreachable!(),
+            }
+        }
+        match &mut self.components[id.index()].input_mode {
+            InputMode::Multiple { lookup, multi } => {
+                if let Some((channel, component)) = multi.take() {
+                    let idx = lookup.len();
+                    lookup.insert(channel, (idx, component));
+                }
+                let ids = lookup
+                    .iter_mut()
+                    .map(|(_, (_, i))| std::mem::replace(i, ComponentId::PLACEHOLDER))
+                    .collect::<Vec<_>>();
+                for id2 in ids {
+                    let data = &mut self.components[id2.index()];
+                    for vec in data
+                        .dependents
+                        .values_mut()
+                        .chain(std::iter::once(&mut data.primary_dependents))
+                    {
+                        vec.retain(|(i, _)| *i != id);
+                    }
+                }
+            }
+            InputMode::Single { attached, .. } => {
+                let idx = std::mem::replace(attached, ComponentId::PLACEHOLDER).index();
+                let data = &mut self.components[idx];
+                for vec in data
+                    .dependents
+                    .values_mut()
+                    .chain(std::iter::once(&mut data.primary_dependents))
+                {
+                    vec.retain(|(i, _)| *i != id);
+                }
+            }
+        }
+        false
     }
 }

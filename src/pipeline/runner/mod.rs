@@ -88,10 +88,16 @@ impl ComponentId {
             raw: index | FLAG_MASK,
         }
     }
-    /// Create a new component
+    /// Create a new ID with the flag set.
     pub const fn with_flag(self) -> Self {
         Self {
             raw: self.raw | FLAG_MASK,
+        }
+    }
+    /// Create a new ID without the flag set.
+    pub const fn drop_flag(self) -> Self {
+        Self {
+            raw: self.raw & IDX_MASK,
         }
     }
     pub(crate) fn assert_normal(&self) {
@@ -227,6 +233,7 @@ pub struct PipelineRunner {
     lookup: HashMap<triomphe::Arc<str>, ComponentId>,
     running: AtomicUsize,
     run_id: AtomicU32,
+    first_open: usize,
 }
 
 impl PipelineRunner {
@@ -238,6 +245,7 @@ impl PipelineRunner {
             lookup: HashMap::new(),
             running: AtomicUsize::new(0),
             run_id: AtomicU32::new(0),
+            first_open: 0,
         }
     }
 
