@@ -133,17 +133,17 @@ impl PipelineRunner {
                 let name = name.as_deref().ok_or(PackArgsError::ExpectingPrimary)?;
                 input
                     .get(name)
-                    .ok_or(PackArgsError::MissingInput(&name))
+                    .ok_or(PackArgsError::MissingInput(name))
                     .map(ComponentArgs::single)
             }
             InputMode::Multiple { lookup, multi } => {
                 let len = lookup.len() + usize::from(multi.is_some());
                 let mut packed = vec![None; len];
                 for (name, (idx, _)) in lookup {
-                    packed[*idx] = Some(input.get(name).ok_or(PackArgsError::MissingInput(&name))?);
+                    packed[*idx] = Some(input.get(name).ok_or(PackArgsError::MissingInput(name))?);
                 }
                 if let Some((name, _)) = &multi {
-                    let i = input.get(name).ok_or(PackArgsError::MissingInput(&name))?;
+                    let i = input.get(name).ok_or(PackArgsError::MissingInput(name))?;
                     *packed.last_mut().unwrap() = Some(i);
                 }
                 Ok(ComponentArgs(packed))

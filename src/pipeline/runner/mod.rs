@@ -77,7 +77,7 @@ impl Display for ComponentId {
 impl Debug for ComponentId {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         #[derive(Debug)]
-        #[allow(non_camel_case_types)]
+        #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         struct PLACEHOLDER;
         let mut tuple = f.debug_tuple("ComponentId");
         if self.is_placeholder() {

@@ -169,7 +169,7 @@ pub struct NoSource;
 impl CameraSource for NoSource {
     fn resolve(&self) -> io::Result<Device> {
         error!("unknown source");
-        Err(io::Error::new(io::ErrorKind::Other, "unknown source type"))
+        Err(io::Error::other("unknown source type"))
     }
 }
 
@@ -307,7 +307,7 @@ impl CaptureCamera {
                 value: _,
                 input_borrow,
             } => {
-                *input_borrow = Some(MmapStream::with_buffers(&device, Type::VideoCapture, 4)?);
+                *input_borrow = Some(MmapStream::with_buffers(device, Type::VideoCapture, 4)?);
                 Ok(input_borrow.as_mut().unwrap())
             }
         }

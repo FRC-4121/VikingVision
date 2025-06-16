@@ -356,7 +356,7 @@ impl PipelineRunner {
                     name: ex_name,
                     attached,
                 } => {
-                    if !ex_name.as_ref().is_some_and(|n| n == name) {
+                    if ex_name.as_ref().is_none_or(|n| n != name) {
                         return Err(AddDependencyError::DoesntTakeInput {
                             component: sub_id,
                             channel: Some(name),
