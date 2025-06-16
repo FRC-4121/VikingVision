@@ -203,8 +203,13 @@ impl PipelineRunner {
 
     /// Get a map of registered component names to their IDs.
     #[inline(always)]
-    pub fn components(&self) -> &HashMap<triomphe::Arc<str>, ComponentId> {
+    pub fn component_lookup(&self) -> &HashMap<triomphe::Arc<str>, ComponentId> {
         &self.lookup
+    }
+    /// Get a slice of the components in this runner.
+    #[inline(always)]
+    pub fn component_slice(&self) -> &[ComponentData] {
+        &self.components
     }
 
     /// Get the number of currently running pipelines.

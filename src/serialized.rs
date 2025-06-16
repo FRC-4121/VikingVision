@@ -170,12 +170,12 @@ impl ConfigFile {
             if config.input == InputConfig::None {
                 continue;
             }
-            let sub_id = runner.components()[name.as_str()];
+            let sub_id = runner.component_lookup()[name.as_str()];
             match &config.input {
                 InputConfig::None => unreachable!(),
                 InputConfig::Single(s) => {
                     let pub_id = *runner
-                        .components()
+                        .component_lookup()
                         .get(s.component.as_str())
                         .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                     runner
@@ -185,7 +185,7 @@ impl ConfigFile {
                 InputConfig::Multiple(m) => {
                     for (channel, s) in m {
                         let pub_id = *runner
-                            .components()
+                            .component_lookup()
                             .get(s.component.as_str())
                             .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                         runner

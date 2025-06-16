@@ -68,7 +68,7 @@ impl Configure<GroupConfig, Option<GroupState>, (&mut PipelineRunner, ComponentI
     ) -> Option<GroupState> {
         let input_component = match config.input {
             ComponentIdentifier::Name(name) => {
-                if let Some(&id) = runner.components().get(&*name) {
+                if let Some(&id) = runner.component_lookup().get(&*name) {
                     id
                 } else {
                     error!(name = name, "couldn't resolve input name");
@@ -85,7 +85,7 @@ impl Configure<GroupConfig, Option<GroupState>, (&mut PipelineRunner, ComponentI
         let primary_out = if let Some(out) = config.primary_output {
             let id = match out.component {
                 ComponentIdentifier::Name(name) => {
-                    if let Some(&id) = runner.components().get(&*name) {
+                    if let Some(&id) = runner.component_lookup().get(&*name) {
                         id
                     } else {
                         error!(name = name, "couldn't resolve output name");
@@ -118,7 +118,7 @@ impl Configure<GroupConfig, Option<GroupState>, (&mut PipelineRunner, ComponentI
         for (name, out) in config.output_map {
             let id = match out.component {
                 ComponentIdentifier::Name(name) => {
-                    if let Some(&id) = runner.components().get(&*name) {
+                    if let Some(&id) = runner.component_lookup().get(&*name) {
                         id
                     } else {
                         error!(name = name, "couldn't resolve output name");

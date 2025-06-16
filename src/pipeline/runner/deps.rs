@@ -77,21 +77,22 @@ pub(super) enum InputMode {
     },
 }
 
-pub(super) struct ComponentData {
+/// Data associated with components.
+pub struct ComponentData {
     /// The actual component
     pub component: Arc<dyn Component>,
     /// Components dependent on a primary channel
-    pub primary_dependents: Vec<(ComponentId, InputChannel)>,
+    pub(super) primary_dependents: Vec<(ComponentId, InputChannel)>,
     /// Components dependent on a secondary channel
-    pub dependents: HashMap<String, Vec<(ComponentId, InputChannel)>>,
+    pub(super) dependents: HashMap<String, Vec<(ComponentId, InputChannel)>>,
     /// Locked partial data
-    pub partial: Mutex<MutableData>,
+    pub(super) partial: Mutex<MutableData>,
     /// Name of this component
     pub name: triomphe::Arc<str>,
     /// What inputs this component is expecting
-    pub input_mode: InputMode,
+    pub(super) input_mode: InputMode,
     /// Where our multiple input came from
-    pub multi_input_from: Option<ComponentId>,
+    pub(super) multi_input_from: Option<ComponentId>,
 }
 impl Debug for ComponentData {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

@@ -61,7 +61,7 @@ impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRun
                 component.cloned()
             }
             ComponentIdentifier::Name(name) => {
-                let id = arg.components().get(&*name);
+                let id = arg.component_lookup().get(&*name);
                 if id.is_none() {
                     error!(name = name, "couldn't resolve component name");
                 }
