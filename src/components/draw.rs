@@ -275,7 +275,7 @@ impl<T: Drawable> DrawComponent<T> {
 }
 impl<T: Drawable> Component for DrawComponent<T> {
     fn inputs(&self) -> Inputs {
-        Inputs::Named(vec!["canvas".to_string(), "elem".to_string()])
+        Inputs::named(["canvas", "elem"])
     }
     fn output_kind(&self, name: Option<&str>) -> OutputKind {
         if name == Some("echo") {

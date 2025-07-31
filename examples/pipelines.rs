@@ -25,7 +25,7 @@ impl Component for Print {
 // Print2 is a simple component that takes a value on its "a" and "b" inputs and prints them.
 impl Component for Print2 {
     fn inputs(&self) -> Inputs {
-        Inputs::Named(vec!["a".to_string(), "b".to_string()])
+        Inputs::named(["a", "b"])
     }
     fn output_kind(&self, _name: Option<&str>) -> OutputKind {
         OutputKind::None
@@ -65,7 +65,7 @@ impl Component for BroadcastVec {
 // CheckContains takes two named inputs rather than a primary one: a Vec<i32> and an i32 that might be in it. It then sends a single output on its output channel.
 impl Component for CheckContains {
     fn inputs(&self) -> Inputs {
-        Inputs::Named(vec!["vec".to_string(), "elem".to_string()])
+        Inputs::named(["vec", "elem"])
     }
     fn output_kind(&self, name: Option<&str>) -> OutputKind {
         if name.is_none() {
@@ -95,11 +95,11 @@ fn main() -> anyhow::Result<()> {
     let print = runner.add_component("print", Arc::new(Print))?;
     let print2 = runner.add_component("print2", Arc::new(Print2))?;
     let check_contains = runner.add_component("check-contains", Arc::new(CheckContains))?;
-    runner.add_dependency(broadcast, None, print, None)?;
-    runner.add_dependency(broadcast, Some("elem"), print, None)?;
-    runner.add_dependency(broadcast, None, check_contains, Some("vec"))?;
-    runner.add_dependency(broadcast, Some("elem"), check_contains, Some("elem"))?;
-    runner.add_dependency(check_contains, None, print, None)?;
+    runner.add_dependency(broadcast, (), print, ())?;
+    runner.add_dependency(broadcast, "elem", print, ())?;
+    runner.add_dependency(broadcast, (), check_contains, "vec")?;
+    runner.add_dependency(broadcast, "elem", check_contains, "elem")?;
+    runner.add_dependency(check_contains, (), print, ())?;
     tracing::debug!("before: {runner:#?}");
     // We need a scope to spawn our tasks in to make sure they don't escape past the lifetime of the runner.
     rayon::scope(|scope| {

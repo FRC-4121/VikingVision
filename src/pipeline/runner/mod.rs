@@ -13,7 +13,7 @@
 //! let component_b = runner.add_component("feature_detector", detect_features()).unwrap();
 //!
 //! // Set up dependencies between components
-//! runner.add_dependency(component_a, None, component_b, None).unwrap();
+//! runner.add_dependency(component_a, (), component_b, ()).unwrap();
 //!
 //! // Execute the pipeline using rayon's parallel execution
 //! rayon::scope(|scope| {
@@ -27,8 +27,7 @@
 
 use super::component::{Component, Data};
 use smallvec::SmallVec;
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
+use std::collections::hash_map::{Entry, HashMap};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -96,9 +95,17 @@ impl ComponentId {
     }
     /// Create a new ID without the flag set.
     pub const fn drop_flag(self) -> Self {
-        Self {
-            raw: self.raw & IDX_MASK,
+        if self.is_valid() {
+            Self {
+                raw: self.raw & IDX_MASK,
+            }
+        } else {
+            self
         }
+    }
+    /// Split this value into a flag and an unflagged ID.
+    pub const fn decompose(self) -> (bool, Self) {
+        (self.flag(), self.drop_flag())
     }
     pub(crate) fn assert_normal(&self) {
         if self.is_placeholder() {
@@ -125,13 +132,15 @@ impl Debug for ComponentId {
         #[derive(Debug)]
         #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         struct PLACEHOLDER;
-        let mut tuple = f.debug_tuple("ComponentId");
+        let mut f = f.debug_struct("ComponentId");
         if self.is_placeholder() {
-            tuple.field(&PLACEHOLDER);
+            f.field("index", &PLACEHOLDER);
         } else {
-            tuple.field(&self.index());
+            f.field("index", &self.index());
         }
-        tuple.finish()
+        f.field("flag", &self.flag())
+            .field("raw", &self.raw)
+            .finish()
     }
 }
 
@@ -220,7 +229,7 @@ impl Display for RunId {
 /// let process = runner.add_component("process", process_component()).unwrap();
 ///
 /// // Set up dependencies
-/// runner.add_dependency(input, None, process, None).unwrap();
+/// runner.add_dependency(input, (), process, ()).unwrap();
 ///
 /// // Run the pipeline
 /// rayon::scope(|scope| {
@@ -281,11 +290,14 @@ impl PipelineRunner {
     ///
     /// This originally returns `start`, then the last multi-output component that indirectly leads to `start`,
     /// then the last multi-output component that indirectly leads to *that* node, and so on.
-    pub fn branch_chain(&self, start: ComponentId) -> impl Iterator<Item = ComponentId> {
+    pub fn branch_chain(
+        &self,
+        start: ComponentId,
+    ) -> impl Iterator<Item = (ComponentId, Option<triomphe::Arc<str>>)> {
         start.assert_normal();
-        std::iter::successors(Some(start), |&id| {
+        std::iter::successors(Some((start, None)), |&(id, _)| {
             let data = self.components.get(id.index())?;
-            data.multi_input_from
+            data.multi_input_from.clone()
         })
     }
 }

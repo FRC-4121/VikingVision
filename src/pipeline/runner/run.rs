@@ -420,7 +420,7 @@ impl<'r> ComponentContextInner<'r> {
                 let InputMode::Multiple { lookup, multi } = &self.component.input_mode else {
                     unreachable!()
                 };
-                if multi.as_ref().map(|x| x.0.as_str()) == req_channel {
+                if multi.as_ref().map(|x| &*x.0) == req_channel {
                     return arg.clone();
                 }
                 let field_idx = lookup.get(name)?.0;
@@ -806,7 +806,7 @@ impl PipelineRunner {
     /// #     struct NamedInput;
     /// #     impl Component for NamedInput {
     /// #         fn inputs(&self) -> Inputs {
-    /// #             Inputs::Named(vec![("input".to_string())])
+    /// #             Inputs::named([("input")])
     /// #         }
     /// #         fn output_kind(&self, _: Option<&str>) -> OutputKind {
     /// #             OutputKind::None

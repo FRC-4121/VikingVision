@@ -69,12 +69,13 @@ impl MutableData {
 #[derive(Debug)]
 pub(super) enum InputMode {
     Single {
-        name: Option<String>,
+        name: Option<triomphe::Arc<str>>,
         attached: ComponentId,
+        attached_chan: Option<triomphe::Arc<str>>,
     },
     Multiple {
-        lookup: HashMap<String, (usize, ComponentId)>,
-        multi: Option<(String, ComponentId)>,
+        lookup: HashMap<triomphe::Arc<str>, (usize, ComponentId)>,
+        multi: Option<(triomphe::Arc<str>, ComponentId)>,
     },
 }
 
@@ -103,7 +104,7 @@ pub struct ComponentData {
     /// Components dependent on a primary channel
     pub(super) primary_dependents: Vec<(ComponentId, InputChannel)>,
     /// Components dependent on a secondary channel
-    pub(super) dependents: HashMap<String, Vec<(ComponentId, InputChannel)>>,
+    pub(super) dependents: HashMap<triomphe::Arc<str>, Vec<(ComponentId, InputChannel)>>,
     /// Locked partial data
     pub(super) partial: Mutex<MutableData>,
     /// Name of this component
@@ -111,7 +112,7 @@ pub struct ComponentData {
     /// What inputs this component is expecting
     pub(super) input_mode: InputMode,
     /// Where our multiple input came from
-    pub(super) multi_input_from: Option<ComponentId>,
+    pub(super) multi_input_from: Option<(ComponentId, Option<triomphe::Arc<str>>)>,
 }
 impl Debug for ComponentData {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -148,6 +149,7 @@ impl ComponentData {
             input_mode: InputMode::Single {
                 name: None,
                 attached: ComponentId::PLACEHOLDER,
+                attached_chan: None,
             },
             multi_input_from: None,
         }
@@ -166,7 +168,7 @@ pub enum AddComponentError {
 /// An error that can occur from [`PipelineRunner::add_dependency`]
 #[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
-pub enum AddDependencyError<'a> {
+pub enum AddDependencyError {
     /// The publishing component's ID was out of range.
     #[error("Publishing component {0} doesn't exist")]
     NoPublisher(ComponentId),
@@ -174,19 +176,19 @@ pub enum AddDependencyError<'a> {
     #[error("Subscribing component {0} doesn't exist")]
     NoSubscriber(ComponentId),
     /// The publishing and subscribing component were the same.
-    #[error("Can't create a self-loop")]
-    SelfLoop,
+    #[error("Can't create a cycle")]
+    WouldCreateCycle,
     /// The publishing component doesn't output on the requested channel.
     #[error("Publishing component {component} doesn't have a {}", if let Some(name) = .channel { format!("named output {name:?}") } else { "primary output".to_string() })]
     NoPubChannel {
         component: ComponentId,
-        channel: Option<&'a str>,
+        channel: Option<triomphe::Arc<str>>,
     },
     /// A dependency was already created for this named input.
     #[error("Input {channel:?} has already been attached to subscribing component {component}")]
     DuplicateNamedInput {
         component: ComponentId,
-        channel: &'a str,
+        channel: triomphe::Arc<str>,
     },
     /// A dependency was already created for the primary input.
     #[error("Primary input has already been attached to subscribing component {component}")]
@@ -195,7 +197,7 @@ pub enum AddDependencyError<'a> {
     #[error("Subscribing component {component} doesn't take input on a {}", if let Some(name) = .channel { format!("named input {name:?}") } else { "primary input".to_string() })]
     DoesntTakeInput {
         component: ComponentId,
-        channel: Option<&'a str>,
+        channel: Option<triomphe::Arc<str>>,
     },
     /// A component will get multiple inputs that give multiple values.
     #[error(
@@ -206,6 +208,43 @@ pub enum AddDependencyError<'a> {
         old_multi_pub: ComponentId,
         new_multi_pub: ComponentId,
     },
+}
+
+/// A type that can be converted to `Option<triomphe::Arc<str>>`.
+///
+/// This works better than relying on `Into` or similar, and allows direct conversion from `()` (to `None`), string slices, and options.
+pub trait IntoOptStr {
+    fn into_opt_str(self) -> Option<triomphe::Arc<str>>;
+}
+impl IntoOptStr for () {
+    fn into_opt_str(self) -> Option<triomphe::Arc<str>> {
+        None
+    }
+}
+impl IntoOptStr for &str {
+    fn into_opt_str(self) -> Option<triomphe::Arc<str>> {
+        Some(self.into())
+    }
+}
+impl IntoOptStr for String {
+    fn into_opt_str(self) -> Option<triomphe::Arc<str>> {
+        Some(self.into())
+    }
+}
+impl IntoOptStr for &String {
+    fn into_opt_str(self) -> Option<triomphe::Arc<str>> {
+        Some(self.as_str().into())
+    }
+}
+impl IntoOptStr for triomphe::Arc<str> {
+    fn into_opt_str(self) -> Option<triomphe::Arc<str>> {
+        Some(self)
+    }
+}
+impl<S: IntoOptStr> IntoOptStr for Option<S> {
+    fn into_opt_str(self) -> Option<triomphe::Arc<str>> {
+        self.and_then(S::into_opt_str)
+    }
 }
 
 impl PipelineRunner {
@@ -232,12 +271,14 @@ impl PipelineRunner {
             Inputs::Primary => InputMode::Single {
                 name: None,
                 attached: ComponentId::PLACEHOLDER,
+                attached_chan: None,
             },
             Inputs::Named(mut v) => {
                 if v.len() == 1 {
                     InputMode::Single {
                         name: v.pop(),
                         attached: ComponentId::PLACEHOLDER,
+                        attached_chan: None,
                     }
                 } else {
                     InputMode::Multiple {
@@ -302,12 +343,14 @@ impl PipelineRunner {
                     Inputs::Primary => InputMode::Single {
                         name: None,
                         attached: ComponentId::PLACEHOLDER,
+                        attached_chan: None,
                     },
                     Inputs::Named(mut v) => {
                         if v.len() == 1 {
                             InputMode::Single {
                                 name: v.pop(),
                                 attached: ComponentId::PLACEHOLDER,
+                                attached_chan: None,
                             }
                         } else {
                             InputMode::Multiple {
@@ -336,25 +379,39 @@ impl PipelineRunner {
     /// Add a dependency between two components.
     ///
     /// Each input can only have one component, and only one input can give multiple values.
-    pub fn add_dependency<'a>(
+    pub fn add_dependency(
         &mut self,
         pub_id: ComponentId,
-        pub_channel: Option<&'a str>,
+        pub_channel: impl IntoOptStr,
         sub_id: ComponentId,
-        sub_channel: Option<&'a str>,
-    ) -> Result<(), AddDependencyError<'a>> {
+        sub_channel: impl IntoOptStr,
+    ) -> Result<(), AddDependencyError> {
+        self.add_dependency_impl(
+            pub_id,
+            pub_channel.into_opt_str(),
+            sub_id,
+            sub_channel.into_opt_str(),
+        )
+    }
+    fn add_dependency_impl(
+        &mut self,
+        pub_id: ComponentId,
+        pub_channel: Option<triomphe::Arc<str>>,
+        sub_id: ComponentId,
+        sub_channel: Option<triomphe::Arc<str>>,
+    ) -> Result<(), AddDependencyError> {
         pub_id.assert_normal();
         sub_id.assert_normal();
         let pub_id = pub_id.drop_flag();
         let sub_id = sub_id.drop_flag();
         tracing::info!(
             "subscribing {sub_id} ({} output) to {pub_id} ({} input)",
-            if let Some(name) = pub_channel {
+            if let Some(name) = &pub_channel {
                 format!("{name:?}")
             } else {
                 "primary".to_string()
             },
-            if let Some(name) = sub_channel {
+            if let Some(name) = &sub_channel {
                 format!("{name:?}")
             } else {
                 "primary".to_string()
@@ -366,14 +423,18 @@ impl PipelineRunner {
         if sub_id.index() >= self.components.len() {
             return Err(AddDependencyError::NoSubscriber(pub_id));
         }
-        if pub_id == sub_id {
-            return Err(AddDependencyError::SelfLoop);
+        if sub_id == pub_id {
+            return Err(AddDependencyError::WouldCreateCycle);
         }
-        let [c1, c2] = self
-            .components
-            .get_disjoint_mut([pub_id.index(), sub_id.index()])
-            .unwrap();
-        let kind = c1.component.output_kind(pub_channel);
+        let components = self.components.as_mut_ptr();
+        // we've bounds checked and they point to different components
+        let [c1, c2] = unsafe {
+            [
+                &mut *components.add(pub_id.index()),
+                &mut *components.add(sub_id.index()),
+            ]
+        };
+        let kind = c1.component.output_kind(pub_channel.as_deref());
         if kind.is_none() {
             return Err(AddDependencyError::NoPubChannel {
                 component: pub_id,
@@ -381,14 +442,15 @@ impl PipelineRunner {
             });
         }
         #[allow(clippy::collapsible_else_if)]
-        if let Some(name) = sub_channel {
+        if let Some(name) = sub_channel.clone() {
             let idx = match &mut c2.input_mode {
                 InputMode::Single {
                     name: ex_name,
                     attached,
+                    attached_chan,
                 } => {
                     if let Some(ex) = ex_name {
-                        if ex == name {
+                        if *ex == name {
                             if attached.is_valid() {
                                 return Err(AddDependencyError::DuplicateNamedInput {
                                     component: sub_id,
@@ -397,22 +459,116 @@ impl PipelineRunner {
                             }
                             *attached = pub_id;
                             if kind.is_multi() {
-                                c2.multi_input_from = Some(pub_id);
+                                *attached = attached.with_flag();
+                                let channel =
+                                    pub_channel.clone().map(|ch| match c1.dependents.entry(ch) {
+                                        Entry::Occupied(e) => e.key().clone(),
+                                        Entry::Vacant(e) => {
+                                            e.insert_entry(Vec::new()).key().clone()
+                                        }
+                                    });
+                                c2.multi_input_from = Some((pub_id, channel));
                                 InputChannel::Primary(true)
                             } else {
-                                c2.multi_input_from = c1.multi_input_from;
+                                c2.multi_input_from = c1.multi_input_from.clone();
                                 InputChannel::Primary(false)
                             }
+                        } else if c2.component.can_take(&name) {
+                            let new = pub_id.with_flag();
+                            if attached.is_placeholder() {
+                                c2.input_mode = InputMode::Multiple {
+                                    lookup: [
+                                        (ex.clone(), (0, attached.drop_flag())),
+                                        (name.clone(), (1, new)),
+                                    ]
+                                    .into(),
+                                    multi: None,
+                                };
+                                InputChannel::Numbered(1)
+                            } else {
+                                let (flag, old) = attached.decompose();
+                                let mut to_match = (kind.is_multi(), flag);
+                                if pub_id != old {
+                                    match to_match {
+                                        (true, false) => {
+                                            if let Some((i, c)) = unsafe {
+                                                &(*components.add(old.index())).multi_input_from
+                                            } {
+                                                if *i == pub_id && *c == pub_channel {
+                                                    to_match = (false, false);
+                                                } else {
+                                                    to_match = (true, true);
+                                                }
+                                            }
+                                        }
+                                        (false, true) => {
+                                            if let Some((i, c)) = &c2.multi_input_from {
+                                                if *i == old && *c == *attached_chan {
+                                                    to_match = (false, false);
+                                                } else {
+                                                    to_match = (true, true);
+                                                }
+                                            }
+                                        }
+                                        (false, false) => {
+                                            let left_multi = self
+                                                .branch_chain(pub_id)
+                                                .any(|(i, c)| i == old && c == *attached_chan);
+                                            if left_multi {
+                                                to_match = (true, false);
+                                            } else {
+                                                let right_multi =
+                                                    self.branch_chain(old).any(|(i, c)| {
+                                                        i == pub_id && c == *attached_chan
+                                                    });
+                                                if right_multi {
+                                                    to_match = (false, true);
+                                                } else if c2.multi_input_from.is_some()
+                                                    || unsafe {
+                                                        (*components.add(old.index()))
+                                                            .multi_input_from
+                                                            .is_some()
+                                                    }
+                                                {
+                                                    to_match = (true, true);
+                                                }
+                                            }
+                                        }
+                                        (true, true) => {}
+                                    }
+                                }
+                                let (lookup, multi, channel) = match to_match {
+                                    (true, true) => {
+                                        return Err(AddDependencyError::MultipleMultiInputs {
+                                            component: sub_id,
+                                            old_multi_pub: pub_id,
+                                            new_multi_pub: new,
+                                        });
+                                    }
+                                    (true, false) => (
+                                        [(ex.clone(), (0, old))].into(),
+                                        Some((name.clone(), new)),
+                                        InputChannel::Multiple,
+                                    ),
+                                    (false, true) => (
+                                        [(name.clone(), (0, new))].into(),
+                                        Some((ex.clone(), old)),
+                                        InputChannel::Numbered(0),
+                                    ),
+                                    (false, false) => (
+                                        [(ex.clone(), (0, old)), (name.clone(), (1, new))].into(),
+                                        None,
+                                        InputChannel::Numbered(1),
+                                    ),
+                                };
+                                c2.input_mode = InputMode::Multiple { lookup, multi };
+                                channel
+                            }
                         } else {
-                            c2.input_mode = InputMode::Multiple {
-                                lookup: [
-                                    (std::mem::take(ex), (0, ComponentId::PLACEHOLDER)),
-                                    (name.to_string(), (1, pub_id)),
-                                ]
-                                .into(),
-                                multi: kind.is_multi().then(|| (name.to_string(), pub_id)),
-                            };
-                            InputChannel::Numbered(1)
+                            return Err(AddDependencyError::DoesntTakeInput {
+                                component: sub_id,
+                                channel: Some(name),
+                            });
                         }
                     } else {
                         return Err(AddDependencyError::DoesntTakeInput {
@@ -422,23 +578,28 @@ impl PipelineRunner {
                     }
                 }
                 InputMode::Multiple { lookup, multi } => {
-                    let (idx, comp) = match lookup.get_mut(name) {
-                        Some(v) => {
-                            if v.1.is_valid() {
+                    let idx = lookup.len();
+                    if multi.as_ref().is_some_and(|(ch, _)| *ch == name) {
+                        return Err(AddDependencyError::DuplicateNamedInput {
+                            component: sub_id,
+                            channel: name,
+                        });
+                    }
+                    let (idx, mut remove_if_fail) = match lookup.entry(name.clone()) {
+                        Entry::Occupied(e) => {
+                            let (idx, comp) = *e.into_mut();
+                            if comp.is_valid() {
                                 return Err(AddDependencyError::DuplicateNamedInput {
                                     component: sub_id,
                                     channel: name,
                                 });
                             }
-                            v
+                            (idx, false)
                         }
-                        None => {
-                            if c2.component.can_take(name) {
-                                let idx = lookup.len();
-                                lookup
-                                    .entry(name.into())
-                                    .insert_entry((idx, pub_id.with_flag()))
-                                    .into_mut()
+                        Entry::Vacant(e) => {
+                            if c2.component.can_take(&name) {
+                                e.insert((idx, pub_id.with_flag()));
+                                (idx, true)
                             } else {
                                 return Err(AddDependencyError::DoesntTakeInput {
                                     component: sub_id,
@@ -447,47 +608,61 @@ impl PipelineRunner {
                             }
                         }
                     };
-                    if kind.is_multi() {
-                        if let Some((_, id)) = multi {
-                            return Err(AddDependencyError::MultipleMultiInputs {
-                                component: sub_id,
-                                old_multi_pub: *id,
-                                new_multi_pub: pub_id,
-                            });
-                        } else {
-                            if let Some(from) = c2.multi_input_from {
-                                if !(from == pub_id || Some(from) == c1.multi_input_from) {
-                                    return Err(AddDependencyError::MultipleMultiInputs {
-                                        component: sub_id,
-                                        old_multi_pub: from,
-                                        new_multi_pub: pub_id,
+                    let res = 'check: {
+                        if kind.is_multi() {
+                            if let Some((_, id)) = *multi {
+                                break 'check Err(AddDependencyError::MultipleMultiInputs {
+                                    component: sub_id,
+                                    old_multi_pub: id,
+                                    new_multi_pub: pub_id,
+                                });
+                            } else {
+                                use std::cmp::Ordering;
+                                if remove_if_fail {
+                                    lookup.remove(&name);
+                                } else {
+                                    lookup.retain(|_, (i, _)| match idx.cmp(i) {
+                                        Ordering::Greater => true,
+                                        Ordering::Less => {
+                                            *i -= 1;
+                                            true
+                                        }
+                                        Ordering::Equal => false,
                                     });
                                 }
+                                *multi = Some((name.clone(), pub_id));
+                                remove_if_fail = false;
+                                Ok(InputChannel::Multiple)
                             }
-                            c2.multi_input_from = Some(pub_id);
-                        }
-                        let idx = *idx;
-                        lookup.retain(|k, (v, _)| {
-                            (k != name) && {
-                                if *v > idx {
-                                    *v -= 1;
+                        } else {
+                            if let Some((pred, ref chan)) = c1.multi_input_from {
+                                if let Some((p2, ref c2)) = c2.multi_input_from {
+                                    if pred != p2 && chan != c2 || multi.is_some() {
+                                        break 'check Err(
+                                            AddDependencyError::MultipleMultiInputs {
+                                                component: sub_id,
+                                                old_multi_pub: p2,
+                                                new_multi_pub: pred,
+                                            },
+                                        );
+                                    }
+                                } else {
+                                    debug_assert_eq!(c2.multi_input_from, None);
+                                    c2.multi_input_from = Some((pred, chan.clone()));
                                 }
-                                true
                             }
-                        });
-                        *multi = Some((name.to_string(), pub_id));
-                        InputChannel::Multiple
-                    } else {
-                        *comp = pub_id;
-                        InputChannel::Numbered(*idx)
-                    }
+                            Ok(InputChannel::Numbered(idx))
+                        }
+                    };
+                    res.inspect_err(|_| {
+                        if remove_if_fail {
+                            lookup.remove(&name);
+                        }
+                    })?
                 }
             };
-            if let Some(name) = pub_channel {
-                c1.dependents
-                    .entry(name.to_string())
-                    .or_default()
-                    .push((sub_id, idx));
+            if let Some(name) = pub_channel.clone() {
+                c1.dependents.entry(name).or_default().push((sub_id, idx));
             } else {
                 c1.primary_dependents.push((sub_id, idx))
             }
@@ -495,6 +670,7 @@ impl PipelineRunner {
             let InputMode::Single {
                 name: None,
                 attached,
+                attached_chan,
             } = &mut c2.input_mode
             else {
                 return Err(AddDependencyError::DoesntTakeInput {
@@ -505,14 +681,23 @@ impl PipelineRunner {
             if attached.is_valid() {
                 return Err(AddDependencyError::DuplicatePrimaryInput { component: sub_id });
             }
+            *attached = if kind.is_multi() {
+                pub_id.with_flag()
+            } else {
+                pub_id
+            };
             if let Some(name) = pub_channel {
-                c1.dependents
-                    .entry(name.to_string())
-                    .or_default()
+                let mut e = match c1.dependents.entry(name) {
+                    Entry::Occupied(e) => e,
+                    Entry::Vacant(e) => e.insert_entry(Vec::new()),
+                };
+                *attached_chan = Some(e.key().clone());
+                e.get_mut()
                     .push((sub_id, InputChannel::Primary(kind.is_multi())));
             } else {
                 c1.primary_dependents
-                    .push((sub_id, InputChannel::Primary(kind.is_multi())))
+                    .push((sub_id, InputChannel::Primary(kind.is_multi())));
+                *attached_chan = None;
             }
         }
         Ok(())
@@ -555,6 +740,7 @@ impl PipelineRunner {
             InputMode::Single {
                 name: None,
                 attached: ComponentId::PLACEHOLDER,
+                attached_chan: None,
             },
         );
         let refs = data

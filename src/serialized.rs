@@ -107,7 +107,7 @@ pub enum BuildRunnerError<'a> {
     #[error(transparent)]
     AddComponentError(AddComponentError),
     #[error(transparent)]
-    AddDependencyError(AddDependencyError<'a>),
+    AddDependencyError(AddDependencyError),
     #[error("No component named {0:?}")]
     NoComponent(&'a str),
 }
@@ -179,7 +179,7 @@ impl ConfigFile {
                         .get(s.component.as_str())
                         .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                     runner
-                        .add_dependency(pub_id, s.channel.as_deref(), sub_id, None)
+                        .add_dependency(pub_id, s.channel.as_deref(), sub_id, ())
                         .map_err(BuildRunnerError::AddDependencyError)?;
                 }
                 InputConfig::Multiple(m) => {
@@ -189,7 +189,7 @@ impl ConfigFile {
                             .get(s.component.as_str())
                             .ok_or(BuildRunnerError::NoComponent(&s.component))?;
                         runner
-                            .add_dependency(pub_id, s.channel.as_deref(), sub_id, Some(channel))
+                            .add_dependency(pub_id, s.channel.as_deref(), sub_id, channel.as_str())
                             .map_err(BuildRunnerError::AddDependencyError)?;
                     }
                 }

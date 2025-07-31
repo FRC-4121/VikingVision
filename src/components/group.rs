@@ -99,14 +99,18 @@ impl Configure<GroupConfig, Option<GroupState>, (&mut PipelineRunner, ComponentI
                 return None;
             };
             let mut kind = component.output_kind(None);
-            if kind == OutputKind::Single && runner.branch_chain(id).next().is_some_and(|c| c != id)
+            if kind == OutputKind::Single
+                && runner
+                    .branch_chain(id)
+                    .next()
+                    .is_some_and(|(i, c)| i != id || c.is_some())
             {
                 kind = OutputKind::Multiple;
             }
             let listener = Arc::new(Listener::default());
             let listen_id = runner
                 .add_hidden_component(format!("listener-{self_id}-primary"), listener.clone());
-            if let Err(err) = runner.add_dependency(id, out.channel.as_deref(), listen_id, None) {
+            if let Err(err) = runner.add_dependency(id, out.channel.as_deref(), listen_id, ()) {
                 error!(%err, "failed to add primary listener");
                 return None;
             }
@@ -132,14 +136,18 @@ impl Configure<GroupConfig, Option<GroupState>, (&mut PipelineRunner, ComponentI
                 return None;
             };
             let mut kind = component.output_kind(None);
-            if kind == OutputKind::Single && runner.branch_chain(id).next().is_some_and(|c| c != id)
+            if kind == OutputKind::Single
+                && runner
+                    .branch_chain(id)
+                    .next()
+                    .is_some_and(|(i, c)| i != id || c.is_some())
             {
                 kind = OutputKind::Multiple;
             }
             let listener = Arc::new(Listener::default());
             let listen_id = runner
                 .add_hidden_component(format!("listener-{self_id}-named-{name}"), listener.clone());
-            if let Err(err) = runner.add_dependency(id, out.channel.as_deref(), listen_id, None) {
+            if let Err(err) = runner.add_dependency(id, out.channel.as_deref(), listen_id, ()) {
                 error!(%err, "failed to add primary listener");
                 return None;
             }

@@ -222,13 +222,16 @@ pub enum Inputs {
     /// This component takes inputs through its primary input.
     Primary,
     /// This component takes multiple, named inputs (or none at all).
-    Named(Vec<String>),
+    Named(Vec<triomphe::Arc<str>>),
 }
 impl Inputs {
     /// `Named(Vec::new())` means a component taktes no inputs; this is just an alias for that.
     #[inline(always)]
     pub const fn none() -> Self {
         Self::Named(Vec::new())
+    }
+    pub fn named<S: Into<triomphe::Arc<str>>, I: IntoIterator<Item = S>>(iter: I) -> Self {
+        Self::Named(iter.into_iter().map(Into::into).collect())
     }
 }
 
@@ -248,7 +251,7 @@ impl Inputs {
 ///
 /// impl Component for ImageProcessor {
 ///     fn inputs(&self) -> Inputs {
-///         Inputs::Named(vec!["image".to_string()])
+///         Inputs::named(["image"])
 ///     }
 ///
 ///     fn output_kind(&self, name: Option<&str>) -> OutputKind {
