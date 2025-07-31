@@ -37,6 +37,9 @@ mod deps;
 mod input;
 mod run;
 
+#[cfg(test)]
+mod tests;
+
 pub use deps::*;
 pub use input::*;
 pub use run::*;
@@ -77,7 +80,7 @@ impl ComponentId {
     pub const fn new(index: usize) -> Self {
         debug_assert!(index < IDX_MASK, "value is out of range for a component ID");
         Self {
-            raw: index | FLAG_MASK,
+            raw: index & IDX_MASK,
         }
     }
     /// Create a flagged `ComponentId`.

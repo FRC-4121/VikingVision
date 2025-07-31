@@ -92,14 +92,16 @@ fn main() -> anyhow::Result<()> {
     let _guard = tracing::info_span!("main").entered();
     let mut runner = PipelineRunner::new();
     let broadcast = runner.add_component("broadcast", Arc::new(BroadcastVec))?;
-    let print = runner.add_component("print", Arc::new(Print))?;
+    let print_a = runner.add_component("print/a", Arc::new(Print))?;
+    let print_b = runner.add_component("print/b", Arc::new(Print))?;
+    let print_c = runner.add_component("print/c", Arc::new(Print))?;
     let print2 = runner.add_component("print2", Arc::new(Print2))?;
     let check_contains = runner.add_component("check-contains", Arc::new(CheckContains))?;
-    runner.add_dependency(broadcast, (), print, ())?;
-    runner.add_dependency(broadcast, "elem", print, ())?;
+    runner.add_dependency(broadcast, (), print_a, ())?;
+    runner.add_dependency(broadcast, "elem", print_b, ())?;
     runner.add_dependency(broadcast, (), check_contains, "vec")?;
     runner.add_dependency(broadcast, "elem", check_contains, "elem")?;
-    runner.add_dependency(check_contains, (), print, ())?;
+    runner.add_dependency(check_contains, (), print_c, ())?;
     tracing::debug!("before: {runner:#?}");
     // We need a scope to spawn our tasks in to make sure they don't escape past the lifetime of the runner.
     rayon::scope(|scope| {

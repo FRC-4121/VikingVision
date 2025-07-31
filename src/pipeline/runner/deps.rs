@@ -458,6 +458,7 @@ impl PipelineRunner {
                                 });
                             }
                             *attached = pub_id;
+                            *attached_chan = pub_channel.clone();
                             if kind.is_multi() {
                                 *attached = attached.with_flag();
                                 let channel =
