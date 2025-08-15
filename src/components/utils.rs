@@ -41,7 +41,7 @@ impl ComponentFactory for DebugFactory {
     }
 }
 
-impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRunner>
+impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineGraph>
     for PhantomData<CloneComponent>
 {
     fn name(&self) -> impl std::fmt::Display {
@@ -50,7 +50,7 @@ impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRun
     fn configure(
         &self,
         config: ComponentIdentifier,
-        arg: &mut PipelineRunner,
+        arg: &mut PipelineGraph,
     ) -> Option<Arc<dyn Component>> {
         match config {
             ComponentIdentifier::Id(id) => {
@@ -61,7 +61,7 @@ impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRun
                 component.cloned()
             }
             ComponentIdentifier::Name(name) => {
-                let id = arg.component_lookup().get(&*name);
+                let id = arg.lookup().get(&*name);
                 if id.is_none() {
                     error!(name = name, "couldn't resolve component name");
                 }
@@ -98,7 +98,7 @@ impl Component for CloneComponent {
             comp.run(context);
         }
     }
-    fn initialize(&self, runner: &mut PipelineRunner, _self_id: ComponentId) {
+    fn initialize(&self, runner: &mut PipelineGraph, _self_id: GraphComponentId) {
         self.inner.init(runner);
     }
 }

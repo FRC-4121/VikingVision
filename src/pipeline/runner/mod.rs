@@ -26,8 +26,10 @@
 //! ```
 
 use super::component::{Component, Data};
+use super::{ComponentChannel, ComponentId};
 use smallvec::SmallVec;
-use std::collections::hash_map::{Entry, HashMap};
+use smol_str::SmolStr;
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,115 +39,16 @@ mod deps;
 mod input;
 mod run;
 
+/// Alias for component IDs used in a [`PipelineRunner`].
+pub type RunnerComponentId = ComponentId<PipelineRunner>;
+type RunnerComponentChannel = ComponentChannel<PipelineRunner>;
+
 #[cfg(test)]
 mod tests;
 
 pub use deps::*;
 pub use input::*;
 pub use run::*;
-
-const IDX_MASK: usize = usize::MAX >> 1;
-const FLAG_MASK: usize = !IDX_MASK;
-
-/// A unique identifier for components within a [`PipelineRunner`].
-///
-/// ComponentId is a transparent wrapper around a `usize` that serves as an index into the
-/// PipelineRunner's internal component storage. It's clearer than a raw index, and has a special value of `ComponentId::PLACEHOLDER`
-/// to indicate an unassigned component.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-pub struct ComponentId {
-    pub raw: usize,
-}
-
-impl ComponentId {
-    /// A placeholder component, with a value equal to `usize::MAX`.
-    pub const PLACEHOLDER: Self = Self { raw: usize::MAX };
-    /// Check if `self == Self::PLACEHOLDER`
-    pub const fn is_placeholder(&self) -> bool {
-        self.raw == usize::MAX
-    }
-    /// Opposite of [`is_placeholder`](Self::is_placeholder)
-    pub const fn is_valid(&self) -> bool {
-        self.raw != usize::MAX
-    }
-    /// Get the value of a boolean flag stored here.
-    pub const fn flag(&self) -> bool {
-        self.is_valid() && self.raw & FLAG_MASK != 0
-    }
-    /// Get the value of the index, without the flag.
-    pub const fn index(&self) -> usize {
-        self.raw & IDX_MASK
-    }
-    pub const fn new(index: usize) -> Self {
-        debug_assert!(index < IDX_MASK, "value is out of range for a component ID");
-        Self {
-            raw: index & IDX_MASK,
-        }
-    }
-    /// Create a flagged `ComponentId`.
-    pub const fn new_flagged(index: usize) -> Self {
-        debug_assert!(index < IDX_MASK, "value is out of range for a component ID");
-        Self {
-            raw: index | FLAG_MASK,
-        }
-    }
-    /// Create a new ID with the flag set.
-    pub const fn with_flag(self) -> Self {
-        Self {
-            raw: self.raw | FLAG_MASK,
-        }
-    }
-    /// Create a new ID without the flag set.
-    pub const fn drop_flag(self) -> Self {
-        if self.is_valid() {
-            Self {
-                raw: self.raw & IDX_MASK,
-            }
-        } else {
-            self
-        }
-    }
-    /// Split this value into a flag and an unflagged ID.
-    pub const fn decompose(self) -> (bool, Self) {
-        (self.flag(), self.drop_flag())
-    }
-    pub(crate) fn assert_normal(&self) {
-        if self.is_placeholder() {
-            tracing::warn!("placeholder component passed where a normal component was expected");
-        }
-        if self.flag() {
-            tracing::warn!("flagged component passed where a normal component was expected");
-        }
-    }
-}
-
-impl Display for ComponentId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if self.is_placeholder() {
-            f.write_str("PLACEHOLDER")
-        } else {
-            write!(f, "#{}", self.index())
-        }
-    }
-}
-
-impl Debug for ComponentId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        #[derive(Debug)]
-        #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
-        struct PLACEHOLDER;
-        let mut f = f.debug_struct("ComponentId");
-        if self.is_placeholder() {
-            f.field("index", &PLACEHOLDER);
-        } else {
-            f.field("index", &self.index());
-        }
-        f.field("flag", &self.flag())
-            .field("raw", &self.raw)
-            .finish()
-    }
-}
 
 /// Uniquely identifies a specific execution of a component within the pipeline.
 ///
@@ -191,6 +94,59 @@ impl Display for RunId {
             write!(f, ".{elem}")?;
         }
         Ok(())
+    }
+}
+
+mod trait_impls {
+    use super::{PipelineRunner, RunnerComponentId};
+    use crate::pipeline::{ComponentSpecifier, InvalidComponentId, UnknownComponentName};
+    use smol_str::SmolStr;
+
+    impl ComponentSpecifier<PipelineRunner> for RunnerComponentId {
+        type Error = InvalidComponentId<PipelineRunner>;
+
+        fn resolve(&self, runner: &PipelineRunner) -> Result<RunnerComponentId, Self::Error> {
+            if self.is_placeholder() {
+                return Err(InvalidComponentId(*self));
+            }
+            let this = self.unflagged();
+            (this.index() < runner.components.len())
+                .then_some(this)
+                .ok_or(InvalidComponentId(this))
+        }
+    }
+    impl ComponentSpecifier<PipelineRunner> for str {
+        type Error = UnknownComponentName;
+
+        fn resolve(&self, runner: &PipelineRunner) -> Result<RunnerComponentId, Self::Error> {
+            runner
+                .lookup
+                .get(self)
+                .copied()
+                .ok_or_else(|| UnknownComponentName(self.into()))
+        }
+    }
+    impl ComponentSpecifier<PipelineRunner> for String {
+        type Error = UnknownComponentName;
+
+        fn resolve(&self, runner: &PipelineRunner) -> Result<RunnerComponentId, Self::Error> {
+            runner
+                .lookup
+                .get(self.as_str())
+                .copied()
+                .ok_or_else(|| UnknownComponentName(self.into()))
+        }
+    }
+    impl ComponentSpecifier<PipelineRunner> for SmolStr {
+        type Error = UnknownComponentName;
+
+        fn resolve(&self, runner: &PipelineRunner) -> Result<RunnerComponentId, Self::Error> {
+            runner
+                .lookup
+                .get(self)
+                .copied()
+                .ok_or_else(|| UnknownComponentName(self.clone()))
+        }
     }
 }
 
@@ -242,7 +198,7 @@ impl Display for RunId {
 #[derive(Debug, Default)]
 pub struct PipelineRunner {
     components: Vec<ComponentData>,
-    lookup: HashMap<triomphe::Arc<str>, ComponentId>,
+    lookup: HashMap<SmolStr, RunnerComponentId>,
     running: AtomicUsize,
     run_id: AtomicU32,
     first_open: usize,
@@ -261,17 +217,6 @@ impl PipelineRunner {
         }
     }
 
-    /// Get a map of registered component names to their IDs.
-    #[inline(always)]
-    pub fn component_lookup(&self) -> &HashMap<triomphe::Arc<str>, ComponentId> {
-        &self.lookup
-    }
-    /// Get a slice of the components in this runner.
-    #[inline(always)]
-    pub fn component_slice(&self) -> &[ComponentData] {
-        &self.components
-    }
-
     /// Get the number of currently running pipelines.
     #[inline(always)]
     pub fn running(&self) -> usize {
@@ -285,22 +230,7 @@ impl PipelineRunner {
     }
     /// Get the component associated with an ID.
     #[inline(always)]
-    pub fn component(&self, id: ComponentId) -> Option<&Arc<dyn Component>> {
-        id.assert_normal();
+    pub fn component(&self, id: RunnerComponentId) -> Option<&Arc<dyn Component>> {
         self.components.get(id.index()).map(|c| &c.component)
-    }
-    /// Get the chain of a component's multi-output nodes.
-    ///
-    /// This originally returns `start`, then the last multi-output component that indirectly leads to `start`,
-    /// then the last multi-output component that indirectly leads to *that* node, and so on.
-    pub fn branch_chain(
-        &self,
-        start: ComponentId,
-    ) -> impl Iterator<Item = (ComponentId, Option<triomphe::Arc<str>>)> {
-        start.assert_normal();
-        std::iter::successors(Some((start, None)), |&(id, _)| {
-            let data = self.components.get(id.index())?;
-            data.multi_input_from.clone()
-        })
     }
 }

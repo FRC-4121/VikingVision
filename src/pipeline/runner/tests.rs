@@ -62,7 +62,7 @@ fn simple() {
         Send,
         Recv,
     }
-    let mut runner = PipelineRunner::new();
+    let mut runner = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = runner
         .add_component("prod", Cmp::new(tx.clone(), Msg::Send))
@@ -94,7 +94,7 @@ fn duplicating() {
         Send,
         Recv,
     }
-    let mut runner = PipelineRunner::new();
+    let mut runner = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = runner
         .add_component("prod", Cmp::new(tx.clone(), Msg::Send))

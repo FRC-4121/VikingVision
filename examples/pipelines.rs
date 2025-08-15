@@ -90,7 +90,7 @@ fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let _guard = tracing::info_span!("main").entered();
-    let mut runner = PipelineRunner::new();
+    let mut runner = PipelineGraph::new();
     let broadcast = runner.add_component("broadcast", Arc::new(BroadcastVec))?;
     let print_a = runner.add_component("print/a", Arc::new(Print))?;
     let print_b = runner.add_component("print/b", Arc::new(Print))?;

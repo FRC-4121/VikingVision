@@ -1,5 +1,6 @@
-use super::runner::{ComponentContext, ComponentId, PipelineRunner};
+use super::runner::ComponentContext;
 use crate::buffer::Buffer;
+use crate::pipeline::graph::{GraphComponentId, IdResolver, PipelineGraph};
 use crate::utils::LogErr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
@@ -222,7 +223,7 @@ pub enum Inputs {
     /// This component takes inputs through its primary input.
     Primary,
     /// This component takes multiple, named inputs (or none at all).
-    Named(Vec<triomphe::Arc<str>>),
+    Named(Vec<smol_str::SmolStr>),
 }
 impl Inputs {
     /// `Named(Vec::new())` means a component taktes no inputs; this is just an alias for that.
@@ -230,7 +231,7 @@ impl Inputs {
     pub const fn none() -> Self {
         Self::Named(Vec::new())
     }
-    pub fn named<S: Into<triomphe::Arc<str>>, I: IntoIterator<Item = S>>(iter: I) -> Self {
+    pub fn named<S: Into<smol_str::SmolStr>, I: IntoIterator<Item = S>>(iter: I) -> Self {
         Self::Named(iter.into_iter().map(Into::into).collect())
     }
 }
@@ -273,6 +274,7 @@ impl Inputs {
 ///     }
 /// }
 /// ```
+#[allow(unused_variables)]
 pub trait Component: Send + Sync + 'static {
     /// Get the inputs that this component is expecting.
     ///
@@ -281,8 +283,14 @@ pub trait Component: Send + Sync + 'static {
     /// Check if this component can take an additional input.
     ///
     /// This is only called if an input wasn't specified as an input through [`inputs`](Self::inputs).
-    #[allow(unused_variables)]
     fn can_take(&self, input: &str) -> bool {
+        false
+    }
+    /// Consumer components can be reused in multiple places in a pipeline.
+    ///
+    /// A valid consumer component can only have a primary input and no outputs. Components with different inputs
+    /// will not have this checked, and if this returns true, no outputs will be checked.
+    fn is_consumer(&self) -> bool {
         false
     }
     /// Check if an output channel is available.
@@ -290,6 +298,7 @@ pub trait Component: Send + Sync + 'static {
     /// Run a component on a given input.
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>);
     /// Perform startup initialization on this component.
-    #[allow(unused_variables)]
-    fn initialize(&self, runner: &mut PipelineRunner, self_id: ComponentId) {}
+    fn initialize(&self, graph: &mut PipelineGraph, self_id: GraphComponentId) {}
+    /// Remap any indices on compilation, if necessary.
+    fn remap(&self, resolver: &IdResolver) {}
 }

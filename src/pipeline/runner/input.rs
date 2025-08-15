@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::ComponentSpecifier;
 use crate::pipeline::component::IntoData;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -15,43 +16,62 @@ use std::sync::Arc;
 /// - tuples of up to twelve elements
 pub trait InputSpecifier {
     fn get(&self, channel: &str) -> Option<Arc<dyn Data>>;
+    fn expected_len(&self) -> Option<usize>;
 }
 impl<D: Clone + IntoData> InputSpecifier for (&str, D) {
     fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
         (channel == self.0).then(|| self.1.clone().into_data())
+    }
+    fn expected_len(&self) -> Option<usize> {
+        Some(1)
     }
 }
 impl<T: InputSpecifier> InputSpecifier for &T {
     fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
         T::get(self, channel)
     }
+    fn expected_len(&self) -> Option<usize> {
+        T::expected_len(self)
+    }
 }
 impl<T: InputSpecifier> InputSpecifier for [T] {
     fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
         self.iter().find_map(|i| i.get(channel))
+    }
+    fn expected_len(&self) -> Option<usize> {
+        self.iter().map(T::expected_len).sum()
     }
 }
 impl<T: InputSpecifier, const N: usize> InputSpecifier for [T; N] {
     fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
         self.iter().find_map(|i| i.get(channel))
     }
+    fn expected_len(&self) -> Option<usize> {
+        self.iter().map(T::expected_len).sum()
+    }
 }
 impl<T: InputSpecifier> InputSpecifier for Vec<T> {
     fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
         self.iter().find_map(|i| i.get(channel))
+    }
+    fn expected_len(&self) -> Option<usize> {
+        self.iter().map(T::expected_len).sum()
     }
 }
 impl<S: Borrow<str> + Hash + Eq, D: Clone + Into<Arc<dyn Data>>> InputSpecifier for HashMap<S, D> {
     fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
         HashMap::get(self, channel).map(|d| d.clone().into())
     }
+    fn expected_len(&self) -> Option<usize> {
+        Some(self.len())
+    }
 }
 
 macro_rules! impl_for_tuple {
     () => {};
     ($head:ident $(, $tail:ident)*) => {
+        #[allow(non_snake_case)]
         impl<$head: InputSpecifier, $($tail: InputSpecifier,)*> InputSpecifier for ($head, $($tail,)*) {
-            #[allow(non_snake_case)]
             fn get(&self, channel: &str) -> Option<Arc<dyn Data>> {
                 let ($head, $($tail,)*) = self;
                 if let Some(val) = $head.get(channel) {
@@ -64,6 +84,13 @@ macro_rules! impl_for_tuple {
                 )*
                 None
             }
+            #[allow(unused_mut)]
+            fn expected_len(&self) -> Option<usize> {
+                let ($head, $($tail,)*) = self;
+                let mut sum = $head.expected_len()?;
+                $(sum += $tail.expected_len()?;)*
+                Some(sum)
+            }
         }
         impl_for_tuple!($($tail),*);
     };
@@ -72,10 +99,10 @@ impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
 /// An error that can occur from [`PipelineRunner::pack_args`].
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
-pub enum PackArgsError<'a> {
+pub enum PackArgsError<'a, E> {
     /// The requested component ID was out of range.
-    #[error("No component {0}")]
-    NoComponent(ComponentId),
+    #[error(transparent)]
+    NoComponent(E),
     /// The component takes data through its primary input.
     #[error("Component expects a primary input")]
     ExpectingPrimary,
@@ -119,16 +146,15 @@ impl PipelineRunner {
     /// Pack the given input arguments according to the order.
     ///
     /// Note that adding more inputs after this will invalidate the packed arguments and lead to unexpected behavior.
-    pub fn pack_args<I: InputSpecifier>(
+    pub fn pack_args<C: ComponentSpecifier<Self>, I: InputSpecifier>(
         &self,
-        component: ComponentId,
+        component: C,
         input: I,
-    ) -> Result<ComponentArgs, PackArgsError> {
-        component.assert_normal();
-        let data = self
-            .components
-            .get(component.index())
-            .ok_or(PackArgsError::NoComponent(component))?;
+    ) -> Result<ComponentArgs, PackArgsError<C::Error>> {
+        let component = component
+            .resolve(self)
+            .map_err(PackArgsError::NoComponent)?;
+        let data = &self.components[component.index()];
         match &data.input_mode {
             InputMode::Single { name, .. } => {
                 let name = name.as_deref().ok_or(PackArgsError::ExpectingPrimary)?;
@@ -137,15 +163,23 @@ impl PipelineRunner {
                     .ok_or(PackArgsError::MissingInput(name))
                     .map(ComponentArgs::single)
             }
-            InputMode::Multiple { lookup, multi } => {
-                let len = lookup.len() + usize::from(multi.is_some());
+            InputMode::Multiple { lookup, tree_shape } => {
+                let len = lookup.len();
                 let mut packed = vec![None; len];
-                for (name, (idx, _)) in lookup {
-                    packed[*idx] = Some(input.get(name).ok_or(PackArgsError::MissingInput(name))?);
+                for (name, idx) in lookup {
+                    let resolved =
+                        (tree_shape[..(idx.0 as usize)].iter().sum::<u32>() + idx.1) as usize;
+                    packed[resolved] =
+                        Some(input.get(name).ok_or(PackArgsError::MissingInput(name))?);
                 }
-                if let Some((name, _)) = &multi {
-                    let i = input.get(name).ok_or(PackArgsError::MissingInput(name))?;
-                    *packed.last_mut().unwrap() = Some(i);
+                if let Some(expected) = input.expected_len() {
+                    if expected != len {
+                        tracing::warn!(
+                            expected,
+                            read = len,
+                            "number of args for the component doesn't match the number of args for the component"
+                        );
+                    }
                 }
                 Ok(ComponentArgs(packed))
             }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::ComponentSpecifier;
 use crate::pipeline::component::{IntoData, TypeMismatch};
 use crate::utils::LogErr;
 use std::convert::Infallible;
@@ -123,7 +124,7 @@ pub struct RunParams<'a> {
     pub max_running: Option<usize>,
 
     /// The component to execute
-    pub component: ComponentId,
+    pub component: RunnerComponentId,
 
     /// Input arguments for the component
     pub args: ComponentArgs,
@@ -135,7 +136,7 @@ pub struct RunParams<'a> {
 impl<'a> RunParams<'a> {
     /// Create a new set of parameters with no run limit or callback.
     #[inline(always)]
-    pub const fn new(component: ComponentId) -> Self {
+    pub const fn new(component: RunnerComponentId) -> Self {
         Self {
             component,
             args: ComponentArgs::empty(),
@@ -208,6 +209,8 @@ impl Debug for RunParams<'_> {
 /// These types are used to disambiguate implementations of [`IntoRunParams`]
 /// for different input types. They should not be used directly.
 pub mod markers {
+    /// Marker for a component specifier
+    pub struct ComponentSpecMarker;
     /// Marker for direct argument list conversions
     pub struct ArgListMarker;
     /// Marker for input map conversions
@@ -256,29 +259,78 @@ impl<'a> IntoRunParams<'a, ()> for RunParams<'a> {
         Ok(self)
     }
 }
-impl<'a> IntoRunParams<'a, ()> for ComponentId {
-    type Error = Infallible;
-    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
-        Ok(RunParams::new(self))
-    }
-}
-impl<'a, A: Into<ComponentArgs>> IntoRunParams<'a, markers::ArgListMarker> for (ComponentId, A) {
-    type Error = Infallible;
-    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
-        Ok(RunParams::new(self.0).with_args(self.1.into()))
-    }
-}
-impl<'a, I: InputSpecifier> IntoRunParams<'a, markers::InputMapMarker> for (ComponentId, I) {
-    type Error = PackArgsError<'a>;
+impl<'a, C: ComponentSpecifier<PipelineRunner>> IntoRunParams<'a, markers::ComponentSpecMarker>
+    for C
+{
+    type Error = C::Error;
     fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
-        let args = runner.pack_args(self.0, self.1)?;
-        Ok(RunParams::new(self.0).with_args(args))
+        self.resolve(runner).map(RunParams::new)
     }
 }
-impl<'a, A: Into<Context<'a>>> IntoRunParams<'a, Context<'static>> for (ComponentId, A) {
-    type Error = Infallible;
-    fn into_run_params(self, _runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
-        Ok(RunParams::new(self.0).with_context(self.1.into()))
+impl<'a, C: ComponentSpecifier<PipelineRunner>, A: Into<ComponentArgs>>
+    IntoRunParams<'a, markers::ArgListMarker> for (C, A)
+{
+    type Error = C::Error;
+    fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        self.0
+            .resolve(runner)
+            .map(|i| RunParams::new(i).with_args(self.1.into()))
+    }
+}
+impl<'a, C: ComponentSpecifier<PipelineRunner>, I: InputSpecifier>
+    IntoRunParams<'a, markers::InputMapMarker> for (C, I)
+{
+    type Error = PackArgsError<'a, C::Error>;
+    fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        let component = self.0.resolve(runner).map_err(PackArgsError::NoComponent)?;
+        let args = runner
+            .pack_args(component, self.1)
+            .map_err(|err| match err {
+                PackArgsError::NoComponent(_) => unreachable!(),
+                PackArgsError::MissingInput(v) => PackArgsError::MissingInput(v),
+                PackArgsError::ExpectingPrimary => PackArgsError::ExpectingPrimary,
+            })?;
+        Ok(RunParams::new(component).with_args(args))
+    }
+}
+impl<'a, C: ComponentSpecifier<PipelineRunner>, X: Into<Context<'a>>>
+    IntoRunParams<'a, markers::ComponentSpecMarker> for (C, X)
+{
+    type Error = C::Error;
+    fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        self.0
+            .resolve(runner)
+            .map(|c| RunParams::new(c).with_context(self.1))
+    }
+}
+impl<'a, C: ComponentSpecifier<PipelineRunner>, A: Into<ComponentArgs>, X: Into<Context<'a>>>
+    IntoRunParams<'a, markers::ArgListMarker> for (C, A, X)
+{
+    type Error = C::Error;
+    fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        self.0.resolve(runner).map(|i| {
+            RunParams::new(i)
+                .with_args(self.1.into())
+                .with_context(self.2)
+        })
+    }
+}
+impl<'a, C: ComponentSpecifier<PipelineRunner>, I: InputSpecifier, X: Into<Context<'a>>>
+    IntoRunParams<'a, markers::InputMapMarker> for (C, I, X)
+{
+    type Error = PackArgsError<'a, C::Error>;
+    fn into_run_params(self, runner: &'a PipelineRunner) -> Result<RunParams<'a>, Self::Error> {
+        let component = self.0.resolve(runner).map_err(PackArgsError::NoComponent)?;
+        let args = runner
+            .pack_args(component, self.1)
+            .map_err(|err| match err {
+                PackArgsError::NoComponent(_) => unreachable!(),
+                PackArgsError::MissingInput(v) => PackArgsError::MissingInput(v),
+                PackArgsError::ExpectingPrimary => PackArgsError::ExpectingPrimary,
+            })?;
+        Ok(RunParams::new(component)
+            .with_args(args)
+            .with_context(self.2))
     }
 }
 
@@ -289,7 +341,7 @@ impl<'a, A: Into<Context<'a>>> IntoRunParams<'a, Context<'static>> for (Componen
 pub enum RunErrorCause {
     /// The specified component ID does not exist
     #[error("No component {0}")]
-    NoComponent(ComponentId),
+    NoComponent(RunnerComponentId),
 
     /// Too many pipelines are currently running
     #[error("Too many pipelines ({0}) were already running")]
@@ -378,12 +430,12 @@ impl Drop for ComponentContextInner<'_> {
 
 impl<'r> ComponentContextInner<'r> {
     /// Get the component identifier of this .
-    pub fn comp_id(&self) -> ComponentId {
-        ComponentId {
-            raw: (self.component as *const ComponentData as usize
+    pub fn comp_id(&self) -> RunnerComponentId {
+        RunnerComponentId::new(
+            (self.component as *const ComponentData as usize
                 - self.runner.components.as_ptr() as usize)
                 / size_of::<ComponentData>(),
-        }
+        )
     }
 
     /// Returns the unique identifier for this execution run.
@@ -397,7 +449,7 @@ impl<'r> ComponentContextInner<'r> {
     }
 
     /// Returns the name of the current component.
-    pub fn name(&self) -> &'r triomphe::Arc<str> {
+    pub fn name(&self) -> &'r SmolStr {
         &self.component.name
     }
 
@@ -486,15 +538,10 @@ impl<'r> ComponentContextInner<'r> {
             return false;
         }
         let channel: Option<&'b str> = channel.into();
-        channel.map_or_else(
-            || self.component.primary_dependents.is_empty(),
-            |name| {
-                self.component
-                    .dependents
-                    .get(name)
-                    .is_some_and(|d| !d.is_empty())
-            },
-        )
+        self.component
+            .dependents
+            .get(&channel.map(SmolStr::from))
+            .is_some_and(|d| !d.is_empty())
     }
 
     /// Run a callback to submit to a channel, if there's a listener on the channel.
