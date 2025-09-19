@@ -90,19 +90,29 @@ fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let _guard = tracing::info_span!("main").entered();
-    let mut runner = PipelineGraph::new();
-    let broadcast = runner.add_component("broadcast", Arc::new(BroadcastVec))?;
-    let print_a = runner.add_component("print/a", Arc::new(Print))?;
-    let print_b = runner.add_component("print/b", Arc::new(Print))?;
-    let print_c = runner.add_component("print/c", Arc::new(Print))?;
-    let print2 = runner.add_component("print2", Arc::new(Print2))?;
-    let check_contains = runner.add_component("check-contains", Arc::new(CheckContains))?;
-    runner.add_dependency(broadcast, (), print_a, ())?;
-    runner.add_dependency(broadcast, "elem", print_b, ())?;
-    runner.add_dependency(broadcast, (), check_contains, "vec")?;
-    runner.add_dependency(broadcast, "elem", check_contains, "elem")?;
-    runner.add_dependency(check_contains, (), print_c, ())?;
-    tracing::debug!("before: {runner:#?}");
+    let mut graph = PipelineGraph::new();
+    let broadcast = graph.add_named_component(Arc::new(BroadcastVec), "broadcast")?;
+    let print_a = graph.add_named_component(Arc::new(Print), "print/a")?;
+    let print_b = graph.add_named_component(Arc::new(Print), "print/b")?;
+    let print_c = graph.add_named_component(Arc::new(Print), "print/c")?;
+    let print2 = graph.add_named_component(Arc::new(Print2), "print2")?;
+    let check_contains = graph.add_named_component(Arc::new(CheckContains), "check-contains")?;
+    graph.add_dependency(broadcast, print_a)?;
+    graph.add_dependency((broadcast, "elem"), print_b)?;
+    graph.add_dependency(broadcast, (check_contains, "vec"))?;
+    graph.add_dependency((broadcast, "elem"), (check_contains, "elem"))?;
+    graph.add_dependency(check_contains, print_c)?;
+    tracing::debug!("graph: {graph:#?}");
+    let (resolver, runner) = graph.compile(true)?;
+    tracing::debug!("remapping: {resolver:#?}");
+    tracing::debug!("runner, before: {runner:#?}");
+    let broadcast = resolver
+        .get(broadcast)
+        .ok_or_else(|| anyhow::anyhow!("couldn't find the remapped broadcast component"))?;
+    let print2 = resolver
+        .get(print2)
+        .ok_or_else(|| anyhow::anyhow!("couldn't find the remapped print2 component"))?;
+
     // We need a scope to spawn our tasks in to make sure they don't escape past the lifetime of the runner.
     rayon::scope(|scope| {
         // running multiple pipelines within a scope is fine, they all run concurrently
@@ -111,6 +121,6 @@ fn main() -> anyhow::Result<()> {
             .run((print2, [("a", 1i32), ("b", 2i32)]), scope)
             .unwrap();
     });
-    tracing::debug!("after: {runner:#?}");
+    tracing::debug!("runner, after: {graph:#?}");
     Ok(())
 }
