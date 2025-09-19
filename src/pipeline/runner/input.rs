@@ -113,7 +113,7 @@ pub enum PackArgsError<'a, E> {
 
 /// Multi-input arguments packed in the order that the component expects them.
 #[derive(Debug, Default, Clone)]
-pub struct ComponentArgs(pub(super) Vec<Option<Arc<dyn Data>>>);
+pub struct ComponentArgs(pub(super) Vec<Arc<dyn Data>>);
 impl ComponentArgs {
     /// Create a new empty argument list.
     #[inline(always)]
@@ -123,7 +123,7 @@ impl ComponentArgs {
     /// Create an argument list with a single element.
     #[inline(always)]
     pub fn single(arg: impl IntoData) -> Self {
-        Self(vec![Some(arg.into_data())])
+        Self(vec![arg.into_data()])
     }
     /// Get the number
     #[inline(always)]
@@ -163,14 +163,15 @@ impl PipelineRunner {
                     .ok_or(PackArgsError::MissingInput(name))
                     .map(ComponentArgs::single)
             }
-            InputMode::Multiple { lookup, tree_shape } => {
+            InputMode::Multiple {
+                lookup, tree_shape, ..
+            } => {
                 let len = lookup.len();
-                let mut packed = vec![None; len];
+                let mut packed = vec![PLACEHOLDER_DATA.clone(); len];
                 for (name, idx) in lookup {
-                    let resolved =
-                        (tree_shape[..(idx.0 as usize)].iter().sum::<u32>() + idx.1) as usize;
-                    packed[resolved] =
-                        Some(input.get(name).ok_or(PackArgsError::MissingInput(name))?);
+                    let resolved = (idx.0.checked_sub(1).map_or(0, |i| tree_shape[i as usize])
+                        + idx.1) as usize;
+                    packed[resolved] = input.get(name).ok_or(PackArgsError::MissingInput(name))?;
                 }
                 if let Some(expected) = input.expected_len() {
                     if expected != len {

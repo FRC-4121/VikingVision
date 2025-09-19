@@ -35,7 +35,6 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-mod deps;
 mod input;
 mod run;
 
@@ -46,56 +45,8 @@ type RunnerComponentChannel = ComponentChannel<PipelineRunner>;
 #[cfg(test)]
 mod tests;
 
-pub use deps::*;
 pub use input::*;
 pub use run::*;
-
-/// Uniquely identifies a specific execution of a component within the pipeline.
-///
-/// This is implemented as a sequence of invocation numbers where:
-/// - The first number is the base run ID (from the initial pipeline trigger)
-/// - Subsequent numbers represent nested or triggered executions
-///
-/// For example, a run ID of `1.2.3` indicates:
-/// - This is the second pipeline run
-/// - This is the third output from the first component that outputs multiple values
-/// - From there, the next component that outputs multiple values output four.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RunId {
-    /// The sequence of invocation numbers forming the execution path.
-    /// This vector should never be empty.
-    pub invocs: SmallVec<[u32; 2]>,
-}
-
-impl RunId {
-    pub fn new(invoc: u32) -> Self {
-        Self {
-            invocs: smallvec::smallvec![invoc],
-        }
-    }
-    pub fn starts_with(&self, other: &RunId) -> bool {
-        self.invocs.starts_with(&other.invocs)
-    }
-    pub fn push(&mut self, val: u32) {
-        self.invocs.push(val);
-    }
-    pub fn base_run(&self) -> u32 {
-        self.invocs[0]
-    }
-}
-
-impl Display for RunId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let Some((head, tail)) = self.invocs.split_first() else {
-            return Ok(());
-        };
-        write!(f, "{head}")?;
-        for elem in tail {
-            write!(f, ".{elem}")?;
-        }
-        Ok(())
-    }
-}
 
 mod trait_impls {
     use super::{PipelineRunner, RunnerComponentId};

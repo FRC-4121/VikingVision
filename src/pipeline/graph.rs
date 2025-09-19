@@ -585,7 +585,7 @@ impl PipelineGraph {
                             }
                         }
                         if dst.component.can_take(&dc) {
-                            single.push((dc, ComponentChannel(s_id, s_chan)));
+                            single.push((dc, ComponentChannel(s_id.flagged(), s_chan)));
                         }
                     }
                 }

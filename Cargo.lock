@@ -3610,6 +3610,7 @@ dependencies = [
  "disqualified",
  "humantime-serde",
  "libc",
+ "litemap",
  "polonius-the-crab",
  "rayon",
  "serde",

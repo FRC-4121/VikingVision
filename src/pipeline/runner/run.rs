@@ -1,10 +1,137 @@
 use super::*;
 use crate::pipeline::ComponentSpecifier;
-use crate::pipeline::component::{IntoData, TypeMismatch};
+use crate::pipeline::component::{IntoData, OutputKind, TypeMismatch};
 use crate::utils::LogErr;
+use litemap::LiteMap;
 use std::convert::Infallible;
 use std::ops::{Deref, DerefMut};
+use std::sync::LazyLock;
 use supply::prelude::*;
+
+#[derive(Debug)]
+pub(super) struct InputTree {
+    pub vals: SmallVec<[Arc<dyn Data>; 2]>,
+    pub next: Vec<Option<InputTree>>,
+    pub remaining: u32,
+    pub iter: u32,
+}
+impl InputTree {
+    pub fn index(
+        &self,
+        mut idx: InputIndex,
+        mut branch: &[u32],
+        mut shape: &[u32],
+    ) -> &Arc<dyn Data> {
+        let mut last = 0;
+        let mut this = self;
+        loop {
+            let b = branch.split_off_first().unwrap_or(&0);
+            let s = shape.split_off_first().unwrap();
+            if idx.0 == 0 {
+                return &this.vals[((s - last) * b + idx.1) as usize];
+            }
+            idx.0 -= 1;
+            this = this.next[*b as usize].as_ref().unwrap();
+            last = *s;
+        }
+    }
+    pub fn index_mut(
+        &mut self,
+        mut idx: InputIndex,
+        mut branch: &[u32],
+        mut shape: &[u32],
+    ) -> &mut Arc<dyn Data> {
+        let mut last = 0;
+        let mut this = self;
+        loop {
+            let b = branch.split_off_first().unwrap_or(&0);
+            let s = shape.split_off_first().unwrap();
+            if idx.0 == 0 {
+                return &mut this.vals[((s - last) * b + idx.1) as usize];
+            }
+            idx.0 -= 1;
+            this = this.next[*b as usize].as_mut().unwrap();
+            last = *s;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct InputIndex(pub u32, pub u32);
+impl InputIndex {
+    pub const PLACEHOLDER: Self = Self(u32::MAX, u32::MAX);
+    pub const fn is_placeholder(&self) -> bool {
+        self.0 == u32::MAX && self.1 == u32::MAX
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct MutableData {
+    pub inputs: Vec<Option<InputTree>>,
+    /// First open index
+    pub first: usize,
+}
+
+#[derive(Debug)]
+pub(super) enum InputMode {
+    Single {
+        name: Option<SmolStr>,
+    },
+    Multiple {
+        lookup: HashMap<SmolStr, InputIndex>,
+        tree_shape: SmallVec<[u32; 2]>,
+        mutable: Mutex<MutableData>,
+    },
+}
+pub(super) struct PlaceholderData;
+impl Data for PlaceholderData {}
+pub(super) static PLACEHOLDER_DATA: LazyLock<Arc<dyn Data>> =
+    LazyLock::new(|| Arc::new(PlaceholderData));
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RunId(pub SmallVec<[u32; 2]>);
+impl Display for RunId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for v in &self.0 {
+            if first {
+                first = false;
+                f.write_str("#")?;
+            } else {
+                f.write_str(".")?;
+            }
+            Display::fmt(v, f)?;
+        }
+        Ok(())
+    }
+}
+impl RunId {
+    /// Create a run ID with no branches.
+    pub const fn new(run: u32) -> RunId {
+        unsafe { Self(SmallVec::from_const_with_len_unchecked([run, 0], 1)) }
+    }
+    /// Get the base run that ran this.
+    pub fn base_run(&self) -> u32 {
+        self.0[0]
+    }
+}
+
+/// Data associated with components.
+pub struct ComponentData {
+    pub component: Arc<dyn Component>,
+    pub name: SmolStr,
+    pub(crate) dependents: HashMap<Option<SmolStr>, Vec<(RunnerComponentId, InputIndex)>>,
+    pub(super) input_mode: InputMode,
+}
+impl Debug for ComponentData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ComponentData")
+            .field("dependents", &self.dependents)
+            .field("name", &self.name)
+            .field("input_mode", &self.input_mode)
+            .finish_non_exhaustive()
+    }
+}
 
 #[derive(Debug)]
 pub struct CleanupContext<'r> {
@@ -389,8 +516,8 @@ enum InputKind {
     Empty,
     /// Single piece of input data
     Single(Arc<dyn Data>),
-    /// An index into the partial state, along with a value popped from the multi-input vector
-    Multiple(usize, Option<Arc<dyn Data>>),
+    /// An index into the partial state
+    Multiple(SmallVec<[u32; 2]>),
 }
 
 /// Core context used to get input and submit output from a component body.
@@ -403,7 +530,7 @@ pub struct ComponentContextInner<'r> {
     input: InputKind,
     callback: Option<Callback<'r>>,
     run_id: RunId,
-    invoc: AtomicU32,
+    branch_count: Mutex<LiteMap<Option<SmolStr>, u32>>,
     /// Context to be passed in and shared between components.
     pub context: Context<'r>,
     finished: bool,
@@ -415,7 +542,6 @@ impl Debug for ComponentContextInner<'_> {
             .field("runner", &(&self.runner as *const _))
             .field("comp_id", &self.comp_id())
             .field("run_id", &self.run_id)
-            .field("invoc", &self.invoc)
             .finish_non_exhaustive()
     }
 }
@@ -423,7 +549,7 @@ impl Debug for ComponentContextInner<'_> {
 impl Drop for ComponentContextInner<'_> {
     fn drop(&mut self) {
         if !self.finished {
-            self.finish();
+            // self.finish();
         }
     }
 }
@@ -438,17 +564,20 @@ impl<'r> ComponentContextInner<'r> {
         )
     }
 
-    /// Returns the unique identifier for this execution run.
+    /// Get the run ID of this run.
+    #[inline(always)]
     pub fn run_id(&self) -> &RunId {
         &self.run_id
     }
 
     /// Returns a reference to the pipeline runner.
+    #[inline(always)]
     pub fn runner(&self) -> &'r PipelineRunner {
         self.runner
     }
 
     /// Returns the name of the current component.
+    #[inline(always)]
     pub fn name(&self) -> &'r SmolStr {
         &self.component.name
     }
@@ -460,29 +589,31 @@ impl<'r> ComponentContextInner<'r> {
             return None;
         }
         let req_channel = channel.into();
-        match self.input {
+        match &self.input {
             InputKind::Empty => None,
-            InputKind::Single(ref data) => {
+            InputKind::Single(data) => {
                 let InputMode::Single { name, .. } = &self.component.input_mode else {
                     unreachable!()
                 };
                 (name.as_deref() == req_channel).then(|| data.clone())
             }
-            InputKind::Multiple(run_idx, ref arg) => req_channel.and_then(|name| {
-                let InputMode::Multiple { lookup, multi } = &self.component.input_mode else {
+            InputKind::Multiple(branch) => req_channel.and_then(|name| {
+                let InputMode::Multiple {
+                    lookup,
+                    tree_shape,
+                    mutable,
+                } = &self.component.input_mode
+                else {
                     unreachable!()
                 };
-                if multi.as_ref().map(|x| &*x.0) == req_channel {
-                    return arg.clone();
-                }
-                let field_idx = lookup.get(name)?.0;
-                let num_fields = lookup.len();
-                let lock = self.component.partial.lock().unwrap();
-                let index = run_idx * num_fields + field_idx;
+                let idx = lookup.get(name)?;
+                let (head, tail) = branch.split_first().unwrap_or((&0, &[]));
+                let lock = mutable.lock().unwrap();
                 Some(
-                    lock.data[index]
+                    lock.inputs[*head as usize]
                         .as_ref()
-                        .expect("All fields should be initialized here!")
+                        .unwrap()
+                        .index(*idx, tail, tree_shape)
                         .clone(),
                 )
             }),
@@ -516,18 +647,32 @@ impl<'r> ComponentContextInner<'r> {
         match &self.input {
             InputKind::Empty => ComponentArgs::empty(),
             InputKind::Single(arg) => ComponentArgs::single(arg.clone()),
-            InputKind::Multiple(run_idx, last) => {
-                let InputMode::Multiple { lookup, .. } = &self.component.input_mode else {
+            InputKind::Multiple(branch) => {
+                let InputMode::Multiple {
+                    lookup,
+                    tree_shape,
+                    mutable,
+                } = &self.component.input_mode
+                else {
                     unreachable!()
                 };
-                let num_fields = lookup.len();
-                let lock = self.component.partial.lock().unwrap();
-                let mut vec =
-                    lock.data[(*run_idx * num_fields)..((*run_idx + 1) * num_fields)].to_vec();
-                if let Some(last) = last {
-                    vec.push(Some(last.clone()));
+                let mut out = vec![PLACEHOLDER_DATA.clone(); lookup.len()];
+                let mut out_slice = &mut out[..];
+                let (head, mut tail) = branch.split_first().unwrap_or((&0, &[]));
+                let mut last = 0;
+                let lock = mutable.lock().unwrap();
+                let mut tree = lock.inputs[*head as usize].as_ref().unwrap();
+                for cum in tree_shape {
+                    let b = tail.split_off_first().unwrap_or(&0);
+                    let sz = cum - last;
+                    last = *cum;
+                    let head = out_slice.split_off_mut(..(sz as usize)).unwrap();
+                    head.clone_from_slice(
+                        &tree.vals[((sz * b) as usize)..((sz * (b + 1)) as usize)],
+                    );
+                    tree = tree.next[*b as usize].as_ref().unwrap();
                 }
-                ComponentArgs(vec)
+                ComponentArgs(out)
             }
         }
     }
@@ -583,122 +728,123 @@ impl<'r> ComponentContextInner<'r> {
     where
         'r: 's,
     {
-        if self.invoc.load(Ordering::Relaxed) == u32::MAX {
-            tracing::error!("submit() was called after finish() for a component");
+        let dependents = self
+            .component
+            .dependents
+            .get(&channel.map(SmolStr::from))
+            .map_or(&[] as _, Vec::as_slice);
+        if dependents.is_empty() {
             return;
         }
-        let dependents = channel.map_or_else(
-            || self.component.primary_dependents.as_slice(),
-            |name| {
-                self.component
-                    .dependents
-                    .get(name)
-                    .map_or(&[], Vec::as_slice)
-            },
-        );
-        for &(comp_id, channel) in dependents {
+        let branch = match self.component.component.output_kind(channel) {
+            OutputKind::None => {
+                tracing::warn!(?channel, "submitted output to channel that wasn't expected");
+                None
+            }
+            OutputKind::Single => None,
+            OutputKind::Multiple => {
+                let mut guard = self.branch_count.lock().unwrap();
+                let b = guard.entry(channel.map(From::from)).or_insert(0);
+                let old = *b;
+                *b += 1;
+                Some(old)
+            }
+        };
+        let mut run_id = self.run_id.clone();
+        run_id.0.extend(branch);
+        for &(comp_id, index) in dependents {
             let next_comp = &self.runner.components[comp_id.index()];
-            match channel {
-                InputChannel::Primary(multi) => self.spawn_next(
+            match &next_comp.input_mode {
+                InputMode::Single { .. } => self.spawn_next(
                     next_comp,
                     InputKind::Single(data.clone()),
-                    multi.then(|| self.invoc.fetch_add(1, Ordering::Relaxed)),
+                    run_id.clone(),
                     scope,
                 ),
-                InputChannel::Multiple => {
-                    let mut partial = next_comp.partial.lock().unwrap();
-                    let partial = &mut *partial;
-                    let len = if let InputMode::Multiple { lookup, .. } = &next_comp.input_mode {
-                        lookup.len()
-                    } else {
-                        unreachable!()
-                    };
-                    'blk: {
-                        for (n, (data_ref, prdata)) in partial
-                            .data
-                            .chunks_mut(len)
-                            .zip(&mut partial.per_run)
-                            .enumerate()
-                        {
-                            let Some(id) = &prdata.id else { continue };
-                            if *id != self.run_id {
-                                continue;
-                            }
-                            if data_ref.iter().all(Option::is_some) {
-                                prdata.refs += 1;
-                                self.spawn_next(
-                                    next_comp,
-                                    InputKind::Multiple(n, Some(data.clone())),
-                                    Some(prdata.invoc),
-                                    scope,
-                                );
-                                prdata.invoc += 1;
-                            } else {
-                                prdata.multi.push(data.clone());
-                            }
-                            break 'blk;
-                        }
-                        let (_, prdata, _) = partial.alloc(len);
-                        prdata.id = Some(self.run_id.clone());
-                        prdata.refs = 1;
-                        prdata.multi.push(data.clone());
-                    }
-                }
-                InputChannel::Numbered(idx) => {
-                    let mut partial = next_comp.partial.lock().unwrap();
-                    let partial = &mut *partial;
-                    let (len, has_multi) =
-                        if let InputMode::Multiple { lookup, multi } = &next_comp.input_mode {
-                            (lookup.len(), multi.is_some())
-                        } else {
-                            unreachable!()
+                InputMode::Multiple {
+                    tree_shape,
+                    mutable,
+                    ..
+                } => {
+                    let mut lock = mutable.lock().unwrap();
+                    // this has to be written as a tail-recursive function because Rust's control-flow can't track the looping
+                    fn descend(
+                        mut slice: &[u32],
+                        mut shape: &[u32],
+                        last_idx: u32,
+                        index: usize,
+                        inputs: &mut Vec<Option<InputTree>>,
+                        data: Arc<dyn Data>,
+                        mut path: SmallVec<[u32; 2]>,
+                        run_id: RunId,
+                    ) {
+                        let (Some(&idx), Some(&sum)) =
+                            (slice.split_off_first(), shape.split_off_first())
+                        else {
+                            return;
                         };
-                    'blk: {
-                        for (n, (data_ref, prdata)) in partial
-                            .data
-                            .chunks_mut(len)
-                            .zip(&mut partial.per_run)
-                            .enumerate()
-                        {
-                            let Some(id) = &prdata.id else { continue };
-                            if id.starts_with(&self.run_id) {
+                        let is_last = slice.is_empty();
+                        let mut open = None;
+                        let size = sum - last_idx;
+                        for (n, i) in inputs.iter_mut().enumerate() {
+                            let Some(tree) = i else {
+                                open = Some(n);
                                 continue;
-                            }
-                            let elem = &mut data_ref[idx];
-                            assert!(elem.is_none(), "already submitted to a matching element?");
-                            *elem = Some(data.clone());
-                            if data_ref.iter().all(Option::is_some) {
-                                if has_multi {
-                                    for elem in prdata.multi.drain(..) {
-                                        prdata.refs += 1;
-                                        self.spawn_next(
-                                            next_comp,
-                                            InputKind::Multiple(n, Some(elem)),
-                                            Some(prdata.invoc),
-                                            scope,
-                                        );
-                                        prdata.invoc += 1;
-                                    }
+                            };
+                            if tree.iter == idx {
+                                if is_last {
+                                    tree.vals[index] = data;
+                                    return;
                                 } else {
-                                    prdata.refs += 1;
-                                    self.spawn_next(
-                                        next_comp,
-                                        InputKind::Multiple(n, None),
-                                        Some(prdata.invoc),
-                                        scope,
+                                    path.push(n as u32);
+                                    return descend(
+                                        slice,
+                                        shape,
+                                        sum,
+                                        index,
+                                        &mut tree.next,
+                                        data,
+                                        path,
+                                        run_id,
                                     );
-                                    prdata.invoc += 1;
                                 }
                             }
-                            break 'blk;
                         }
-                        let (_, prdata, data_ref) = partial.alloc(len);
-                        prdata.id = Some(self.run_id.clone());
-                        data_ref[idx] = Some(data.clone());
-                        if has_multi {
-                            prdata.refs = 1;
-                        }
+                        let mut vals = smallvec::smallvec![PLACEHOLDER_DATA.clone(); size as usize];
+                        let remaining = if is_last {
+                            vals[index] = data.clone();
+                            size - 1
+                        } else {
+                            size
+                        };
+                        let new = InputTree {
+                            vals,
+                            next: Vec::new(),
+                            iter: idx,
+                            remaining,
+                        };
+                        let (inserted, new_inputs) = if let Some(n) = open {
+                            let r = &mut inputs[n];
+                            *r = Some(new);
+                            (n, &mut r.as_mut().unwrap().next)
+                        } else {
+                            let n = inputs.len();
+                            inputs.push(Some(new));
+                            (n, &mut inputs[n].as_mut().unwrap().next)
+                        };
+                        path.push(inserted as u32);
+                        return descend(slice, shape, sum, index, new_inputs, data, path, run_id);
                     }
+                    descend(
+                        &*run_id.0,
+                        &**tree_shape,
+                        0,
+                        index.1 as _,
+                        &mut lock.inputs,
+                        data.clone(),
+                        SmallVec::new(),
+                        run_id.clone(),
+                    );
                 }
             }
         }
@@ -711,27 +857,23 @@ impl<'r> ComponentContextInner<'r> {
         &self,
         component: &'r ComponentData,
         input: InputKind,
-        push_run: Option<u32>,
+        run_id: RunId,
         scope: &rayon::Scope<'s>,
     ) where
         'r: 's,
     {
         let runner = self.runner;
-        let decr = self.callback.clone();
+        let callback = self.callback.clone();
         let context = self.context.clone();
-        let mut run_id = self.run_id.clone();
-        if let Some(run) = push_run {
-            run_id.push(run);
-        }
         scope.spawn(move |scope| {
             ComponentContextInner {
                 input,
                 runner,
                 component,
-                callback: decr,
-                run_id,
-                invoc: AtomicU32::new(0),
+                callback,
                 context,
+                run_id,
+                branch_count: Mutex::new(LiteMap::new()),
                 finished: false,
             }
             .run(scope);
@@ -750,26 +892,15 @@ impl<'r> ComponentContextInner<'r> {
             tracing::warn!("finish() was called twice for a component");
             return;
         }
-        if let InputKind::Multiple(idx, _) = self.input {
-            let mut partial = self.component.partial.lock().unwrap();
-            let prdata = &mut partial.per_run[idx];
-            prdata.refs -= 1;
-            if prdata.refs == 0 {
-                let InputMode::Multiple { lookup, .. } = &self.component.input_mode else {
-                    unreachable!()
-                };
-                partial.free(idx, lookup.len());
-            }
-        }
-        self.runner.cleanup_runs(self.component, &self.run_id);
         self.input = InputKind::Empty;
         if let Some(callback) = self.callback.take() {
             callback.call_if_unique(CleanupContext {
                 runner: self.runner,
-                run_id: self.run_id.base_run(),
+                run_id: self.run_id.0[0],
                 context: std::mem::take(&mut self.context),
             });
         }
+        // TODO: literally any level of cleanup
         self.runner.running.fetch_sub(1, Ordering::AcqRel);
     }
 
@@ -908,23 +1039,27 @@ impl PipelineRunner {
                 params,
             });
         };
-        match (&data.input_mode, params.args.len()) {
-            (InputMode::Single { .. }, n) => {
-                if n != 1 {
+        let nargs = params.args.len();
+        match &data.input_mode {
+            InputMode::Single { .. } => {
+                if nargs != 1 {
                     return Err(RunErrorWithParams {
                         cause: RunErrorCause::ArgsMismatch {
                             expected: 1,
-                            given: n,
+                            given: nargs,
                         },
                         params,
                     });
                 }
             }
-            (InputMode::Multiple { lookup, multi }, n) => {
-                let expected = lookup.len() + usize::from(multi.is_some());
-                if expected != n {
+            InputMode::Multiple { lookup, .. } => {
+                let expected = lookup.len();
+                if expected != nargs {
                     return Err(RunErrorWithParams {
-                        cause: RunErrorCause::ArgsMismatch { expected, given: n },
+                        cause: RunErrorCause::ArgsMismatch {
+                            expected,
+                            given: nargs,
+                        },
                         params,
                     });
                 }
@@ -938,21 +1073,35 @@ impl PipelineRunner {
             context,
         } = params;
         let run_id = self.run_id.fetch_add(1, Ordering::Relaxed);
-        let run_id = RunId::new(run_id);
         let input = match args.len() {
             0 => InputKind::Empty,
-            1 => InputKind::Single(args.0.pop().unwrap().unwrap()),
-            len => {
-                let mut lock = data.partial.lock().unwrap();
-                let (idx, run, inputs) = lock.alloc(len);
-                run.id = Some(run_id.clone());
-                run.refs = 1;
-                let arg = matches!(data.input_mode, InputMode::Multiple { multi: Some(_), .. })
-                    .then(|| args.0.pop().unwrap().unwrap());
-                for (to, from) in inputs.iter_mut().zip(&mut args.0) {
-                    *to = from.take();
+            1 => InputKind::Single(args.0.pop().unwrap()),
+            _ => {
+                let InputMode::Multiple {
+                    tree_shape,
+                    mutable,
+                    ..
+                } = &data.input_mode
+                else {
+                    unreachable!()
+                };
+                let mut indices = smallvec::smallvec![0; tree_shape.len()];
+                let mut tree = build_tree(args.0.into_iter(), tree_shape);
+                tree.iter = run_id;
+                let mut lock = mutable.lock().unwrap();
+                let n = lock.first;
+                indices[0] = n as _;
+                if n == lock.inputs.len() {
+                    lock.first += 1;
+                    lock.inputs.push(Some(tree));
+                } else {
+                    lock.inputs[n] = Some(tree);
+                    lock.first = lock.inputs[(n + 1)..]
+                        .iter()
+                        .position(Option::is_none)
+                        .map_or(lock.inputs.len(), |x| x + n);
                 }
-                InputKind::Multiple(idx, arg)
+                InputKind::Multiple(indices)
             }
         };
         let data = &self.components[component.index()];
@@ -962,76 +1111,40 @@ impl PipelineRunner {
                 component: data,
                 input,
                 callback,
-                run_id,
-                invoc: AtomicU32::new(0),
                 context,
+                run_id: RunId(smallvec::smallvec![run_id]),
+                branch_count: Mutex::new(LiteMap::new()),
                 finished: false,
             }
             .run(scope);
         });
         Ok(())
     }
+}
 
-    /// Clean up resources after a component run completes.
-    ///
-    /// This internal method handles cleanup of component inputs and propagates to dependent components.
-    fn cleanup_runs<'a>(&'a self, component: &'a ComponentData, prefix: &RunId) {
-        for (name, deps) in std::iter::once((None, &component.primary_dependents))
-            .chain(component.dependents.iter().map(|(k, v)| (Some(&**k), v)))
-        {
-            if !component.component.output_kind(name).is_multi() {
-                continue;
-            }
-            for (comp, channel) in deps {
-                let component = &self.components[comp.index()];
-                match *channel {
-                    InputChannel::Primary(_) => self.cleanup_runs(component, prefix),
-                    InputChannel::Numbered(idx) => {
-                        let len = if let InputMode::Multiple { lookup, .. } = &component.input_mode
-                        {
-                            lookup.len()
-                        } else {
-                            unreachable!()
-                        };
-                        let mut partial = component.partial.lock().unwrap();
-                        let partial = &mut *partial;
-                        for (n, (data, prd)) in partial
-                            .data
-                            .chunks(len)
-                            .zip(&mut partial.per_run)
-                            .enumerate()
-                        {
-                            if prd.id.as_ref().is_some_and(|id| id.starts_with(prefix)) {
-                                if data[idx].is_none() {
-                                    partial.free(n, len);
-                                    self.cleanup_runs(component, prefix);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    InputChannel::Multiple => {
-                        let len = if let InputMode::Multiple { lookup, .. } = &component.input_mode
-                        {
-                            lookup.len()
-                        } else {
-                            unreachable!()
-                        };
-                        let mut partial = component.partial.lock().unwrap();
-                        let partial = &mut *partial;
-                        for (n, prd) in partial.per_run.iter_mut().enumerate() {
-                            if prd.id.as_ref().is_some_and(|id| id.starts_with(prefix)) {
-                                prd.refs -= 1;
-                                if prd.refs == 0 {
-                                    partial.free(n, len);
-                                    self.cleanup_runs(component, prefix);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) -> InputTree {
+    let mut root = InputTree {
+        vals: SmallVec::new(),
+        next: Vec::new(),
+        remaining: 0,
+        iter: 0,
+    };
+    let mut tree = &mut root;
+    let mut last = 0;
+    while let Some(&sum) = shape.split_off_first() {
+        let len = sum - last;
+        last = sum;
+        tree.vals.extend(iter.by_ref().take(len as _));
+        tree.remaining = len;
+        if !shape.is_empty() {
+            tree.next = vec![Some(InputTree {
+                vals: SmallVec::new(),
+                next: Vec::new(),
+                remaining: 0,
+                iter: 0,
+            })];
+            tree = tree.next[0].as_mut().unwrap();
         }
     }
+    root
 }

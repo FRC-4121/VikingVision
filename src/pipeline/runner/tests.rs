@@ -62,20 +62,22 @@ fn simple() {
         Send,
         Recv,
     }
-    let mut runner = PipelineGraph::new();
+    let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
-    let prod = runner
-        .add_component("prod", Cmp::new(tx.clone(), Msg::Send))
+    let prod = graph
+        .add_named_component(Cmp::new(tx.clone(), Msg::Send), "prod")
         .unwrap();
-    let cons = runner
-        .add_component("cons", Cmp::new(tx.clone(), Msg::Recv))
+    let cons = graph
+        .add_named_component(Cmp::new(tx.clone(), Msg::Recv), "cons")
         .unwrap();
-    runner.add_dependency(prod, "s1", cons, "in").unwrap();
+    graph.add_dependency((prod, "s1"), (cons, "in")).unwrap();
+    println!("{graph:#?}");
+    let (_remap, runner) = graph.compile(true).unwrap();
     println!("{runner:#?}");
     let resp = rayon::scope(|scope| {
         runner
             .run(
-                (prod, [("in", ())])
+                ("prod", [("in", ())])
                     .into_run_params(&runner)
                     .unwrap()
                     .with_callback(|_| tx.send(None).unwrap()),
@@ -94,20 +96,22 @@ fn duplicating() {
         Send,
         Recv,
     }
-    let mut runner = PipelineGraph::new();
+    let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
-    let prod = runner
-        .add_component("prod", Cmp::new(tx.clone(), Msg::Send))
+    let prod = graph
+        .add_named_component(Cmp::new(tx.clone(), Msg::Send), "prod")
         .unwrap();
-    let cons = runner
-        .add_component("cons", Cmp::new(tx.clone(), Msg::Recv))
+    let cons = graph
+        .add_named_component(Cmp::new(tx.clone(), Msg::Recv), "cons")
         .unwrap();
-    runner.add_dependency(prod, "d1", cons, "in").unwrap();
-    println!("{runner:#?}");
+    graph.add_dependency((prod, "d1"), (cons, "in")).unwrap();
+    println!("{graph:#?}");
+    let (remap, runner) = graph.compile(false).unwrap();
+    let p2 = remap[prod];
     let resp = rayon::scope(|scope| {
         runner
             .run(
-                (prod, [("in", ())])
+                (p2, [("in", ())])
                     .into_run_params(&runner)
                     .unwrap()
                     .with_callback(|_| tx.send(None).unwrap()),
