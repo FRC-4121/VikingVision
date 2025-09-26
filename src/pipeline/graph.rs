@@ -818,7 +818,7 @@ impl PipelineGraph {
 
         for i in 0..auxiliary.len() {
             let (_, branch, out) =
-                unsafe { &mut *std::ptr::from_mut(auxiliary.get_unchecked_mut(i)) };
+                unsafe { &mut *std::ptr::from_mut(auxiliary.get_unchecked_mut(i)) }; // we need to detach the lifetime here, we check safety later
             for (chan, deps) in out {
                 let flag = deps[0].0.flag();
                 if flag {
@@ -880,7 +880,13 @@ impl PipelineGraph {
                     });
                 }
                 let idx = mapping[comp.0.index()].index();
-                let depth = auxiliary[idx].1.len();
+                let aux = &auxiliary[idx];
+                let branches = aux
+                    .2
+                    .get(&comp.1.clone())
+                    .and_then(|v| v.first())
+                    .is_some_and(|c| c.0.flag());
+                let depth = aux.1.len() + branches as usize;
 
                 let iidx = if let runner::InputMode::Multiple {
                     lookup, tree_shape, ..
@@ -906,7 +912,15 @@ impl PipelineGraph {
             if let Some((name, from)) = multi {
                 let depth = from
                     .iter()
-                    .map(|ch| auxiliary[mapping[ch.0.index()].index()].1.len())
+                    .map(|ch| {
+                        let aux = &auxiliary[mapping[ch.0.index()].index()];
+                        let branches = aux
+                            .2
+                            .get(&ch.1.clone())
+                            .and_then(|v| v.first())
+                            .is_some_and(|c| c.0.flag());
+                        aux.1.len() + branches as usize
+                    })
                     .fold(0, usize::max);
                 let iidx = if let runner::InputMode::Multiple {
                     lookup, tree_shape, ..
@@ -929,6 +943,17 @@ impl PipelineGraph {
                         .entry(ch.1.clone())
                         .or_default()
                         .push((ComponentId::new(n), iidx));
+                }
+            }
+        }
+
+        // make the tree shapes of multi-input components cumulative
+        for comp in &mut components {
+            if let runner::InputMode::Multiple { tree_shape, .. } = &mut comp.input_mode {
+                let mut last = 0;
+                for elem in tree_shape {
+                    last += *elem;
+                    *elem = last;
                 }
             }
         }
