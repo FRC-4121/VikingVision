@@ -1,4 +1,7 @@
+use std::fs::File;
+use std::io::Stderr;
 use std::sync::Arc;
+use tracing_subscriber::fmt::writer::{MakeWriter, OptionalWriter, Tee};
 use viking_vision::pipeline::prelude::*;
 
 // Here we define the component types we'd like to use in our pipeline.
@@ -85,9 +88,29 @@ impl Component for CheckContains {
     }
 }
 
+struct Writer(Option<File>);
+impl<'a> MakeWriter<'a> for Writer {
+    type Writer = Tee<OptionalWriter<&'a File>, Stderr>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        Tee::new(
+            self.0
+                .as_ref()
+                .map_or_else(OptionalWriter::none, OptionalWriter::some),
+            std::io::stderr(),
+        )
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    let file = std::env::args_os()
+        .nth(1)
+        .map(std::fs::File::create)
+        .transpose()?;
+
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(Writer(file))
         .init();
     let _guard = tracing::info_span!("main").entered();
     let mut graph = PipelineGraph::new();
