@@ -1,14 +1,18 @@
 use super::{prelude::*, *};
+use litemap::LiteMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
+use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, LazyLock};
+use std::sync::atomic::{AtomicU32, AtomicUsize};
+use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 
 /// Alias for component IDs used in a [`PipelineGraph`].
 pub type GraphComponentId = ComponentId<PipelineGraph>;
-type GraphComponentChannel = ComponentChannel<PipelineGraph>;
+/// Alias for component channels used in a [`PipelineGraph`].
+pub type GraphComponentChannel = ComponentChannel<PipelineGraph>;
 
 mod trait_impls {
     use super::*;
@@ -188,7 +192,41 @@ pub enum GenericAddDependecyError {
 }
 
 #[derive(Debug, Clone, PartialEq, Error)]
-pub enum CompileError {}
+pub enum CompileError {
+    #[error("Graph contains at least one cycle")]
+    ContainsCycle(Vec<(GraphComponentId, SmolStr)>),
+    #[error("Component {comp} has multiple branching paths that lead to it: {} and {}", ChainFormatter(.branch_1), ChainFormatter(.branch_2))]
+    BranchMismatch {
+        comp: SmolStr,
+        branch_1: Vec<(SmolStr, Option<SmolStr>)>,
+        branch_2: Vec<(SmolStr, Option<SmolStr>)>,
+    },
+    #[error("Component {comp} is missing an input on channel {chan:?}")]
+    MissingInput { comp: SmolStr, chan: SmolStr },
+}
+
+fn show_pair((name, chan): &(SmolStr, Option<SmolStr>), f: &mut Formatter) -> fmt::Result {
+    f.write_str(name)?;
+    if let Some(chan) = chan {
+        f.write_str("/")?;
+        f.write_str(chan)?;
+    }
+    Ok(())
+}
+
+struct ChainFormatter<'a>(&'a Vec<(SmolStr, Option<SmolStr>)>);
+impl Display for ChainFormatter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if let Some((first, rest)) = self.0.split_first() {
+            show_pair(first, f)?;
+            for elem in rest {
+                f.write_str(" -> ")?;
+                show_pair(elem, f)?;
+            }
+        }
+        Ok(())
+    }
+}
 
 static DEFAULT_COMPONENT: LazyLock<Arc<dyn Component>> = LazyLock::new(|| {
     struct Placeholder;
@@ -207,7 +245,7 @@ static DEFAULT_COMPONENT: LazyLock<Arc<dyn Component>> = LazyLock::new(|| {
 });
 const DEFAULT_NAME: SmolStr = smol_str::SmolStr::new_static("<placeholder>");
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum MultiKind {
     Cant,
     None,
@@ -218,7 +256,7 @@ enum MultiKind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum InputKind {
     Single(GraphComponentChannel),
     SingleMulti(SmallVec<[GraphComponentChannel; 1]>),
@@ -265,12 +303,14 @@ impl std::ops::Index<GraphComponentId> for IdResolver {
 /// Associated data for a component in the graph.
 ///
 /// More may become public if there's a need for it.
+#[derive(Clone)]
 pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
     inputs: InputKind,
     outputs: BTreeMap<Option<SmolStr>, Vec<GraphComponentChannel>>,
     in_lookup: bool,
+    input_count: LiteMap<GraphComponentId, usize>,
 }
 impl ComponentData {
     /// To keep stable indices, removed components are replaced with a placeholder value.
@@ -298,10 +338,10 @@ impl Debug for ComponentData {
 /// This is used to build a pipeline. In order to run a pipeline, [`Self::compile`] needs to be called, which builds
 /// a [`PipelineRunner`]. The compiled runner can't have its structure changed, so validation of the graph can be handled
 /// solely by the [`PipelineGraph`].
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PipelineGraph {
     components: Vec<ComponentData>,
-    lookup: HashMap<SmolStr, GraphComponentId>,
+    pub lookup: HashMap<SmolStr, GraphComponentId>,
     first_free: usize,
 }
 impl PipelineGraph {
@@ -425,6 +465,7 @@ impl PipelineGraph {
             inputs,
             outputs: BTreeMap::new(),
             in_lookup,
+            input_count: LiteMap::new(),
         };
         let idx = *first_free;
         let out = GraphComponentId::new(idx);
@@ -594,6 +635,7 @@ impl PipelineGraph {
                 .entry(scc)
                 .or_default()
                 .push(ComponentChannel(d_id.with_flag(is_multi), dcc));
+            *dst.input_count.entry(s_id).or_insert(0) += 1;
             Ok(())
         }
         let (s_id, s_chan) = src
@@ -679,14 +721,21 @@ impl PipelineGraph {
             }
         }
         for ch in outputs.into_values().flatten() {
-            match &mut self.components[ch.0.index()].inputs {
-                InputKind::Single(v) => *v = ComponentChannel::PLACEHOLDER,
-                InputKind::SingleMulti(v) => v.retain(|c| c.0 != id),
+            let c2 = &mut self.components[ch.0.index()];
+            let mut count = 0;
+            match &mut c2.inputs {
+                InputKind::Single(v) => {
+                    *v = ComponentChannel::PLACEHOLDER;
+                    count = 1;
+                }
+                InputKind::SingleMulti(v) => {
+                    count = v.drain_filter(|c| c.0 == id).count();
+                }
                 InputKind::Multiple { single, multi } => {
                     let Some(dc) = ch.1 else { continue };
                     if let MultiKind::Some { chan, inputs, .. } = multi {
                         if *chan == dc {
-                            inputs.retain(|c| c.0 != id);
+                            count = inputs.extract_if(.., |c| c.0 == id).count();
                             match &mut **inputs {
                                 [] => {
                                     let MultiKind::Some { chan, optional, .. } =
@@ -718,10 +767,18 @@ impl PipelineGraph {
                                 } else {
                                     *s = ComponentChannel::PLACEHOLDER;
                                 }
+                                count = 1;
                                 break;
                             }
                         }
                     }
+                }
+            }
+            if let litemap::Entry::Occupied(mut e) = c2.input_count.entry(id) {
+                let r = e.get_mut();
+                *r -= count;
+                if *r == 0 {
+                    e.remove();
                 }
             }
         }
@@ -742,10 +799,224 @@ impl PipelineGraph {
     /// This remaps the component IDs into a topologically-sorted order and verifies additional invariants:
     /// - The graph must be acyclic.
     /// - Any component must have a single chain of "branch points" such that there's no ambiguity in which inputs should be broadcast.
-    pub fn compile(
-        &self,
-        include_lookup: bool,
-    ) -> Result<(IdResolver, PipelineRunner), CompileError> {
-        todo!()
+    pub fn compile(mut self) -> Result<(IdResolver, PipelineRunner), CompileError> {
+        let mut mapping = vec![ComponentId::<PipelineRunner>::PLACEHOLDER; self.components.len()];
+        let mut components = Vec::with_capacity(self.components.len());
+        let mut auxiliary = Vec::with_capacity(self.components.len());
+        let mut extracted = Vec::new();
+        loop {
+            extracted.clear();
+            for (i, component) in self.components.iter_mut().enumerate() {
+                if component.is_placeholder() {
+                    continue;
+                }
+                if component.input_count.is_empty() {
+                    extracted.push(i);
+                    let rid = components.len();
+                    mapping[i] = ComponentId::new(rid);
+                    let input = std::mem::replace(
+                        &mut component.inputs,
+                        InputKind::Single(ComponentChannel::PLACEHOLDER),
+                    );
+                    components.push(runner::ComponentData {
+                        component: std::mem::replace(
+                            &mut component.component,
+                            DEFAULT_COMPONENT.clone(),
+                        ),
+                        name: std::mem::replace(&mut component.name, DEFAULT_NAME.clone()),
+                        dependents: HashMap::new(),
+                        input_mode: match &input {
+                            InputKind::Single(_) | InputKind::SingleMulti(_) => {
+                                runner::InputMode::Single { name: None }
+                            }
+                            InputKind::Multiple {
+                                single,
+                                multi: MultiKind::Some { chan, .. },
+                            } => {
+                                if single.is_empty() {
+                                    runner::InputMode::Single {
+                                        name: Some(chan.clone()),
+                                    }
+                                } else {
+                                    runner::InputMode::Multiple {
+                                        lookup: HashMap::new(),
+                                        tree_shape: SmallVec::new(),
+                                        mutable: Mutex::default(),
+                                    }
+                                }
+                            }
+                            InputKind::Multiple { single, .. } => {
+                                if let [(name, _)] = &**single {
+                                    runner::InputMode::Single {
+                                        name: Some(name.clone()),
+                                    }
+                                } else {
+                                    runner::InputMode::Multiple {
+                                        lookup: HashMap::new(),
+                                        tree_shape: SmallVec::new(),
+                                        mutable: Mutex::default(),
+                                    }
+                                }
+                            }
+                        },
+                    });
+                    auxiliary.push((
+                        if let InputKind::Multiple { single, multi } = input {
+                            let multi = if let MultiKind::Some { chan, inputs, .. } = multi {
+                                Some((chan, inputs))
+                            } else {
+                                None
+                            };
+                            (single, multi)
+                        } else {
+                            (Vec::new(), None)
+                        },
+                        Vec::<runner::RunnerComponentChannel>::new(),
+                        std::mem::take(&mut component.outputs),
+                    ));
+                }
+            }
+            for component in &mut self.components {
+                component
+                    .input_count
+                    .retain(|k, _| extracted.binary_search(&k.index()).is_err());
+            }
+            if extracted.is_empty() {
+                break;
+            }
+        }
+
+        if components.len() < self.components.len() {
+            return Err(CompileError::ContainsCycle(
+                self.components
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(n, c)| {
+                        (!c.is_placeholder()).then_some((ComponentId::new(n), c.name))
+                    })
+                    .collect(),
+            ));
+        }
+
+        for i in 0..auxiliary.len() {
+            let (_, branch, out) =
+                unsafe { &mut *std::ptr::from_mut(auxiliary.get_unchecked_mut(i)) };
+            for (chan, deps) in out {
+                let flag = deps[0].0.flag();
+                if flag {
+                    branch.push(ComponentChannel(ComponentId::new(i), chan.clone()));
+                }
+                for dep in deps {
+                    let idx = dep.0.index();
+                    assert_ne!(idx, i, "a self-loop in this graph would cause unsoundness!");
+                    let b2 = &mut auxiliary[idx].1;
+                    if let Some(idx) = branch.iter().zip(&*b2).position(|(a, b)| a != b) {
+                        return Err(CompileError::BranchMismatch {
+                            comp: components[i].name.clone(),
+                            branch_1: branch
+                                .drain(idx..)
+                                .map(|chan| (components[chan.0.index()].name.clone(), chan.1))
+                                .collect(),
+                            branch_2: b2
+                                .drain(idx..)
+                                .map(|chan| (components[chan.0.index()].name.clone(), chan.1))
+                                .collect(),
+                        });
+                    }
+                    if let Some(rem) = branch.get(b2.len()..) {
+                        b2.extend_from_slice(rem);
+                    }
+                }
+                if flag {
+                    branch.pop();
+                }
+            }
+        }
+
+        for (n, (component, ((single, multi), ..))) in unsafe {
+            (*(&mut *components as *mut [runner::ComponentData]))
+                .iter_mut()
+                .zip(&auxiliary)
+                .enumerate()
+        } {
+            let runner::InputMode::Multiple {
+                lookup, tree_shape, ..
+            } = &mut component.input_mode
+            else {
+                continue;
+            };
+            if single.iter().all(|x| x.1.is_placeholder()) {
+                tree_shape.push(single.len() as u32);
+                lookup.extend(
+                    single
+                        .iter()
+                        .enumerate()
+                        .map(|(n, i)| (i.0.clone(), runner::InputIndex(0, n as _))),
+                );
+                continue;
+            }
+            for (name, comp) in single {
+                if comp.0.is_placeholder() {
+                    return Err(CompileError::MissingInput {
+                        comp: component.name.clone(),
+                        chan: name.clone(),
+                    });
+                }
+                let idx = comp.0.index();
+                let depth = auxiliary[idx].1.len();
+                if tree_shape.len() <= depth {
+                    tree_shape.resize(depth + 1, 0);
+                }
+                let i = &mut tree_shape[depth];
+                *i += 1;
+                let iidx = runner::InputIndex(depth as _, *i - 1);
+                lookup.insert(name.clone(), iidx);
+                components[idx]
+                    .dependents
+                    .entry(comp.1.clone())
+                    .or_default()
+                    .push((ComponentId::new(n), iidx));
+            }
+            if let Some((name, from)) = multi {
+                let depth = from
+                    .iter()
+                    .map(|ch| auxiliary[ch.0.index()].1.len())
+                    .fold(0, usize::max);
+                if tree_shape.len() <= depth {
+                    tree_shape.resize(depth, 0);
+                }
+                let i = &mut tree_shape[depth];
+                *i += 1;
+                let iidx = runner::InputIndex(depth as _, *i - 1);
+                lookup.insert(name.clone(), iidx);
+                for ch in from {
+                    components[ch.0.index()]
+                        .dependents
+                        .entry(ch.1.clone())
+                        .or_default()
+                        .push((ComponentId::new(n), iidx));
+                }
+            }
+        }
+
+        // to remap the lookup, we can just reinterpret the map and then lookup the new values
+        let mut lookup = unsafe {
+            std::mem::transmute::<
+                HashMap<SmolStr, ComponentId<PipelineGraph>>,
+                HashMap<SmolStr, ComponentId<PipelineRunner>>,
+            >(self.lookup)
+        };
+        for v in lookup.values_mut() {
+            *v = mapping[v.index()];
+        }
+        Ok((
+            IdResolver(mapping),
+            PipelineRunner {
+                components,
+                lookup,
+                running: AtomicUsize::new(0),
+                run_id: AtomicU32::new(0),
+            },
+        ))
     }
 }

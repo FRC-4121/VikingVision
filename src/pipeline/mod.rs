@@ -226,8 +226,9 @@ impl<Marker> Default for ComponentId<Marker> {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
-struct ComponentChannel<Marker>(pub ComponentId<Marker>, pub Option<SmolStr>);
+#[derive(Debug, Default)]
+pub struct ComponentChannel<Marker>(pub ComponentId<Marker>, pub Option<SmolStr>);
+
 impl<Marker> ComponentChannel<Marker> {
     const PLACEHOLDER: Self = Self(ComponentId::PLACEHOLDER, None);
     #[inline(always)]
@@ -248,6 +249,39 @@ impl<Marker> ComponentChannel<Marker> {
         let Self(id, chan) = self;
         let (flag, id) = id.decompose();
         (flag, Self(id, chan))
+    }
+}
+
+impl<Marker> Clone for ComponentChannel<Marker> {
+    fn clone(&self) -> Self {
+        Self(self.0, self.1.clone())
+    }
+}
+impl<Marker> PartialEq for ComponentChannel<Marker> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && self.1 == other.1
+    }
+}
+impl<Marker> Eq for ComponentChannel<Marker> {}
+impl<Marker> PartialOrd for ComponentChannel<Marker> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<Marker> Ord for ComponentChannel<Marker> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0).then_with(|| self.1.cmp(&other.1))
+    }
+}
+
+impl<Marker> Display for ComponentChannel<Marker> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)?;
+        if let Some(chan) = &self.1 {
+            write!(f, "/{chan}")
+        } else {
+            Ok(())
+        }
     }
 }
 

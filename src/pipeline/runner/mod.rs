@@ -40,7 +40,8 @@ mod run;
 
 /// Alias for component IDs used in a [`PipelineRunner`].
 pub type RunnerComponentId = ComponentId<PipelineRunner>;
-type RunnerComponentChannel = ComponentChannel<PipelineRunner>;
+/// Alias for component channels used in a [`PipelineRunner`].
+pub type RunnerComponentChannel = ComponentChannel<PipelineRunner>;
 
 #[cfg(test)]
 mod tests;
@@ -148,11 +149,10 @@ mod trait_impls {
 /// ```
 #[derive(Debug, Default)]
 pub struct PipelineRunner {
-    components: Vec<ComponentData>,
-    lookup: HashMap<SmolStr, RunnerComponentId>,
-    running: AtomicUsize,
-    run_id: AtomicU32,
-    first_open: usize,
+    pub(crate) components: Vec<ComponentData>,
+    pub(crate) lookup: HashMap<SmolStr, RunnerComponentId>,
+    pub(crate) running: AtomicUsize,
+    pub(crate) run_id: AtomicU32,
 }
 
 impl PipelineRunner {
@@ -164,7 +164,6 @@ impl PipelineRunner {
             lookup: HashMap::new(),
             running: AtomicUsize::new(0),
             run_id: AtomicU32::new(0),
-            first_open: 0,
         }
     }
 

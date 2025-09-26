@@ -103,7 +103,7 @@ fn main() -> anyhow::Result<()> {
     graph.add_dependency((broadcast, "elem"), (check_contains, "elem"))?;
     graph.add_dependency(check_contains, print_c)?;
     tracing::debug!("graph: {graph:#?}");
-    let (resolver, runner) = graph.compile(true)?;
+    let (resolver, runner) = graph.compile()?;
     tracing::debug!("remapping: {resolver:#?}");
     tracing::debug!("runner, before: {runner:#?}");
     let broadcast = resolver
@@ -121,6 +121,6 @@ fn main() -> anyhow::Result<()> {
             .run((print2, [("a", 1i32), ("b", 2i32)]), scope)
             .unwrap();
     });
-    tracing::debug!("runner, after: {graph:#?}");
+    tracing::debug!("runner, after: {runner:#?}");
     Ok(())
 }

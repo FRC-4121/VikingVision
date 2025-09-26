@@ -72,7 +72,7 @@ fn simple() {
         .unwrap();
     graph.add_dependency((prod, "s1"), (cons, "in")).unwrap();
     println!("{graph:#?}");
-    let (_remap, runner) = graph.compile(true).unwrap();
+    let (_remap, runner) = graph.compile().unwrap();
     println!("{runner:#?}");
     let resp = rayon::scope(|scope| {
         runner
@@ -106,7 +106,7 @@ fn duplicating() {
         .unwrap();
     graph.add_dependency((prod, "d1"), (cons, "in")).unwrap();
     println!("{graph:#?}");
-    let (remap, runner) = graph.compile(false).unwrap();
+    let (remap, runner) = graph.compile().unwrap();
     let p2 = remap[prod];
     let resp = rayon::scope(|scope| {
         runner

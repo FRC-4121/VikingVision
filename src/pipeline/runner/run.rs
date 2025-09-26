@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use supply::prelude::*;
 
 #[derive(Debug)]
-pub(super) struct InputTree {
+pub(crate) struct InputTree {
     pub vals: SmallVec<[Arc<dyn Data>; 2]>,
     pub next: Vec<Option<InputTree>>,
     pub remaining: u32,
@@ -65,7 +65,7 @@ impl InputIndex {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct MutableData {
     pub inputs: Vec<Option<InputTree>>,
     /// First open index
@@ -73,7 +73,7 @@ pub(crate) struct MutableData {
 }
 
 #[derive(Debug)]
-pub(super) enum InputMode {
+pub(crate) enum InputMode {
     Single {
         name: Option<SmolStr>,
     },
@@ -121,7 +121,7 @@ pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
     pub(crate) dependents: HashMap<Option<SmolStr>, Vec<(RunnerComponentId, InputIndex)>>,
-    pub(super) input_mode: InputMode,
+    pub(crate) input_mode: InputMode,
 }
 impl Debug for ComponentData {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -768,6 +768,11 @@ impl<'r> ComponentContextInner<'r> {
                 } => {
                     let mut lock = mutable.lock().unwrap();
                     // this has to be written as a tail-recursive function because Rust's control-flow can't track the looping
+                    #[allow(
+                        clippy::too_many_arguments,
+                        clippy::only_used_in_recursion,
+                        clippy::needless_return
+                    )]
                     fn descend(
                         mut slice: &[u32],
                         mut shape: &[u32],
@@ -836,8 +841,8 @@ impl<'r> ComponentContextInner<'r> {
                         return descend(slice, shape, sum, index, new_inputs, data, path, run_id);
                     }
                     descend(
-                        &*run_id.0,
-                        &**tree_shape,
+                        &run_id.0,
+                        tree_shape,
                         0,
                         index.1 as _,
                         &mut lock.inputs,
