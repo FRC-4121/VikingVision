@@ -709,11 +709,19 @@ impl PipelineGraph {
     /// - The graph must be acyclic.
     /// - Any component must have a single chain of "branch points" such that there's no ambiguity in which inputs should be broadcast.
     pub fn compile(mut self) -> Result<(IdResolver, PipelineRunner), CompileError> {
+        let _guard = tracing::info_span!("compile").entered();
+
+        tracing::info!(
+            "compiling a pipeline graph with {} nodes",
+            self.components.len()
+        );
         let mut mapping = vec![ComponentId::<PipelineRunner>::PLACEHOLDER; self.components.len()];
         let mut components = Vec::with_capacity(self.components.len());
         let mut auxiliary = Vec::with_capacity(self.components.len());
         let mut extracted = Vec::new();
+        let mut iters = 0;
         loop {
+            iters += 1;
             extracted.clear();
             for (i, component) in self.components.iter_mut().enumerate() {
                 if component.is_placeholder() {
@@ -768,10 +776,16 @@ impl PipelineGraph {
                         },
                     });
                     auxiliary.push((
-                        if let InputKind::Multiple { single, multi } = input {
-                            (single, multi.map(|m| (m.chan, m.inputs)))
-                        } else {
-                            (Vec::new(), None)
+                        match input {
+                            InputKind::Multiple { single, multi } => {
+                                (single, multi.map(|m| (m.chan, m.inputs)))
+                            }
+                            InputKind::Single(v) => (
+                                v.into_iter()
+                                    .map(|c| (SmolStr::new_static(""), c))
+                                    .collect(),
+                                None,
+                            ),
                         },
                         Vec::<runner::RunnerComponentChannel>::new(),
                         std::mem::take(&mut component.outputs),
@@ -787,6 +801,8 @@ impl PipelineGraph {
                 break;
             }
         }
+
+        tracing::debug!(iters, "finished topological sort");
 
         if components.len() < self.components.len() {
             return Err(CompileError::ContainsCycle(
@@ -809,18 +825,18 @@ impl PipelineGraph {
                     branch.push(ComponentChannel(ComponentId::new(i), chan.clone()));
                 }
                 for dep in deps {
-                    let idx = dep.0.index();
+                    let idx = mapping[dep.0.index()].index();
                     assert_ne!(idx, i, "a self-loop in this graph would cause unsoundness!");
                     let b2 = &mut auxiliary[idx].1;
-                    if let Some(idx) = branch.iter().zip(&*b2).position(|(a, b)| a != b) {
+                    if let Some(first) = branch.iter().zip(&*b2).position(|(a, b)| a != b) {
                         return Err(CompileError::BranchMismatch {
                             comp: components[i].name.clone(),
                             branch_1: branch
-                                .drain(idx..)
+                                .drain(first..)
                                 .map(|chan| (components[chan.0.index()].name.clone(), chan.1))
                                 .collect(),
                             branch_2: b2
-                                .drain(idx..)
+                                .drain(first..)
                                 .map(|chan| (components[chan.0.index()].name.clone(), chan.1))
                                 .collect(),
                         });
@@ -841,20 +857,19 @@ impl PipelineGraph {
                 .zip(&auxiliary)
                 .enumerate()
         } {
-            let runner::InputMode::Multiple {
-                lookup, tree_shape, ..
-            } = &mut component.input_mode
-            else {
-                continue;
-            };
             if single.iter().all(|x| x.1.is_placeholder()) {
-                tree_shape.push(single.len() as u32);
-                lookup.extend(
-                    single
-                        .iter()
-                        .enumerate()
-                        .map(|(n, i)| (i.0.clone(), runner::InputIndex(0, n as _))),
-                );
+                if let runner::InputMode::Multiple {
+                    lookup, tree_shape, ..
+                } = &mut component.input_mode
+                {
+                    tree_shape.push(single.len() as u32);
+                    lookup.extend(
+                        single
+                            .iter()
+                            .enumerate()
+                            .map(|(n, i)| (i.0.clone(), runner::InputIndex(0, n as _))),
+                    );
+                }
                 continue;
             }
             for (name, comp) in single {
@@ -864,15 +879,24 @@ impl PipelineGraph {
                         chan: name.clone(),
                     });
                 }
-                let idx = comp.0.index();
+                let idx = mapping[comp.0.index()].index();
                 let depth = auxiliary[idx].1.len();
-                if tree_shape.len() <= depth {
-                    tree_shape.resize(depth + 1, 0);
-                }
-                let i = &mut tree_shape[depth];
-                *i += 1;
-                let iidx = runner::InputIndex(depth as _, *i - 1);
-                lookup.insert(name.clone(), iidx);
+
+                let iidx = if let runner::InputMode::Multiple {
+                    lookup, tree_shape, ..
+                } = &mut component.input_mode
+                {
+                    if tree_shape.len() <= depth {
+                        tree_shape.resize(depth + 1, 0);
+                    }
+                    let i = &mut tree_shape[depth];
+                    *i += 1;
+                    let iidx = runner::InputIndex(depth as _, *i - 1);
+                    lookup.insert(name.clone(), iidx);
+                    iidx
+                } else {
+                    runner::InputIndex(0, 0)
+                };
                 components[idx]
                     .dependents
                     .entry(comp.1.clone())
@@ -882,17 +906,25 @@ impl PipelineGraph {
             if let Some((name, from)) = multi {
                 let depth = from
                     .iter()
-                    .map(|ch| auxiliary[ch.0.index()].1.len())
+                    .map(|ch| auxiliary[mapping[ch.0.index()].index()].1.len())
                     .fold(0, usize::max);
-                if tree_shape.len() <= depth {
-                    tree_shape.resize(depth, 0);
-                }
-                let i = &mut tree_shape[depth];
-                *i += 1;
-                let iidx = runner::InputIndex(depth as _, *i - 1);
-                lookup.insert(name.clone(), iidx);
+                let iidx = if let runner::InputMode::Multiple {
+                    lookup, tree_shape, ..
+                } = &mut component.input_mode
+                {
+                    if tree_shape.len() <= depth {
+                        tree_shape.resize(depth + 1, 0);
+                    }
+                    let i = &mut tree_shape[depth];
+                    *i += 1;
+                    let iidx = runner::InputIndex(depth as _, *i - 1);
+                    lookup.insert(name.clone(), iidx);
+                    iidx
+                } else {
+                    runner::InputIndex(0, 0)
+                };
                 for ch in from {
-                    components[ch.0.index()]
+                    components[mapping[ch.0.index()].index()]
                         .dependents
                         .entry(ch.1.clone())
                         .or_default()
@@ -900,6 +932,8 @@ impl PipelineGraph {
                 }
             }
         }
+
+        tracing::trace!("auxiliary data: {auxiliary:#?}");
 
         // to remap the lookup, we can just reinterpret the map and then lookup the new values
         let mut lookup = unsafe {
