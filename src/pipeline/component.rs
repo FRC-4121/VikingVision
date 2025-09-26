@@ -286,13 +286,6 @@ pub trait Component: Send + Sync + 'static {
     fn can_take(&self, input: &str) -> bool {
         false
     }
-    /// Consumer components can be reused in multiple places in a pipeline.
-    ///
-    /// A valid consumer component can only have a primary input and no outputs. Components with different inputs
-    /// will not have this checked, and if this returns true, no outputs will be checked.
-    fn is_consumer(&self) -> bool {
-        false
-    }
     /// Check if an output channel is available.
     fn output_kind(&self, name: Option<&str>) -> OutputKind;
     /// Run a component on a given input.

@@ -2,7 +2,6 @@ use super::{prelude::*, *};
 use litemap::LiteMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
-use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU32, AtomicUsize};
@@ -246,36 +245,19 @@ static DEFAULT_COMPONENT: LazyLock<Arc<dyn Component>> = LazyLock::new(|| {
 const DEFAULT_NAME: SmolStr = smol_str::SmolStr::new_static("<placeholder>");
 
 #[derive(Debug, Clone)]
-enum MultiKind {
-    Cant,
-    None,
-    Some {
-        chan: SmolStr,
-        optional: bool,
-        inputs: Vec<GraphComponentChannel>,
-    },
+struct MultiData {
+    chan: SmolStr,
+    optional: bool,
+    inputs: Vec<GraphComponentChannel>,
 }
 
 #[derive(Debug, Clone)]
 enum InputKind {
-    Single(GraphComponentChannel),
-    SingleMulti(SmallVec<[GraphComponentChannel; 1]>),
+    Single(SmallVec<[GraphComponentChannel; 1]>),
     Multiple {
         single: Vec<(SmolStr, GraphComponentChannel)>,
-        multi: MultiKind,
+        multi: Option<MultiData>,
     },
-}
-impl InputKind {
-    fn can_output(&self) -> bool {
-        matches!(
-            self,
-            Self::Single(_)
-                | Self::Multiple {
-                    multi: MultiKind::Cant,
-                    ..
-                }
-        )
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -440,23 +422,13 @@ impl PipelineGraph {
         in_lookup: bool,
     ) -> GraphComponentId {
         let inputs = match component.inputs() {
-            Inputs::Primary => {
-                if component.is_consumer() {
-                    InputKind::SingleMulti(SmallVec::new())
-                } else {
-                    InputKind::Single(GraphComponentChannel::PLACEHOLDER)
-                }
-            }
+            Inputs::Primary => InputKind::Single(SmallVec::new()),
             Inputs::Named(i) => InputKind::Multiple {
                 single: i
                     .into_iter()
                     .map(|v| (v, GraphComponentChannel::PLACEHOLDER))
                     .collect(),
-                multi: if component.is_consumer() {
-                    MultiKind::None
-                } else {
-                    MultiKind::Cant
-                },
+                multi: None,
             },
         };
         let new_data = ComponentData {
@@ -503,13 +475,6 @@ impl PipelineGraph {
                 .components
                 .get_disjoint_mut([s_id.index(), d_id.index()])
                 .map_err(|_| GenericAddDependecyError::SelfLoop)?;
-            if !src.inputs.can_output() {
-                return Err(GenericAddDependecyError::NoOutputChannel {
-                    src_id: s_id,
-                    src_name: src.name.clone(),
-                    src_chan: s_chan,
-                });
-            }
             let is_multi = match src.component.output_kind(s_chan.as_deref()) {
                 OutputKind::None => {
                     return Err(GenericAddDependecyError::NoOutputChannel {
@@ -532,25 +497,6 @@ impl PipelineGraph {
                             dst_chan: d_chan,
                         });
                     }
-                    if v.is_valid() {
-                        return Err(GenericAddDependecyError::OverloadedInputs {
-                            dst_id: d_id,
-                            dst_name: dst.name.clone(),
-                            dst_chan: d_chan,
-                            already_connected: None,
-                        });
-                    } else {
-                        *v = ComponentChannel(s_id, s_chan);
-                    }
-                }
-                InputKind::SingleMulti(v) => {
-                    if d_chan.is_some() {
-                        return Err(GenericAddDependecyError::DoesntTakeInput {
-                            dst_id: d_id,
-                            dst_name: dst.name.clone(),
-                            dst_chan: d_chan,
-                        });
-                    }
                     v.push(ComponentChannel(s_id, s_chan))
                 }
                 InputKind::Multiple { single, multi } => {
@@ -562,65 +508,41 @@ impl PipelineGraph {
                         });
                     };
                     'search: {
-                        match multi {
-                            MultiKind::Cant => {
-                                for (ch, s) in &mut *single {
-                                    if *ch == dc {
-                                        if s.is_placeholder() {
-                                            *s = ComponentChannel(s_id, s_chan);
-                                            break 'search;
-                                        } else {
-                                            return Err(
-                                                GenericAddDependecyError::OverloadedInputs {
-                                                    dst_id: d_id,
-                                                    dst_name: dst.name.clone(),
-                                                    dst_chan: Some(dc),
-                                                    already_connected: None,
-                                                },
-                                            );
-                                        }
+                        if let Some(MultiData { chan, inputs, .. }) = multi {
+                            if *chan == dc {
+                                inputs.push(ComponentChannel(s_id, s_chan));
+                                break 'search;
+                            }
+                            for (ch, s) in &mut *single {
+                                if *ch == dc {
+                                    if s.is_placeholder() {
+                                        *s = ComponentChannel(s_id, s_chan);
+                                        break 'search;
+                                    } else {
+                                        return Err(GenericAddDependecyError::OverloadedInputs {
+                                            dst_id: d_id,
+                                            dst_name: dst.name.clone(),
+                                            dst_chan: Some(dc),
+                                            already_connected: Some(chan.clone()),
+                                        });
                                     }
                                 }
                             }
-                            MultiKind::None => {
-                                for (n, (ch, s)) in single.iter_mut().enumerate() {
-                                    if *ch == dc {
-                                        if s.is_placeholder() {
-                                            *s = ComponentChannel(s_id, s_chan);
-                                            break 'search;
-                                        } else {
-                                            let (chan, s) = single.swap_remove(n);
-                                            let (optional, s) = s.decompose();
-                                            *multi = MultiKind::Some {
-                                                chan,
-                                                optional,
-                                                inputs: vec![s, ComponentChannel(s_id, s_chan)],
-                                            };
-                                            break 'search;
-                                        }
-                                    }
-                                }
-                            }
-                            MultiKind::Some { chan, inputs, .. } => {
-                                if *chan == dc {
-                                    inputs.push(ComponentChannel(s_id, s_chan));
-                                    break 'search;
-                                }
-                                for (ch, s) in &mut *single {
-                                    if *ch == dc {
-                                        if s.is_placeholder() {
-                                            *s = ComponentChannel(s_id, s_chan);
-                                            break 'search;
-                                        } else {
-                                            return Err(
-                                                GenericAddDependecyError::OverloadedInputs {
-                                                    dst_id: d_id,
-                                                    dst_name: dst.name.clone(),
-                                                    dst_chan: Some(dc),
-                                                    already_connected: Some(chan.clone()),
-                                                },
-                                            );
-                                        }
+                        } else {
+                            for (n, (ch, s)) in single.iter_mut().enumerate() {
+                                if *ch == dc {
+                                    if s.is_placeholder() {
+                                        *s = ComponentChannel(s_id, s_chan);
+                                        break 'search;
+                                    } else {
+                                        let (chan, s) = single.swap_remove(n);
+                                        let (optional, s) = s.decompose();
+                                        *multi = Some(MultiData {
+                                            chan,
+                                            optional,
+                                            inputs: vec![s, ComponentChannel(s_id, s_chan)],
+                                        });
+                                        break 'search;
                                     }
                                 }
                             }
@@ -668,14 +590,7 @@ impl PipelineGraph {
     fn detach_impl(&mut self, id: GraphComponentId) {
         let comp = &mut self.components[id.index()];
         let inputs = match &mut comp.inputs {
-            InputKind::Single(i) => {
-                if i.is_valid() {
-                    smallvec::smallvec![std::mem::take(i)]
-                } else {
-                    SmallVec::new()
-                }
-            }
-            InputKind::SingleMulti(v) => std::mem::take(v),
+            InputKind::Single(v) => std::mem::take(v),
             InputKind::Multiple { single, multi } => {
                 let mut buf = SmallVec::<[_; 1]>::new();
                 let mut v = single
@@ -692,11 +607,11 @@ impl PipelineGraph {
                     .map(|x| x.1)
                     .collect::<SmallVec<[_; 1]>>();
                 v.append(&mut buf);
-                if let MultiKind::Some {
+                if let Some(MultiData {
                     chan,
                     optional,
                     inputs,
-                } = std::mem::replace(multi, MultiKind::None)
+                }) = multi.take()
                 {
                     v.extend(inputs);
                     if !optional {
@@ -725,21 +640,16 @@ impl PipelineGraph {
             let mut count = 0;
             match &mut c2.inputs {
                 InputKind::Single(v) => {
-                    *v = ComponentChannel::PLACEHOLDER;
-                    count = 1;
-                }
-                InputKind::SingleMulti(v) => {
                     count = v.drain_filter(|c| c.0 == id).count();
                 }
                 InputKind::Multiple { single, multi } => {
                     let Some(dc) = ch.1 else { continue };
-                    if let MultiKind::Some { chan, inputs, .. } = multi {
+                    if let Some(MultiData { chan, inputs, .. }) = multi {
                         if *chan == dc {
                             count = inputs.extract_if(.., |c| c.0 == id).count();
                             match &mut **inputs {
                                 [] => {
-                                    let MultiKind::Some { chan, optional, .. } =
-                                        std::mem::replace(multi, MultiKind::None)
+                                    let Some(MultiData { chan, optional, .. }) = multi.take()
                                     else {
                                         unreachable!()
                                     };
@@ -749,8 +659,7 @@ impl PipelineGraph {
                                 }
                                 [v] => {
                                     let ch = std::mem::take(v);
-                                    let MultiKind::Some { chan, optional, .. } =
-                                        std::mem::replace(multi, MultiKind::None)
+                                    let Some(MultiData { chan, optional, .. }) = multi.take()
                                     else {
                                         unreachable!()
                                     };
@@ -816,7 +725,7 @@ impl PipelineGraph {
                     mapping[i] = ComponentId::new(rid);
                     let input = std::mem::replace(
                         &mut component.inputs,
-                        InputKind::Single(ComponentChannel::PLACEHOLDER),
+                        InputKind::Single(SmallVec::new()),
                     );
                     components.push(runner::ComponentData {
                         component: std::mem::replace(
@@ -826,12 +735,10 @@ impl PipelineGraph {
                         name: std::mem::replace(&mut component.name, DEFAULT_NAME.clone()),
                         dependents: HashMap::new(),
                         input_mode: match &input {
-                            InputKind::Single(_) | InputKind::SingleMulti(_) => {
-                                runner::InputMode::Single { name: None }
-                            }
+                            InputKind::Single(_) => runner::InputMode::Single { name: None },
                             InputKind::Multiple {
                                 single,
-                                multi: MultiKind::Some { chan, .. },
+                                multi: Some(MultiData { chan, .. }),
                             } => {
                                 if single.is_empty() {
                                     runner::InputMode::Single {
@@ -862,12 +769,7 @@ impl PipelineGraph {
                     });
                     auxiliary.push((
                         if let InputKind::Multiple { single, multi } = input {
-                            let multi = if let MultiKind::Some { chan, inputs, .. } = multi {
-                                Some((chan, inputs))
-                            } else {
-                                None
-                            };
-                            (single, multi)
+                            (single, multi.map(|m| (m.chan, m.inputs)))
                         } else {
                             (Vec::new(), None)
                         },
