@@ -112,6 +112,7 @@ pub trait CallbackInner<'r>: Send + Sync + 'r {
 impl<'r, F: FnOnce(CleanupContext<'r>) + Send + Sync + 'r> CallbackInner<'r> for F {
     fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>) -> bool {
         if let Some(this) = Arc::into_inner(self) {
+            let _guard = tracing::info_span!("callback", run_id = ctx.run_id);
             this(ctx);
             true
         } else {
@@ -502,7 +503,6 @@ pub struct ComponentContextInner<'r> {
     branch_count: Mutex<LiteMap<Option<SmolStr>, u32>>,
     /// Context to be passed in and shared between components.
     pub context: Context<'r>,
-    finished: bool,
 }
 
 impl Debug for ComponentContextInner<'_> {
@@ -511,13 +511,14 @@ impl Debug for ComponentContextInner<'_> {
             .field("runner", &(&self.runner as *const _))
             .field("comp_id", &self.comp_id())
             .field("run_id", &self.run_id)
+            .field("finished", &self.finished())
             .finish_non_exhaustive()
     }
 }
 
 impl Drop for ComponentContextInner<'_> {
     fn drop(&mut self) {
-        if !self.finished {
+        if !self.finished() {
             self.finish(None);
         }
     }
@@ -554,12 +555,12 @@ impl<'r> ComponentContextInner<'r> {
     /// Return if a component finished.
     #[inline(always)]
     pub fn finished(&self) -> bool {
-        self.finished
+        self.callback.is_none()
     }
 
     /// Retrieve the input data from either a named channel or the primary one.
     pub fn get<'b>(&self, channel: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
-        if self.finished {
+        if self.finished() {
             tracing::error!("get() was called after finish() for a component");
             return None;
         }
@@ -659,7 +660,7 @@ impl<'r> ComponentContextInner<'r> {
 
     /// Check if any components are listening on a given channel.
     pub fn listening<'b>(&self, channel: impl Into<Option<&'b str>>) -> bool {
-        if self.finished {
+        if self.finished() {
             return false;
         }
         let channel: Option<&'b str> = channel.into();
@@ -724,7 +725,9 @@ impl<'r> ComponentContextInner<'r> {
         let mut cloned;
         let run_id = match self.component.component.output_kind(channel) {
             OutputKind::None => {
-                tracing::warn!(?channel, "submitted output to channel that wasn't expected");
+                if channel.is_none_or(|v| !v.starts_with('$')) {
+                    tracing::warn!(?channel, "submitted output to channel that wasn't expected");
+                }
                 &self.run_id
             }
             OutputKind::Single => &self.run_id,
@@ -936,7 +939,6 @@ impl<'r> ComponentContextInner<'r> {
                 context,
                 run_id,
                 branch_count: Mutex::new(LiteMap::new()),
-                finished: false,
             }
             .run(scope);
         });
@@ -954,7 +956,7 @@ impl<'r> ComponentContextInner<'r> {
         'r: 's,
     {
         let _guard = tracing::info_span!("finish");
-        if std::mem::replace(&mut self.finished, true) {
+        if self.finished() {
             tracing::warn!("finish() was called twice for a component");
             return;
         }
@@ -1217,7 +1219,6 @@ impl PipelineRunner {
                 context,
                 run_id: RunId(smallvec::smallvec![run_id]),
                 branch_count: Mutex::new(LiteMap::new()),
-                finished: false,
             }
             .run(scope);
         });
