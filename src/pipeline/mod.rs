@@ -230,22 +230,22 @@ impl<Marker> Default for ComponentId<Marker> {
 pub struct ComponentChannel<Marker>(pub ComponentId<Marker>, pub Option<SmolStr>);
 
 impl<Marker> ComponentChannel<Marker> {
-    const PLACEHOLDER: Self = Self(ComponentId::PLACEHOLDER, None);
+    pub const PLACEHOLDER: Self = Self(ComponentId::PLACEHOLDER, None);
     #[inline(always)]
-    fn is_placeholder(&self) -> bool {
+    pub fn is_placeholder(&self) -> bool {
         self.0.is_placeholder()
     }
     #[inline(always)]
-    fn is_valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         self.0.is_valid()
     }
     #[inline(always)]
-    fn with_flag(self, flag: bool) -> Self {
+    pub fn with_flag(self, flag: bool) -> Self {
         let Self(id, chan) = self;
         Self(id.with_flag(flag), chan)
     }
     #[inline(always)]
-    fn decompose(self) -> (bool, Self) {
+    pub fn decompose(self) -> (bool, Self) {
         let Self(id, chan) = self;
         let (flag, id) = id.decompose();
         (flag, Self(id, chan))

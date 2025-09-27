@@ -14,56 +14,11 @@ pub(crate) struct InputTree {
     pub next: Vec<Option<InputTree>>,
     pub remaining: u32,
     pub iter: u32,
-}
-impl InputTree {
-    pub fn index(
-        &self,
-        mut idx: InputIndex,
-        mut branch: &[u32],
-        mut shape: &[u32],
-    ) -> &Arc<dyn Data> {
-        let mut last = 0;
-        let mut this = self;
-        loop {
-            let b = branch.split_off_first().unwrap_or(&0);
-            let s = shape.split_off_first().unwrap();
-            if idx.0 == 0 {
-                return &this.vals[((s - last) * b + idx.1) as usize];
-            }
-            idx.0 -= 1;
-            this = this.next[*b as usize].as_ref().unwrap();
-            last = *s;
-        }
-    }
-    pub fn index_mut(
-        &mut self,
-        mut idx: InputIndex,
-        mut branch: &[u32],
-        mut shape: &[u32],
-    ) -> &mut Arc<dyn Data> {
-        let mut last = 0;
-        let mut this = self;
-        loop {
-            let b = branch.split_off_first().unwrap_or(&0);
-            let s = shape.split_off_first().unwrap();
-            if idx.0 == 0 {
-                return &mut this.vals[((s - last) * b + idx.1) as usize];
-            }
-            idx.0 -= 1;
-            this = this.next[*b as usize].as_mut().unwrap();
-            last = *s;
-        }
-    }
+    pub prev_done: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct InputIndex(pub u32, pub u32);
-impl InputIndex {
-    pub const PLACEHOLDER: Self = Self(u32::MAX, u32::MAX);
-    pub const fn is_placeholder(&self) -> bool {
-        self.0 == u32::MAX && self.1 == u32::MAX
-    }
-}
 
 #[derive(Debug, Default)]
 pub(crate) struct MutableData {
@@ -599,23 +554,28 @@ impl<'r> ComponentContextInner<'r> {
             }
             InputKind::Multiple(branch) => req_channel.and_then(|name| {
                 let InputMode::Multiple {
-                    lookup,
-                    tree_shape,
-                    mutable,
+                    lookup, mutable, ..
                 } = &self.component.input_mode
                 else {
                     unreachable!()
                 };
-                let idx = lookup.get(name)?;
-                let (head, tail) = branch.split_first().unwrap_or((&0, &[]));
+                let mut idx = *lookup.get(name)?;
+                let (head, mut branch) = branch.split_first().unwrap_or((&0, &[]));
                 let lock = mutable.lock().unwrap();
-                Some(
-                    lock.inputs[*head as usize]
-                        .as_ref()
-                        .unwrap()
-                        .index(*idx, tail, tree_shape)
-                        .clone(),
-                )
+                let mut this = lock.inputs[*head as usize].as_ref().unwrap();
+                loop {
+                    if idx.0 == 0 {
+                        return Some(this.vals[(idx.1) as usize].clone());
+                    }
+                    let b = branch.split_off_first().unwrap_or(&0);
+                    // let s = shape.split_off_first().unwrap_or_else(|| {
+                    //     tracing::error!(?idx, "empty shape");
+                    //     panic!()
+                    // });
+                    idx.0 -= 1;
+                    this = this.next.get(*b as usize).and_then(Option::as_ref).unwrap();
+                    // last = *s;
+                }
             }),
         }
     }
@@ -728,6 +688,7 @@ impl<'r> ComponentContextInner<'r> {
     where
         'r: 's,
     {
+        let _guard = tracing::info_span!("submit", ?channel).entered();
         let dependents = self
             .component
             .dependents
@@ -768,12 +729,8 @@ impl<'r> ComponentContextInner<'r> {
                 } => {
                     let mut lock = mutable.lock().unwrap();
                     // this has to be written as a tail-recursive function because Rust's control-flow can't track the looping
-                    #[allow(
-                        clippy::too_many_arguments,
-                        clippy::only_used_in_recursion,
-                        clippy::needless_return
-                    )]
-                    fn descend(
+                    #[allow(clippy::too_many_arguments)]
+                    fn insert_arg<'s, 'r: 's>(
                         mut slice: &[u32],
                         mut shape: &[u32],
                         last_idx: u32,
@@ -781,7 +738,11 @@ impl<'r> ComponentContextInner<'r> {
                         inputs: &mut Vec<Option<InputTree>>,
                         data: Arc<dyn Data>,
                         mut path: SmallVec<[u32; 2]>,
-                        run_id: RunId,
+                        prev_done: bool,
+                        this: &ComponentContextInner<'r>,
+                        scope: &rayon::Scope<'s>,
+                        component: &'r ComponentData,
+                        mut run_id: RunId,
                     ) {
                         let (Some(&idx), Some(&sum)) =
                             (slice.split_off_first(), shape.split_off_first())
@@ -797,12 +758,24 @@ impl<'r> ComponentContextInner<'r> {
                                 continue;
                             };
                             if tree.iter == idx {
+                                let done = prev_done && tree.remaining == 0;
                                 if is_last {
                                     tree.vals[index] = data;
-                                    return;
+                                    tree.remaining -= 1;
+                                    if done {
+                                        maybe_run(
+                                            shape.len(),
+                                            &mut tree.next,
+                                            &mut path,
+                                            this,
+                                            scope,
+                                            component,
+                                            &mut run_id,
+                                        );
+                                    }
                                 } else {
                                     path.push(n as u32);
-                                    return descend(
+                                    insert_arg(
                                         slice,
                                         shape,
                                         sum,
@@ -810,9 +783,14 @@ impl<'r> ComponentContextInner<'r> {
                                         &mut tree.next,
                                         data,
                                         path,
+                                        done,
+                                        this,
+                                        scope,
+                                        component,
                                         run_id,
                                     );
                                 }
+                                return;
                             }
                         }
                         let mut vals = smallvec::smallvec![PLACEHOLDER_DATA.clone(); size as usize];
@@ -827,6 +805,7 @@ impl<'r> ComponentContextInner<'r> {
                             next: Vec::new(),
                             iter: idx,
                             remaining,
+                            prev_done,
                         };
                         let (inserted, new_inputs) = if let Some(n) = open {
                             let r = &mut inputs[n];
@@ -838,9 +817,59 @@ impl<'r> ComponentContextInner<'r> {
                             (n, &mut inputs[n].as_mut().unwrap().next)
                         };
                         path.push(inserted as u32);
-                        return descend(slice, shape, sum, index, new_inputs, data, path, run_id);
+                        let done = prev_done && remaining == 0;
+                        if is_last {
+                            if done {
+                                maybe_run(
+                                    shape.len(),
+                                    new_inputs,
+                                    &mut path,
+                                    this,
+                                    scope,
+                                    component,
+                                    &mut run_id,
+                                );
+                            }
+                        } else {
+                            insert_arg(
+                                slice, shape, sum, index, new_inputs, data, path, done, this,
+                                scope, component, run_id,
+                            );
+                        }
                     }
-                    descend(
+                    #[allow(clippy::ptr_arg)]
+                    fn maybe_run<'s, 'r: 's>(
+                        remaining: usize,
+                        inputs: &mut Vec<Option<InputTree>>,
+                        path: &mut SmallVec<[u32; 2]>,
+                        this: &ComponentContextInner<'r>,
+                        scope: &rayon::Scope<'s>,
+                        component: &'r ComponentData,
+                        run_id: &mut RunId,
+                    ) {
+                        let Some(next) = remaining.checked_sub(1) else {
+                            this.spawn_next(
+                                component,
+                                InputKind::Multiple(path.clone()),
+                                run_id.clone(),
+                                scope,
+                            );
+                            return;
+                        };
+                        for (n, opt) in inputs.iter_mut().enumerate() {
+                            let Some(tree) = opt else { continue };
+                            if tree.remaining > 0 {
+                                continue;
+                            }
+                            tree.prev_done = true;
+                            path.push(n as _);
+                            run_id.0.push(tree.iter);
+                            maybe_run(next, &mut tree.next, path, this, scope, component, run_id);
+                            path.pop();
+                            run_id.0.pop();
+                        }
+                    }
+                    insert_arg(
                         &run_id.0,
                         tree_shape,
                         0,
@@ -848,6 +877,10 @@ impl<'r> ComponentContextInner<'r> {
                         &mut lock.inputs,
                         data.clone(),
                         SmallVec::new(),
+                        true,
+                        self,
+                        scope,
+                        next_comp,
                         run_id.clone(),
                     );
                 }
@@ -1133,6 +1166,7 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
         next: Vec::new(),
         remaining: 0,
         iter: 0,
+        prev_done: true,
     };
     let mut tree = &mut root;
     let mut last = 0;
@@ -1147,6 +1181,7 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
                 next: Vec::new(),
                 remaining: 0,
                 iter: 0,
+                prev_done: true,
             })];
             tree = tree.next[0].as_mut().unwrap();
         }

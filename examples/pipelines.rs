@@ -102,6 +102,15 @@ impl<'a> MakeWriter<'a> for Writer {
     }
 }
 
+struct DropGuard<'a>(&'a PipelineRunner);
+impl Drop for DropGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            tracing::debug!("panicking: {:#?}", self.0);
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let file = std::env::args_os()
         .nth(1)
@@ -133,6 +142,8 @@ fn main() -> anyhow::Result<()> {
     let print2 = resolver
         .get(print2)
         .ok_or_else(|| anyhow::anyhow!("couldn't find the remapped print2 component"))?;
+
+    let _guard = DropGuard(&runner);
 
     // We need a scope to spawn our tasks in to make sure they don't escape past the lifetime of the runner.
     rayon::scope(|scope| {
