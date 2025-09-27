@@ -35,6 +35,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
+mod context;
 mod input;
 mod run;
 
@@ -46,6 +47,7 @@ pub type RunnerComponentChannel = ComponentChannel<PipelineRunner>;
 #[cfg(test)]
 mod tests;
 
+pub use context::*;
 pub use input::*;
 pub use run::*;
 
