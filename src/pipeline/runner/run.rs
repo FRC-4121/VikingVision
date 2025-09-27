@@ -75,7 +75,9 @@ impl RunId {
 pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
-    pub(crate) dependents: HashMap<Option<SmolStr>, Vec<(RunnerComponentId, InputIndex)>>,
+    #[allow(clippy::type_complexity)]
+    pub(crate) dependents:
+        HashMap<Option<SmolStr>, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
     pub(crate) input_mode: InputMode,
 }
 impl Debug for ComponentData {
@@ -697,31 +699,31 @@ impl<'r> ComponentContextInner<'r> {
         if dependents.is_empty() {
             return;
         }
-        let branch = match self.component.component.output_kind(channel) {
+        let mut cloned;
+        let run_id = match self.component.component.output_kind(channel) {
             OutputKind::None => {
                 tracing::warn!(?channel, "submitted output to channel that wasn't expected");
-                None
+                &self.run_id
             }
-            OutputKind::Single => None,
+            OutputKind::Single => &self.run_id,
             OutputKind::Multiple => {
                 let mut guard = self.branch_count.lock().unwrap();
                 let b = guard.entry(channel.map(From::from)).or_insert(0);
                 let old = *b;
                 *b += 1;
-                Some(old)
+                cloned = self.run_id.clone();
+                cloned.0.push(old);
+                &cloned
             }
         };
-        let mut run_id = self.run_id.clone();
-        run_id.0.extend(branch);
-        for &(comp_id, index) in dependents {
+        for &(comp_id, index, ext) in dependents {
+            let mut next_id = run_id.clone();
+            next_id.0.extend(ext);
             let next_comp = &self.runner.components[comp_id.index()];
             match &next_comp.input_mode {
-                InputMode::Single { .. } => self.spawn_next(
-                    next_comp,
-                    InputKind::Single(data.clone()),
-                    run_id.clone(),
-                    scope,
-                ),
+                InputMode::Single { .. } => {
+                    self.spawn_next(next_comp, InputKind::Single(data.clone()), next_id, scope)
+                }
                 InputMode::Multiple {
                     tree_shape,
                     mutable,
@@ -881,7 +883,7 @@ impl<'r> ComponentContextInner<'r> {
                         self,
                         scope,
                         next_comp,
-                        run_id.clone(),
+                        next_id.clone(),
                     );
                 }
             }

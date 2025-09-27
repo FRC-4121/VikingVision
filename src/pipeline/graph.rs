@@ -778,9 +778,10 @@ impl PipelineGraph {
                     auxiliary.push((
                         match input {
                             InputKind::Multiple { single, multi } => {
-                                (single, multi.map(|m| (m.chan, m.inputs)))
+                                (false, single, multi.map(|m| (m.chan, m.inputs)))
                             }
                             InputKind::Single(v) => (
+                                v.len() > 1,
                                 v.into_iter()
                                     .map(|c| (SmolStr::new_static(""), c))
                                     .collect(),
@@ -851,7 +852,7 @@ impl PipelineGraph {
             }
         }
 
-        for (n, (component, ((single, multi), ..))) in unsafe {
+        for (n, (component, ((branch_single, single, multi), ..))) in unsafe {
             (*(&mut *components as *mut [runner::ComponentData]))
                 .iter_mut()
                 .zip(&auxiliary)
@@ -872,7 +873,7 @@ impl PipelineGraph {
                 }
                 continue;
             }
-            for (name, comp) in single {
+            for (s, (name, comp)) in single.iter().enumerate() {
                 if comp.0.is_placeholder() {
                     return Err(CompileError::MissingInput {
                         comp: component.name.clone(),
@@ -907,7 +908,7 @@ impl PipelineGraph {
                     .dependents
                     .entry(comp.1.clone())
                     .or_default()
-                    .push((ComponentId::new(n), iidx));
+                    .push((ComponentId::new(n), iidx, branch_single.then_some(s as _)));
             }
             if let Some((name, from)) = multi {
                 let depth = from
@@ -937,12 +938,12 @@ impl PipelineGraph {
                 } else {
                     runner::InputIndex(0, 0)
                 };
-                for ch in from {
+                for (n, ch) in from.iter().enumerate() {
                     components[mapping[ch.0.index()].index()]
                         .dependents
                         .entry(ch.1.clone())
                         .or_default()
-                        .push((ComponentId::new(n), iidx));
+                        .push((ComponentId::new(n), iidx, Some(n as _)));
                 }
             }
         }
