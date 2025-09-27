@@ -24,7 +24,7 @@ impl Component for Listener {
     fn output_kind(&self, _: Option<&str>) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let base = context.run_id().base_run();
         let Some(val) = context.get(None) else { return };
         self.data.lock().unwrap().entry(base).or_default().push(val);
@@ -70,11 +70,11 @@ impl<T>
     fn configure(
         &self,
         config: GroupConfig,
-        (runner, self_id): (&mut PipelineGraph, GraphComponentId),
+        (graph, self_id): (&mut PipelineGraph, GraphComponentId),
     ) -> Option<(GroupState, Configurable<GraphComponentId, T, SecondConfig>)> {
         let input_component = match config.input {
             ComponentIdentifier::Name(name) => {
-                if let Some(&id) = runner.lookup().get(&*name) {
+                if let Some(&id) = graph.lookup().get(&*name) {
                     id
                 } else {
                     error!(name = name, "couldn't resolve input name");
@@ -83,7 +83,7 @@ impl<T>
             }
             ComponentIdentifier::Id(id) => id,
         };
-        let Some(component) = runner.component(input_component) else {
+        let Some(component) = graph.component(input_component) else {
             error!(id = %input_component, "input component ID out of range");
             return None;
         };
@@ -92,7 +92,7 @@ impl<T>
         for (name, out) in config.outputs {
             let id = match out.component {
                 ComponentIdentifier::Name(name) => {
-                    if let Some(&id) = runner.lookup().get(&*name) {
+                    if let Some(&id) = graph.lookup().get(&*name) {
                         id
                     } else {
                         error!(name = name, "couldn't resolve output name");
@@ -101,7 +101,7 @@ impl<T>
                 }
                 ComponentIdentifier::Id(id) => id,
             };
-            let Some(component) = runner.component(input_component) else {
+            let Some(component) = graph.component(input_component) else {
                 error!(%id, "output component ID out of range");
                 return None;
             };
@@ -115,7 +115,7 @@ impl<T>
             //     kind = OutputKind::Multiple;
             // }
             let listener = Arc::new(Listener::default());
-            let listen_id = runner.add_hidden_component(
+            let listen_id = graph.add_hidden_component(
                 listener.clone(),
                 if let Some(name) = &name {
                     format!("listener-{self_id}-named-{name}")
@@ -123,7 +123,7 @@ impl<T>
                     format!("listener-{self_id}-primary")
                 },
             );
-            if let Err(err) = runner.add_dependency((id, out.channel.as_deref()), listen_id) {
+            if let Err(err) = graph.add_dependency((id, out.channel.as_deref()), listen_id) {
                 error!(%err, "failed to add primary listener");
                 return None;
             }
@@ -146,6 +146,7 @@ impl Configure<GraphComponentId, Option<RunnerComponentId>, &IdResolver> for Sec
 ///
 /// Whenever this component is run, it runs another pipeline and completes when it's finished.
 pub struct GroupComponent {
+    #[allow(clippy::type_complexity)]
     inner: Configurable<
         GroupConfig,
         Option<(
@@ -176,7 +177,8 @@ impl Component for GroupComponent {
                 .map_or(OutputKind::None, |o| o.1)
         })
     }
-    fn run<'s, 'r: 's>(&self, ComponentContext { inner, scope }: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
+        let (inner, scope, _) = ctx.explode();
         let Some((state, c)) = self.inner.get_state_flat() else {
             return;
         };

@@ -263,7 +263,7 @@ impl Inputs {
 ///         }
 ///     }
 ///
-///     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'r, '_, 's>) {
+///     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
 ///         let Ok(image) = ctx.get_as::<Buffer<'static>>("image").and_log_err() else { return };
 ///         
 ///         // Process image...
@@ -289,7 +289,7 @@ pub trait Component: Send + Sync + 'static {
     /// Check if an output channel is available.
     fn output_kind(&self, name: Option<&str>) -> OutputKind;
     /// Run a component on a given input.
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>);
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>);
     /// Perform startup initialization on this component.
     fn initialize(&self, graph: &mut PipelineGraph, self_id: GraphComponentId) {}
     /// Remap any indices on compilation, if necessary.

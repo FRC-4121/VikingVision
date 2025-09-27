@@ -236,7 +236,7 @@ static DEFAULT_COMPONENT: LazyLock<Arc<dyn Component>> = LazyLock::new(|| {
         fn output_kind(&self, _name: Option<&str>) -> OutputKind {
             OutputKind::None
         }
-        fn run<'s, 'r: 's>(&self, _context: ComponentContext<'r, '_, 's>) {
+        fn run<'s, 'r: 's>(&self, _context: ComponentContext<'_, 's, 'r>) {
             tracing::error!("called a placeholder component");
         }
     }

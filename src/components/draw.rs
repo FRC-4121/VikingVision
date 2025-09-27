@@ -284,7 +284,7 @@ impl<T: Drawable> Component for DrawComponent<T> {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(canvas) = context.get_as::<Mutex<Buffer>>("canvas").and_log_err() else {
             return;
         };

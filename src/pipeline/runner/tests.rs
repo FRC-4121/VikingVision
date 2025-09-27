@@ -30,7 +30,7 @@ impl<T: Clone + Send + Sync + 'static> Component for Cmp<T> {
             _ => OutputKind::None,
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let _ = self.send.send(Some(self.msg.clone()));
         if let Some(msg) = context.get("in") {
             context.submit_if_listening("d1", || msg.clone());

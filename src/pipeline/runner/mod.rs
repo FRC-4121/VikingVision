@@ -125,7 +125,7 @@ mod trait_impls {
 /// #                 OutputKind::None
 /// #             }
 /// #         }
-/// #         fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'r, '_, 's>) {
+/// #         fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
 /// #             if let Some(data) = ctx.get(None) {
 /// #                 ctx.submit(None, data);
 /// #             }

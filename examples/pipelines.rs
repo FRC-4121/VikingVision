@@ -18,7 +18,7 @@ impl Component for Print {
     fn output_kind(&self, _name: Option<&str>) -> OutputKind {
         OutputKind::None // our printing component doesn't return anything on any channels
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(val) = context.get_res(None).and_log_err() else {
             return;
         };
@@ -33,7 +33,7 @@ impl Component for Print2 {
     fn output_kind(&self, _name: Option<&str>) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(a) = context.get_res("a").and_log_err() else {
             return;
         };
@@ -55,7 +55,7 @@ impl Component for BroadcastVec {
             _ => OutputKind::None,                // we won't send any other outputs
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(val) = context.get_as::<Vec<i32>>(None).and_log_err() else {
             return;
         };
@@ -77,7 +77,7 @@ impl Component for CheckContains {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(vec) = context.get_as::<Vec<i32>>("vec").and_log_err() else {
             return;
         };
@@ -154,5 +154,9 @@ fn main() -> anyhow::Result<()> {
             .unwrap();
     });
     tracing::debug!("runner, after: {runner:#?}");
+    let running = runner.running();
+    if running > 0 {
+        tracing::error!(running, "processes are still counted as running!");
+    }
     Ok(())
 }

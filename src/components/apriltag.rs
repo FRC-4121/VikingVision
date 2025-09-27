@@ -24,7 +24,7 @@ impl Component for AprilTagComponent {
             _ => OutputKind::None,
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
@@ -95,7 +95,7 @@ impl Component for DetectPoseComponent {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let params = match *self {
             Self::Fixed(p) => p,
             Self::Infer { tag_size } => {

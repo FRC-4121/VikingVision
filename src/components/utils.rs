@@ -23,7 +23,7 @@ impl Component for DebugComponent {
     fn output_kind(&self, _: Option<&str>) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(val) = context.get_res(None).and_log_err() else {
             return;
         };
@@ -93,7 +93,7 @@ impl Component for CloneComponent {
             .get_state_flat()
             .map_or(OutputKind::None, |c| c.output_kind(name))
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         if let Some(comp) = self.inner.get_state_flat() {
             comp.run(context);
         }
@@ -140,7 +140,7 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(data) = context.get_as::<T>(None).and_log_err() else {
             return;
         };
@@ -293,7 +293,7 @@ impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> 
     fn output_kind(&self, _name: Option<&str>) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Some(val) = context
             .get_res(None)
             .and_log_err()
@@ -359,7 +359,7 @@ impl Component for FpsComponent {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(mut lock) = self.inner.lock() else {
             error!("poisoned FPS counter lock");
             return;

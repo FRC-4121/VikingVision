@@ -4,6 +4,7 @@ use crate::pipeline::component::{IntoData, OutputKind, TypeMismatch};
 use crate::utils::LogErr;
 use litemap::LiteMap;
 use std::convert::Infallible;
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 use supply::prelude::*;
@@ -42,6 +43,8 @@ pub(super) struct PlaceholderData;
 impl Data for PlaceholderData {}
 pub(super) static PLACEHOLDER_DATA: LazyLock<Arc<dyn Data>> =
     LazyLock::new(|| Arc::new(PlaceholderData));
+
+static UNIT_ARC: LazyLock<Arc<dyn Data>> = LazyLock::new(|| Arc::new(()));
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunId(pub SmallVec<[u32; 2]>);
@@ -104,13 +107,22 @@ pub type Callback<'a> = Arc<dyn CallbackInner<'a>>;
 ///
 /// This consumes a reference to an [`Arc`], calling `self` if it's unique.
 pub trait CallbackInner<'r>: Send + Sync + 'r {
-    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>);
+    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>) -> bool;
 }
 impl<'r, F: FnOnce(CleanupContext<'r>) + Send + Sync + 'r> CallbackInner<'r> for F {
-    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>) {
+    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>) -> bool {
         if let Some(this) = Arc::into_inner(self) {
             this(ctx);
+            true
+        } else {
+            false
         }
+    }
+}
+struct NoopCallback;
+impl<'r> CallbackInner<'r> for NoopCallback {
+    fn call_if_unique(self: Arc<Self>, _ctx: CleanupContext<'r>) -> bool {
+        Arc::into_inner(self).is_some()
     }
 }
 
@@ -506,7 +518,7 @@ impl Debug for ComponentContextInner<'_> {
 impl Drop for ComponentContextInner<'_> {
     fn drop(&mut self) {
         if !self.finished {
-            // self.finish();
+            self.finish(None);
         }
     }
 }
@@ -537,6 +549,12 @@ impl<'r> ComponentContextInner<'r> {
     #[inline(always)]
     pub fn name(&self) -> &'r SmolStr {
         &self.component.name
+    }
+
+    /// Return if a component finished.
+    #[inline(always)]
+    pub fn finished(&self) -> bool {
+        self.finished
     }
 
     /// Retrieve the input data from either a named channel or the primary one.
@@ -682,7 +700,11 @@ impl<'r> ComponentContextInner<'r> {
     ) where
         'r: 's,
     {
-        self.submit_impl(channel.into(), data.into_data(), scope);
+        let channel = channel.into();
+        if channel.is_some_and(|v| v.starts_with('$')) {
+            tracing::warn!(?channel, "submitted to a special-use channel");
+        }
+        self.submit_impl(channel, data.into_data(), scope);
     }
 
     /// Internal implementation of `submit` that handles data distribution and scheduling.
@@ -927,21 +949,31 @@ impl<'r> ComponentContextInner<'r> {
     ///
     /// This happens automatically when the context is dropped,
     /// but can be called explicitly for more precise control.
-    pub fn finish(&mut self) {
+    pub fn finish<'s>(&mut self, signal: Option<&rayon::Scope<'s>>)
+    where
+        'r: 's,
+    {
+        let _guard = tracing::info_span!("finish");
         if std::mem::replace(&mut self.finished, true) {
             tracing::warn!("finish() was called twice for a component");
             return;
         }
         self.input = InputKind::Empty;
+        if let Some(scope) = signal {
+            self.submit_impl(Some("$finish"), UNIT_ARC.clone(), scope);
+        }
+        // cleanup goes here
         if let Some(callback) = self.callback.take() {
-            callback.call_if_unique(CleanupContext {
+            tracing::debug!(count = Arc::strong_count(&callback), "running processes");
+            let is_last = callback.call_if_unique(CleanupContext {
                 runner: self.runner,
                 run_id: self.run_id.0[0],
                 context: std::mem::take(&mut self.context),
             });
+            if is_last {
+                self.runner.running.fetch_sub(1, Ordering::AcqRel);
+            }
         }
-        // TODO: literally any level of cleanup
-        self.runner.running.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// Create a tracing span for this component execution.
@@ -955,9 +987,11 @@ impl<'r> ComponentContextInner<'r> {
         'r: 's,
     {
         self.tracing_span().in_scope(|| {
-            self.component
-                .component
-                .run(ComponentContext { inner: self, scope })
+            self.component.component.run(ComponentContext {
+                inner: self,
+                scope,
+                signal: true,
+            })
         });
     }
 }
@@ -970,23 +1004,34 @@ impl<'r> ComponentContextInner<'r> {
 /// is explicitly called. After finishing, the component can no longer submit outputs
 /// or access inputs.
 #[derive(Debug)]
-pub struct ComponentContext<'r, 'a, 's> {
+pub struct ComponentContext<'a, 's, 'r: 's> {
     pub inner: ComponentContextInner<'r>,
     pub scope: &'a rayon::Scope<'s>,
+    pub signal: bool,
 }
-impl<'r> Deref for ComponentContext<'r, '_, '_> {
+impl<'s, 'r: 's> Drop for ComponentContext<'_, 's, 'r> {
+    fn drop(&mut self) {
+        self.finish_signal(self.signal);
+    }
+}
+impl<'r> Deref for ComponentContext<'_, '_, 'r> {
     type Target = ComponentContextInner<'r>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
-impl<'r> DerefMut for ComponentContext<'r, '_, '_> {
+impl DerefMut for ComponentContext<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
+impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
+    /// Get the inner context, scope, and signal flag without calling the [`Drop`] implementation
+    pub fn explode(self) -> (ComponentContextInner<'r>, &'a rayon::Scope<'s>, bool) {
+        let this = ManuallyDrop::new(self);
+        unsafe { (std::ptr::read(&this.inner), this.scope, this.signal) }
+    }
     /// Publish a result on a given channel.
     #[inline(always)]
     pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: impl IntoData) {
@@ -1003,10 +1048,27 @@ impl<'s, 'r: 's> ComponentContext<'r, '_, 's> {
         self.inner.submit_if_listening(channel, create, self.scope);
     }
 
+    /// Finish, sending a signal
+    #[inline(always)]
+    pub fn finish(&mut self) {
+        self.inner.finish(Some(self.scope));
+    }
+
+    #[inline(always)]
+    pub fn finish_signal(&mut self, signal: bool) {
+        self.inner.finish(signal.then_some(self.scope));
+    }
+
     /// Defer an operation to run later on the thread pool.
-    pub fn defer(self, op: impl FnOnce(ComponentContext<'r, '_, 's>) + Send + Sync + 'r) {
-        let ComponentContext { inner, scope } = self;
-        scope.spawn(move |scope| op(ComponentContext { inner, scope }));
+    pub fn defer(self, op: impl FnOnce(ComponentContext<'_, 's, 'r>) + Send + Sync + 'r) {
+        let (inner, scope, signal) = self.explode();
+        scope.spawn(move |scope| {
+            op(ComponentContext {
+                inner,
+                scope,
+                signal,
+            })
+        });
     }
 }
 
@@ -1029,7 +1091,7 @@ impl PipelineRunner {
     /// #         fn output_kind(&self, _: Option<&str>) -> OutputKind {
     /// #             OutputKind::None
     /// #         }
-    /// #         fn run<'s, 'r: 's>(&self, _: ComponentContext<'r, '_, 's>) {}
+    /// #         fn run<'s, 'r: 's>(&self, _: ComponentContext<'_, 's, 'r>) {}
     /// #     }
     /// #     Arc::new(NamedInput)
     /// # }
@@ -1112,6 +1174,7 @@ impl PipelineRunner {
             mut args,
             context,
         } = params;
+        let callback = Some(callback.unwrap_or_else(|| Arc::new(NoopCallback)));
         let run_id = self.run_id.fetch_add(1, Ordering::Relaxed);
         let input = match args.len() {
             0 => InputKind::Empty,

@@ -27,7 +27,7 @@ impl Component for ColorSpaceComponent {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(buffer) = context.get_as::<Buffer<'static>>(None).and_log_err() else {
             return;
         };
@@ -65,7 +65,7 @@ impl Component for ColorFilterComponent {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
@@ -150,7 +150,7 @@ impl Component for BlobComponent {
             _ => OutputKind::None,
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
@@ -266,7 +266,7 @@ impl Component for PercentileFilterComponent {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
@@ -315,7 +315,7 @@ impl Component for BoxBlurComponent {
             OutputKind::Multiple
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };

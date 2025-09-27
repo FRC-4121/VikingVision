@@ -98,7 +98,7 @@ impl Component for FfmpegComponent {
     fn output_kind(&self, _name: Option<&str>) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(frame) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };

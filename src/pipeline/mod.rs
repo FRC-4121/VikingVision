@@ -342,7 +342,7 @@ pub mod prelude {
                     OutputKind::None
                 }
             }
-            fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'r, '_, 's>) {
+            fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
                 ctx.submit(None, Arc::new("data".to_string()));
             }
         }
@@ -355,7 +355,7 @@ pub mod prelude {
             fn output_kind(&self, _: Option<&str>) -> OutputKind {
                 OutputKind::None
             }
-            fn run<'s, 'r: 's>(&self, _: ComponentContext<'r, '_, 's>) {}
+            fn run<'s, 'r: 's>(&self, _: ComponentContext<'_, 's, 'r>) {}
         }
 
         pub fn produce_component() -> Arc<dyn Component> {
