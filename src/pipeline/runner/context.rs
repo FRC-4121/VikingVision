@@ -52,13 +52,10 @@ impl Drop for ComponentContextInner<'_> {
 }
 
 impl<'r> ComponentContextInner<'r> {
-    /// Get the component identifier of this .
+    /// Get the component identifier of this component.
+    #[inline(always)]
     pub fn comp_id(&self) -> RunnerComponentId {
-        RunnerComponentId::new(
-            (self.component as *const ComponentData as usize
-                - self.runner.components.as_ptr() as usize)
-                / size_of::<ComponentData>(),
-        )
+        self.runner.component_id(&self.component)
     }
 
     /// Get the run ID of this run.
@@ -598,5 +595,47 @@ impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
                 signal,
             })
         });
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[error("Runner has leaked inputs")]
+pub struct LeakedInputs;
+
+impl PipelineRunner {
+    fn component_id(&self, component: &ComponentData) -> RunnerComponentId {
+        RunnerComponentId::new(
+            (component as *const ComponentData as usize - self.components.as_ptr() as usize)
+                / size_of::<ComponentData>(),
+        )
+    }
+    /// Clean up the state for a finished component
+    fn finish<'a>(&'a self, data: &'a ComponentData, kind: &InputKind, run_id: &[u32]) {}
+    /// Assert that the runner state is clean.
+    ///
+    /// This should return `Ok(())` when no pipelines are currently running. If inputs are leaked,
+    /// error-level logs will be emitted describing the state.
+    pub fn assert_clean(&self) -> Result<(), LeakedInputs> {
+        let _guard = tracing::info_span!("assert_clean");
+        let mut res = Ok(());
+        for (n, comp) in self.components.iter().enumerate() {
+            match &comp.input_mode {
+                InputMode::Single { refs, .. } => {
+                    let lock = refs.lock().unwrap();
+                    if !lock.is_empty() {
+                        tracing::error!(id = %RunnerComponentId::new(n), name = &*comp.name, inputs = ?lock, "leaked single-input component");
+                        res = Err(LeakedInputs);
+                    }
+                }
+                InputMode::Multiple { mutable, .. } => {
+                    let lock = mutable.lock().unwrap();
+                    if lock.inputs.iter().any(Option::is_some) {
+                        tracing::error!(id = %RunnerComponentId::new(n), name = &*comp.name, inputs = ?lock.inputs, "leaked multi-input component");
+                        res = Err(LeakedInputs);
+                    }
+                }
+            }
+        }
+        res
     }
 }

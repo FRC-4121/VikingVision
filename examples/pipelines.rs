@@ -158,5 +158,6 @@ fn main() -> anyhow::Result<()> {
     if running > 0 {
         tracing::error!(running, "processes are still counted as running!");
     }
+    let _ = runner.assert_clean();
     Ok(())
 }

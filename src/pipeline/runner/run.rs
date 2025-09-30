@@ -4,6 +4,7 @@ use crate::pipeline::component::TypeMismatch;
 use crate::utils::LogErr;
 use litemap::LiteMap;
 use std::convert::Infallible;
+use std::num::NonZero;
 use std::ops::Deref;
 use std::sync::LazyLock;
 use supply::prelude::*;
@@ -31,6 +32,7 @@ pub(crate) struct MutableData {
 pub(crate) enum InputMode {
     Single {
         name: Option<SmolStr>,
+        refs: Mutex<Vec<(SmallVec<[u32; 2]>, NonZero<u32>)>>,
     },
     Multiple {
         lookup: HashMap<SmolStr, InputIndex>,

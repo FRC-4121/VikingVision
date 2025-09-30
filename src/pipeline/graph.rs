@@ -475,7 +475,10 @@ impl PipelineGraph {
                 .components
                 .get_disjoint_mut([s_id.index(), d_id.index()])
                 .map_err(|_| GenericAddDependecyError::SelfLoop)?;
-            let is_multi = match src.component.output_kind(s_chan.as_deref()) {
+            let is_multi = match crate::pipeline::component::component_output(
+                &*src.component,
+                s_chan.as_deref(),
+            ) {
                 OutputKind::None => {
                     return Err(GenericAddDependecyError::NoOutputChannel {
                         src_id: s_id,
@@ -743,7 +746,10 @@ impl PipelineGraph {
                         name: std::mem::replace(&mut component.name, DEFAULT_NAME.clone()),
                         dependents: HashMap::new(),
                         input_mode: match &input {
-                            InputKind::Single(_) => runner::InputMode::Single { name: None },
+                            InputKind::Single(_) => runner::InputMode::Single {
+                                name: None,
+                                refs: Mutex::default(),
+                            },
                             InputKind::Multiple {
                                 single,
                                 multi: Some(MultiData { chan, .. }),
@@ -751,6 +757,7 @@ impl PipelineGraph {
                                 if single.is_empty() {
                                     runner::InputMode::Single {
                                         name: Some(chan.clone()),
+                                        refs: Mutex::default(),
                                     }
                                 } else {
                                     runner::InputMode::Multiple {
@@ -764,6 +771,7 @@ impl PipelineGraph {
                                 if let [(name, _)] = &**single {
                                     runner::InputMode::Single {
                                         name: Some(name.clone()),
+                                        refs: Mutex::default(),
                                     }
                                 } else {
                                     runner::InputMode::Multiple {

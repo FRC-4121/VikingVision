@@ -295,3 +295,13 @@ pub trait Component: Send + Sync + 'static {
     /// Remap any indices on compilation, if necessary.
     fn remap(&self, resolver: &IdResolver) {}
 }
+
+/// Get the output of a component.
+///
+/// This is the authoritative output, with overrides for special output channels (currently just `$finish`).
+pub fn component_output(component: &dyn Component, channel: Option<&str>) -> OutputKind {
+    match channel {
+        Some("$finish") => OutputKind::Single,
+        _ => component.output_kind(channel),
+    }
+}
