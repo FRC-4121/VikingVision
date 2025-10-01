@@ -569,7 +569,10 @@ impl<'r> ComponentContextInner<'r> {
         }
         self.input = InputKind::Empty;
         if let Some(callback) = self.callback.take() {
-            tracing::trace!(count = Arc::strong_count(&callback), "running processes");
+            tracing::trace!(
+                count = Arc::strong_count(&callback) - 1,
+                "decrementing refcount"
+            );
             let is_last = callback.call_if_unique(CleanupContext {
                 runner: self.runner,
                 run_id: self.run_id.0[0],
@@ -583,7 +586,7 @@ impl<'r> ComponentContextInner<'r> {
 
     /// Create a tracing span for this component execution.
     pub fn tracing_span(&self) -> tracing::Span {
-        tracing::info_span!("run", name = %self.name(), run = %self.run_id, component = %self.comp_id())
+        tracing::info_span!("run", name = &**self.name(), run = %self.run_id, component = %self.comp_id())
     }
 
     /// Run the component with tracing instrumentation.

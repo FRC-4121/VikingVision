@@ -55,7 +55,7 @@ impl Display for RunId {
         for v in &self.0 {
             if first {
                 first = false;
-                f.write_str("#")?;
+                f.write_str(":")?;
             } else {
                 f.write_str(".")?;
             }
