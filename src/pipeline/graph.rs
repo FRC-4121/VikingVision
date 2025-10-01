@@ -706,6 +706,39 @@ impl PipelineGraph {
         let c = self.components.get(id.index())?;
         (!c.is_placeholder()).then_some(&c.component)
     }
+    /// Check if there are any branches between the execution of the `start` and `end` components.
+    ///
+    /// If `end` doesn't follow from `start`, `false` will be returned. Multiple paths from `start` to `end` result in `true`.
+    pub fn branches_between(&self, start: GraphComponentId, end: GraphComponentId) -> bool {
+        let mut seen: Vec<(bool, ComponentId<PipelineGraph>)> = Vec::new();
+        let mut stack = vec![(false, start)];
+        'dfs: while let Some(mut node) = stack.pop() {
+            let mut found = false;
+            for elem in &mut seen {
+                if elem.1 == node.1 {
+                    found = true;
+                    if elem.0 {
+                        continue 'dfs;
+                    } else {
+                        elem.0 = true;
+                        node.0 = true;
+                        break;
+                    }
+                }
+            }
+            if node.0 && node.1 == end {
+                return true;
+            }
+            if !found {
+                seen.push(node);
+            }
+            let Some(comp) = self.components.get(node.1.index()) else {
+                continue;
+            };
+            stack.extend(comp.outputs.values().flatten().map(|ch| ch.0.decompose()));
+        }
+        false
+    }
     /// Compile this graph into a pipeline runner.
     ///
     /// This remaps the component IDs into a topologically-sorted order and verifies additional invariants:

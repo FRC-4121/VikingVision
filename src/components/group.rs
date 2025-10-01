@@ -106,14 +106,9 @@ impl<T>
                 return None;
             };
             let mut kind = component.output_kind(name.as_deref());
-            // if kind == OutputKind::Single
-            //     && runner
-            //         .branch_chain(id)
-            //         .next()
-            //         .is_some_and(|(i, c)| i != id || c.is_some())
-            // {
-            //     kind = OutputKind::Multiple;
-            // }
+            if graph.branches_between(input_component, id) {
+                kind = OutputKind::Multiple;
+            }
             let listener = Arc::new(Listener::default());
             let listen_id = graph.add_hidden_component(
                 listener.clone(),
