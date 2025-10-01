@@ -13,7 +13,8 @@ use supply::prelude::*;
 pub(crate) struct InputTree {
     pub vals: SmallVec<[Arc<dyn Data>; 2]>,
     pub next: Vec<Option<InputTree>>,
-    pub remaining: u32,
+    pub remaining_inputs: u32,
+    pub remaining_finish: u32,
     pub iter: u32,
     pub prev_done: bool,
 }
@@ -32,6 +33,7 @@ pub(crate) struct MutableData {
 pub(crate) enum InputMode {
     Single {
         name: Option<SmolStr>,
+        #[allow(clippy::type_complexity)]
         refs: Mutex<Vec<(SmallVec<[u32; 2]>, NonZero<u32>)>>,
     },
     Multiple {
@@ -635,7 +637,8 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
     let mut root = InputTree {
         vals: SmallVec::new(),
         next: Vec::new(),
-        remaining: 0,
+        remaining_inputs: 0,
+        remaining_finish: 0,
         iter: 0,
         prev_done: true,
     };
@@ -645,12 +648,13 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
         let len = sum - last;
         last = sum;
         tree.vals.extend(iter.by_ref().take(len as _));
-        tree.remaining = len;
+        tree.remaining_inputs = len;
         if !shape.is_empty() {
             tree.next = vec![Some(InputTree {
                 vals: SmallVec::new(),
                 next: Vec::new(),
-                remaining: 0,
+                remaining_inputs: 0,
+                remaining_finish: 0,
                 iter: 0,
                 prev_done: true,
             })];

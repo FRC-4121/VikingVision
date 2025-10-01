@@ -2,6 +2,7 @@ use super::*;
 use crate::pipeline::component::{IntoData, OutputKind};
 use litemap::LiteMap;
 use std::mem::ManuallyDrop;
+use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
@@ -55,7 +56,7 @@ impl<'r> ComponentContextInner<'r> {
     /// Get the component identifier of this component.
     #[inline(always)]
     pub fn comp_id(&self) -> RunnerComponentId {
-        self.runner.component_id(&self.component)
+        self.runner.component_id(self.component)
     }
 
     /// Get the run ID of this run.
@@ -309,10 +310,10 @@ impl<'r> ComponentContextInner<'r> {
                                 continue;
                             };
                             if tree.iter == idx {
-                                let done = prev_done && tree.remaining == 0;
+                                let done = prev_done && tree.remaining_inputs == 0;
                                 if is_last {
                                     tree.vals[index] = data;
-                                    tree.remaining -= 1;
+                                    tree.remaining_inputs -= 1;
                                     if done {
                                         maybe_run(
                                             shape.len(),
@@ -355,7 +356,8 @@ impl<'r> ComponentContextInner<'r> {
                             vals,
                             next: Vec::new(),
                             iter: idx,
-                            remaining,
+                            remaining_inputs: remaining,
+                            remaining_finish: shape.first().map_or(0, |v| v - sum),
                             prev_done,
                         };
                         let (inserted, new_inputs) = if let Some(n) = open {
@@ -409,7 +411,7 @@ impl<'r> ComponentContextInner<'r> {
                         };
                         for (n, opt) in inputs.iter_mut().enumerate() {
                             let Some(tree) = opt else { continue };
-                            if tree.remaining > 0 {
+                            if tree.remaining_inputs > 0 {
                                 continue;
                             }
                             tree.prev_done = true;
@@ -484,11 +486,66 @@ impl<'r> ComponentContextInner<'r> {
             tracing::warn!("finish() was called twice for a component");
             return;
         }
-        self.input = InputKind::Empty;
         if let Some(scope) = signal {
             self.submit_impl(Some("$finish"), UNIT_ARC.clone(), scope);
         }
-        // cleanup goes here
+        let mut propagate = false;
+        match (&self.component.input_mode, &self.input) {
+            (InputMode::Single { refs, .. }, InputKind::Single(_)) => {
+                let mut lock = refs.lock().unwrap();
+                propagate = true;
+                for (n, (k, v)) in lock.iter_mut().enumerate() {
+                    if self.run_id.0.starts_with(k) {
+                        if let Some(v2) = v.get().checked_sub(1).and_then(NonZero::new) {
+                            *v = v2;
+                            propagate = false;
+                        } else {
+                            lock.swap_remove(n);
+                        }
+                        break;
+                    }
+                }
+            }
+            (InputMode::Multiple { mutable, .. }, InputKind::Multiple(path)) => {
+                fn cleanup(inputs: &mut Vec<Option<InputTree>>, mut path: &[u32]) -> (bool, bool) {
+                    let Some(&idx) = path.split_off_first() else {
+                        return (true, false);
+                    };
+                    let idx = idx as usize;
+                    let Some(tree) = inputs.get_mut(idx).and_then(Option::as_mut) else {
+                        return (false, false);
+                    };
+                    let (unwind, propagate) = cleanup(&mut tree.next, path);
+                    if !unwind
+                        || tree.remaining_finish != 0
+                        || tree.next.iter().any(Option::is_some)
+                    {
+                        return (false, propagate);
+                    }
+                    inputs[idx] = None;
+                    while inputs.pop_if(|x| x.is_none()).is_some() {}
+                    (true, true)
+                }
+                let fst = path[0] as usize;
+                let mut lock = mutable.lock().unwrap();
+                let unwind;
+                (unwind, propagate) = cleanup(&mut lock.inputs, path);
+                if unwind && fst < lock.first {
+                    lock.first = fst;
+                }
+            }
+            _ => {
+                tracing::error!(
+                    id = %self.comp_id(),
+                    "mismatched input mode and passed value"
+                );
+            }
+        }
+        if propagate {
+            self.runner
+                .propagate(self.component, &self.run_id.0, &tracing::Span::current());
+        }
+        self.input = InputKind::Empty;
         if let Some(callback) = self.callback.take() {
             tracing::debug!(count = Arc::strong_count(&callback), "running processes");
             let is_last = callback.call_if_unique(CleanupContext {
@@ -610,7 +667,136 @@ impl PipelineRunner {
         )
     }
     /// Clean up the state for a finished component
-    fn finish<'a>(&'a self, data: &'a ComponentData, kind: &InputKind, run_id: &[u32]) {}
+    fn propagate(&self, component: &ComponentData, run_id: &[u32], parent: &tracing::Span) {
+        let _guard =
+            tracing::info_span!(parent: parent, "propagate", name = &*component.name, id = %self.component_id(component)).entered();
+        let mut buf = Vec::new();
+        for (id, index, _) in component.dependents.values().flatten() {
+            let next = &self.components[id.index()];
+            match &next.input_mode {
+                InputMode::Single { refs, .. } => {
+                    {
+                        let mut lock = refs.lock().unwrap();
+                        buf.extend(
+                            lock.extract_if(.., |(k, v)| {
+                                run_id.starts_with(k)
+                                    && v.get()
+                                        .checked_sub(1)
+                                        .and_then(NonZero::new)
+                                        .inspect(|v2| *v = *v2)
+                                        .is_none()
+                            })
+                            .collect::<Vec<_>>(),
+                        );
+                    }
+                    for (k, _) in buf.drain(..) {
+                        self.propagate(next, &k, parent);
+                    }
+                }
+                InputMode::Multiple { mutable, .. } => {
+                    #[allow(clippy::too_many_arguments)]
+                    fn cleanup(
+                        inputs: &mut Vec<Option<InputTree>>,
+                        idx: usize,
+                        target: usize,
+                        run_id: &[u32],
+                        runner: &PipelineRunner,
+                        component: &ComponentData,
+                        parent: &tracing::Span,
+                    ) -> bool {
+                        tracing::trace!(idx, target, ?run_id, "cleanup");
+                        let i = run_id.get(idx).copied();
+                        let mut all = true;
+                        for opt in &mut *inputs {
+                            let Some(tree) = opt else { continue };
+                            if i.is_some_and(|i| i != tree.iter) {
+                                continue;
+                            }
+                            if idx < target {
+                                if !(cleanup(
+                                    &mut tree.next,
+                                    idx + 1,
+                                    target,
+                                    run_id,
+                                    runner,
+                                    component,
+                                    parent,
+                                ) && tree.remaining_finish == 0
+                                    && tree.next.iter().all(Option::is_none))
+                                {
+                                    all = false;
+                                    continue;
+                                }
+                                *opt = None;
+                            } else {
+                                tree.remaining_finish = tree.remaining_finish.saturating_sub(1);
+                                if tree.remaining_finish > 0
+                                    || tree.next.iter().any(Option::is_some)
+                                {
+                                    all = false;
+                                    continue;
+                                }
+                                let mut all_children = true;
+                                let mut run_id = run_id.to_vec();
+                                for opt in &mut tree.next {
+                                    let Some(input) = opt else { continue };
+                                    let rem = dft(input, &mut run_id, runner, component, parent);
+                                    if rem {
+                                        *opt = None;
+                                    } else {
+                                        all_children = false;
+                                    }
+                                }
+                                all &= all_children;
+                            }
+                        }
+                        while inputs.pop_if(|x| x.is_none()).is_some() {}
+                        all
+                    }
+                    fn dft(
+                        input: &mut InputTree,
+                        run_id: &mut Vec<u32>,
+                        runner: &PipelineRunner,
+                        component: &ComponentData,
+                        parent: &tracing::Span,
+                    ) -> bool {
+                        tracing::trace!(?run_id, "dft");
+                        if input.remaining_finish > 0 {
+                            return false;
+                        }
+                        run_id.push(input.iter);
+                        let mut all = true;
+                        let mut any = false;
+                        for opt in &mut input.next {
+                            let Some(next) = opt else { continue };
+                            let rem = dft(next, run_id, runner, component, parent);
+                            if rem {
+                                *opt = None;
+                                any = true;
+                            } else {
+                                all = false;
+                            }
+                        }
+                        if !any {
+                            runner.propagate(component, run_id, parent);
+                        }
+                        run_id.pop();
+                        all
+                    }
+                    let mut lock = mutable.lock().unwrap();
+                    cleanup(
+                        &mut lock.inputs,
+                        0,
+                        index.0 as _,
+                        run_id,
+                        self,
+                        next,
+                        parent,
+                    );
+                }
+            }
+        }
+    }
     /// Assert that the runner state is clean.
     ///
     /// This should return `Ok(())` when no pipelines are currently running. If inputs are leaked,
