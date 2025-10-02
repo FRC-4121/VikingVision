@@ -20,8 +20,8 @@ impl Component for ColorSpaceComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::None
@@ -31,7 +31,7 @@ impl Component for ColorSpaceComponent {
         let Ok(buffer) = context.get_as::<Buffer<'static>>(None).and_log_err() else {
             return;
         };
-        context.submit(None, buffer.convert(self.format));
+        context.submit("", buffer.convert(self.format));
     }
 }
 #[typetag::serde(name = "colorspace")]
@@ -58,8 +58,8 @@ impl Component for ColorFilterComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::None
@@ -70,7 +70,7 @@ impl Component for ColorFilterComponent {
             return;
         };
         let filtered = filter(img.borrow(), self.filter);
-        context.submit(None, filtered);
+        context.submit("", filtered);
     }
 }
 #[typetag::serde(name = "filter")]
@@ -143,10 +143,10 @@ impl Component for BlobComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, name: &str) -> OutputKind {
         match name {
-            None => OutputKind::Single,
-            Some("elem") => OutputKind::Multiple,
+            "" => OutputKind::Single,
+            "elem" => OutputKind::Multiple,
             _ => OutputKind::None,
         }
     }
@@ -160,7 +160,7 @@ impl Component for BlobComponent {
             .chunks(img.width as usize * px)
             .map(|r| r.chunks(px).map(|c| c.iter().any(|p| *p > 0)));
         let blobs = BlobsIterator::new(pixels);
-        let collect = context.listening(None);
+        let collect = context.listening("");
         let stream = context.listening("elem");
         let mut vec = Vec::new();
         for blob in blobs {
@@ -192,7 +192,7 @@ impl Component for BlobComponent {
             }
         }
         if collect {
-            context.submit(None, vec);
+            context.submit("", vec);
         }
     }
 }
@@ -259,8 +259,8 @@ impl Component for PercentileFilterComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::None
@@ -272,7 +272,7 @@ impl Component for PercentileFilterComponent {
         };
         let mut dst = Buffer::empty_rgb();
         percentile_filter(img.borrow(), &mut dst, self.width, self.height, self.index);
-        context.submit(None, dst);
+        context.submit("", dst);
     }
 }
 #[typetag::serde(name = "percent-filter")]
@@ -308,8 +308,8 @@ impl Component for BoxBlurComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::Multiple
@@ -321,7 +321,7 @@ impl Component for BoxBlurComponent {
         };
         let mut dst = Buffer::empty_rgb();
         box_blur(img.borrow(), &mut dst, self.width, self.height);
-        context.submit(None, dst);
+        context.submit("", dst);
     }
 }
 #[typetag::serde(name = "box-blur")]

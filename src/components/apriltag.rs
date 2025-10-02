@@ -16,11 +16,11 @@ impl Component for AprilTagComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, name: &str) -> OutputKind {
         match name {
-            None => OutputKind::Multiple,
-            Some("vec") => OutputKind::Single,
-            Some("found") => OutputKind::Single,
+            "" => OutputKind::Multiple,
+            "vec" => OutputKind::Single,
+            "found" => OutputKind::Single,
             _ => OutputKind::None,
         }
     }
@@ -36,7 +36,7 @@ impl Component for AprilTagComponent {
             lock.detect(img.borrow())
         };
         let listening_vec = context.listening("vec");
-        let listening_elem = context.listening(None);
+        let listening_elem = context.listening("");
         if context.listening("found") {
             context.submit("found", it.len());
         }
@@ -46,11 +46,11 @@ impl Component for AprilTagComponent {
         }
         for elem in it {
             match [listening_elem, listening_vec] {
-                [true, false] => context.submit(None, elem),
+                [true, false] => context.submit("", elem),
                 [false, true] => vec.push(elem),
                 [true, true] => {
                     vec.push(elem.clone());
-                    context.submit(None, elem);
+                    context.submit("", elem);
                 }
                 [false, false] => {}
             }
@@ -88,8 +88,8 @@ impl Component for DetectPoseComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::None
@@ -125,7 +125,7 @@ impl Component for DetectPoseComponent {
         let Ok(detection) = context.get_as::<apriltag::Detection>(None).and_log_err() else {
             return;
         };
-        context.submit(None, detection.estimate_pose(params));
+        context.submit("", detection.estimate_pose(params));
     }
 }
 #[typetag::serde(name = "april-pose")]

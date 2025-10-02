@@ -261,10 +261,10 @@ impl Inputs {
 ///         Inputs::named(["image"])
 ///     }
 ///
-///     fn output_kind(&self, name: Option<&str>) -> OutputKind {
+///     fn output_kind(&self, name: &str) -> OutputKind {
 ///         match name {
-///             None => OutputKind::Single,
-///             Some("debug") => OutputKind::Multiple,
+///             "" => OutputKind::Single,
+///             "debug" => OutputKind::Multiple,
 ///             _ => OutputKind::None,
 ///         }
 ///     }
@@ -276,7 +276,7 @@ impl Inputs {
 ///         let result = process_image(&image);
 ///         
 ///         // Submit result
-///         ctx.submit(None, Arc::new(result));
+///         ctx.submit("", Arc::new(result));
 ///     }
 /// }
 /// ```
@@ -293,7 +293,7 @@ pub trait Component: Send + Sync + 'static {
         false
     }
     /// Check if an output channel is available.
-    fn output_kind(&self, name: Option<&str>) -> OutputKind;
+    fn output_kind(&self, name: &str) -> OutputKind;
     /// Run a component on a given input.
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>);
     /// Perform startup initialization on this component.
@@ -305,9 +305,9 @@ pub trait Component: Send + Sync + 'static {
 /// Get the output of a component for a channel.
 ///
 /// This wraps [`Component::output_kind`] but overrides the channel for special output channels (currently just `$finish`).
-pub fn component_output(component: &dyn Component, channel: Option<&str>) -> OutputKind {
+pub fn component_output(component: &dyn Component, channel: &str) -> OutputKind {
     match channel {
-        Some("$finish") => OutputKind::Single,
+        "$finish" => OutputKind::Single,
         _ => component.output_kind(channel),
     }
 }

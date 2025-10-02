@@ -21,7 +21,7 @@ impl Component for Listener {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, _: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _: &str) -> OutputKind {
         OutputKind::None
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
@@ -50,11 +50,11 @@ struct SecondConfig;
 
 pub struct GroupConfig {
     pub input: ComponentIdentifier,
-    pub outputs: HashMap<Option<SmolStr>, Source>,
+    pub outputs: HashMap<SmolStr, Source>,
 }
 struct GroupState {
     inputs: Inputs,
-    outputs: HashMap<Option<SmolStr>, (Arc<Listener>, OutputKind)>,
+    outputs: HashMap<SmolStr, (Arc<Listener>, OutputKind)>,
 }
 
 impl<T>
@@ -105,19 +105,13 @@ impl<T>
                 error!(%id, "output component ID out of range");
                 return None;
             };
-            let mut kind = component.output_kind(name.as_deref());
+            let mut kind = crate::pipeline::component::component_output(&**component, &name);
             if graph.branches_between(input_component, id) {
                 kind = OutputKind::Multiple;
             }
             let listener = Arc::new(Listener::default());
-            let listen_id = graph.add_hidden_component(
-                listener.clone(),
-                if let Some(name) = &name {
-                    format!("listener-{self_id}-named-{name}")
-                } else {
-                    format!("listener-{self_id}-primary")
-                },
-            );
+            let listen_id = graph
+                .add_hidden_component(listener.clone(), format!("listener-{self_id}: {name:?}"));
             if let Err(err) = graph.add_dependency((id, out.channel.as_deref()), listen_id) {
                 error!(%err, "failed to add primary listener");
                 return None;
@@ -165,11 +159,9 @@ impl Component for GroupComponent {
             .get_state_flat()
             .map_or(Inputs::none(), |c| c.0.inputs.clone())
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, name: &str) -> OutputKind {
         self.inner.get_state_flat().map_or(OutputKind::None, |s| {
-            s.0.outputs
-                .get(&name.map(SmolStr::from))
-                .map_or(OutputKind::None, |o| o.1)
+            s.0.outputs.get(name).map_or(OutputKind::None, |o| o.1)
         })
     }
     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
@@ -201,22 +193,22 @@ impl Component for GroupComponent {
                     let _guard = span.enter();
                     for (channel, (listener, kind)) in multi.iter() {
                         let val = listener.data.lock().unwrap().remove(&flag);
-                        if inner.listening(None) {
+                        if inner.listening(channel) {
                             if kind.is_multi() {
                                 for data in val.into_iter().flatten() {
-                                    inner.submit(None, data, scope);
+                                    inner.submit(channel, data, scope);
                                 }
                             } else {
                                 if let Some(vec) = val {
                                     if vec.len() > 1 {
                                         warn!(
                                             len = vec.len(),
-                                            name = ?Some(channel),
+                                            name = &**channel,
                                             "multiple values submitted on a single-value channel"
                                         );
                                     }
                                     let data = vec.into_iter().next().unwrap();
-                                    inner.submit(channel.as_deref(), data, scope);
+                                    inner.submit(channel, data, scope);
                                 }
                             }
                         }
@@ -262,8 +254,8 @@ impl From<GroupFactory> for GroupConfig {
     fn from(value: GroupFactory) -> Self {
         let mut outputs =
             HashMap::with_capacity(value.outputs.len() + usize::from(value.output.is_some()));
-        outputs.extend(value.output.map(|s| (None, s.into())));
-        outputs.extend(value.outputs.into_iter().map(|(n, s)| (Some(n), s.into())));
+        outputs.extend(value.output.map(|s| (SmolStr::new_static(""), s.into())));
+        outputs.extend(value.outputs.into_iter().map(|(n, s)| (n, s.into())));
         GroupConfig {
             input: ComponentIdentifier::Name(value.input),
             outputs,

@@ -15,7 +15,7 @@ impl Component for Print {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _name: &str) -> OutputKind {
         OutputKind::None // our printing component doesn't return anything on any channels
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
@@ -30,7 +30,7 @@ impl Component for Print2 {
     fn inputs(&self) -> Inputs {
         Inputs::named(["a", "b"])
     }
-    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _name: &str) -> OutputKind {
         OutputKind::None
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
@@ -48,20 +48,20 @@ impl Component for BroadcastVec {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, name: &str) -> OutputKind {
         match name {
-            None => OutputKind::Single, // on our primary output, we're going to send one value (the original vector)
-            Some("elem") => OutputKind::Multiple, // on our secondary output, we're going to send multiple (the elements)
-            _ => OutputKind::None,                // we won't send any other outputs
+            "" => OutputKind::Single, // on our primary output, we're going to send one value (the original vector)
+            "elem" => OutputKind::Multiple, // on our secondary output, we're going to send multiple (the elements)
+            _ => OutputKind::None,          // we won't send any other outputs
         }
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(val) = context.get_as::<Vec<i32>>(None).and_log_err() else {
             return;
         };
-        context.submit(None, val.clone()); // here we submit the vector on our primary output channel
+        context.submit("", val.clone()); // here we submit the vector on our primary output channel
         for &elem in &*val {
-            context.submit(Some("elem"), Arc::new(elem)); // we can also call submit() multiple times, which will trigger any dependent components
+            context.submit("elem", Arc::new(elem)); // we can also call submit() multiple times, which will trigger any dependent components
         }
     }
 }
@@ -70,8 +70,8 @@ impl Component for CheckContains {
     fn inputs(&self) -> Inputs {
         Inputs::named(["vec", "elem"])
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::None
@@ -84,7 +84,7 @@ impl Component for CheckContains {
         let Ok(elem) = context.get_as::<i32>("elem").inspect_err(|e| e.log_err()) else {
             return;
         };
-        context.submit(None, Arc::new(vec.contains(&elem)));
+        context.submit("", Arc::new(vec.contains(&elem)));
     }
 }
 

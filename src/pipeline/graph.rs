@@ -16,39 +16,39 @@ pub type GraphComponentChannel = ComponentChannel<PipelineGraph>;
 mod trait_impls {
     use super::*;
 
-    impl IntoOptStr for () {
-        fn into_opt_str(self) -> Option<SmolStr> {
-            None
+    impl IntoChannelName for () {
+        fn into_channel_name(self) -> SmolStr {
+            SmolStr::new_static("")
         }
     }
-    impl IntoOptStr for &str {
-        fn into_opt_str(self) -> Option<SmolStr> {
-            Some(self.into())
+    impl IntoChannelName for &str {
+        fn into_channel_name(self) -> SmolStr {
+            self.into()
         }
     }
-    impl IntoOptStr for String {
-        fn into_opt_str(self) -> Option<SmolStr> {
-            Some(self.into())
+    impl IntoChannelName for String {
+        fn into_channel_name(self) -> SmolStr {
+            self.into()
         }
     }
-    impl IntoOptStr for &String {
-        fn into_opt_str(self) -> Option<SmolStr> {
-            Some(self.as_str().into())
+    impl IntoChannelName for &String {
+        fn into_channel_name(self) -> SmolStr {
+            self.as_str().into()
         }
     }
-    impl IntoOptStr for SmolStr {
-        fn into_opt_str(self) -> Option<SmolStr> {
-            Some(self)
+    impl IntoChannelName for SmolStr {
+        fn into_channel_name(self) -> SmolStr {
+            self
         }
     }
-    impl IntoOptStr for &SmolStr {
-        fn into_opt_str(self) -> Option<SmolStr> {
-            Some(self.clone())
+    impl IntoChannelName for &SmolStr {
+        fn into_channel_name(self) -> SmolStr {
+            self.clone()
         }
     }
-    impl<S: IntoOptStr> IntoOptStr for Option<S> {
-        fn into_opt_str(self) -> Option<SmolStr> {
-            self.and_then(S::into_opt_str)
+    impl<S: IntoChannelName> IntoChannelName for Option<S> {
+        fn into_channel_name(self) -> SmolStr {
+            self.map_or(SmolStr::new_static(""), S::into_channel_name)
         }
     }
 
@@ -110,20 +110,23 @@ mod trait_impls {
         fn resolve(
             self,
             graph: &PipelineGraph,
-        ) -> Result<(GraphComponentId, Option<SmolStr>), Self::Error> {
-            Ok((ComponentSpecifier::resolve(&self, graph)?, None))
+        ) -> Result<(GraphComponentId, SmolStr), Self::Error> {
+            Ok((
+                ComponentSpecifier::resolve(&self, graph)?,
+                SmolStr::new_static(""),
+            ))
         }
     }
-    impl<C: ComponentSpecifier<PipelineGraph>, S: IntoOptStr> ComponentWithChannel for (C, S) {
+    impl<C: ComponentSpecifier<PipelineGraph>, S: IntoChannelName> ComponentWithChannel for (C, S) {
         type Error = <C as ComponentSpecifier<PipelineGraph>>::Error;
 
         fn resolve(
             self,
             graph: &PipelineGraph,
-        ) -> Result<(GraphComponentId, Option<SmolStr>), Self::Error> {
+        ) -> Result<(GraphComponentId, SmolStr), Self::Error> {
             Ok((
                 ComponentSpecifier::resolve(&self.0, graph)?,
-                self.1.into_opt_str(),
+                self.1.into_channel_name(),
             ))
         }
     }
@@ -132,17 +135,14 @@ mod trait_impls {
 /// A type that can be converted to `Option<SmolStr>`.
 ///
 /// This works better than relying on `Into` or similar, and allows direct conversion from `()` (to `None`), string slices, and options.
-pub trait IntoOptStr {
-    fn into_opt_str(self) -> Option<SmolStr>;
+pub trait IntoChannelName {
+    fn into_channel_name(self) -> SmolStr;
 }
 
 pub trait ComponentWithChannel {
     type Error;
 
-    fn resolve(
-        self,
-        graph: &PipelineGraph,
-    ) -> Result<(GraphComponentId, Option<SmolStr>), Self::Error>;
+    fn resolve(self, graph: &PipelineGraph) -> Result<(GraphComponentId, SmolStr), Self::Error>;
 }
 
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -169,13 +169,13 @@ pub enum GenericAddDependecyError {
     NoOutputChannel {
         src_id: GraphComponentId,
         src_name: SmolStr,
-        src_chan: Option<SmolStr>,
+        src_chan: SmolStr,
     },
     #[error("Component {dst_id} ({dst_name:?}) can't take input on channel {dst_chan:?}")]
     DoesntTakeInput {
         dst_id: GraphComponentId,
         dst_name: SmolStr,
-        dst_chan: Option<SmolStr>,
+        dst_chan: SmolStr,
     },
     #[error(
         "Component {dst_id} ({dst_name:?}) can't take input from multiple sources on channel {dst_chan:?} because {}",
@@ -185,7 +185,7 @@ pub enum GenericAddDependecyError {
     OverloadedInputs {
         dst_id: GraphComponentId,
         dst_name: SmolStr,
-        dst_chan: Option<SmolStr>,
+        dst_chan: SmolStr,
         already_connected: Option<SmolStr>,
     },
 }
@@ -197,23 +197,23 @@ pub enum CompileError {
     #[error("Component {comp} has multiple branching paths that lead to it: {} and {}", ChainFormatter(.branch_1), ChainFormatter(.branch_2))]
     BranchMismatch {
         comp: SmolStr,
-        branch_1: Vec<(SmolStr, Option<SmolStr>)>,
-        branch_2: Vec<(SmolStr, Option<SmolStr>)>,
+        branch_1: Vec<(SmolStr, SmolStr)>,
+        branch_2: Vec<(SmolStr, SmolStr)>,
     },
     #[error("Component {comp} is missing an input on channel {chan:?}")]
     MissingInput { comp: SmolStr, chan: SmolStr },
 }
 
-fn show_pair((name, chan): &(SmolStr, Option<SmolStr>), f: &mut Formatter) -> fmt::Result {
+fn show_pair((name, chan): &(SmolStr, SmolStr), f: &mut Formatter) -> fmt::Result {
     f.write_str(name)?;
-    if let Some(chan) = chan {
+    if !chan.is_empty() {
         f.write_str("/")?;
         f.write_str(chan)?;
     }
     Ok(())
 }
 
-struct ChainFormatter<'a>(&'a Vec<(SmolStr, Option<SmolStr>)>);
+struct ChainFormatter<'a>(&'a Vec<(SmolStr, SmolStr)>);
 impl Display for ChainFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if let Some((first, rest)) = self.0.split_first() {
@@ -233,7 +233,7 @@ static DEFAULT_COMPONENT: LazyLock<Arc<dyn Component>> = LazyLock::new(|| {
         fn inputs(&self) -> Inputs {
             Inputs::none()
         }
-        fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+        fn output_kind(&self, _name: &str) -> OutputKind {
             OutputKind::None
         }
         fn run<'s, 'r: 's>(&self, _context: ComponentContext<'_, 's, 'r>) {
@@ -296,7 +296,7 @@ pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
     inputs: InputKind,
-    outputs: BTreeMap<Option<SmolStr>, Vec<GraphComponentChannel>>,
+    outputs: BTreeMap<SmolStr, Vec<GraphComponentChannel>>,
     in_lookup: bool,
     input_count: LiteMap<GraphComponentId, usize>,
 }
@@ -473,33 +473,31 @@ impl PipelineGraph {
         fn inner(
             this: &mut PipelineGraph,
             s_id: GraphComponentId,
-            s_chan: Option<SmolStr>,
+            s_chan: SmolStr,
             d_id: GraphComponentId,
-            d_chan: Option<SmolStr>,
+            d_chan: SmolStr,
         ) -> Result<(), GenericAddDependecyError> {
             let [src, dst] = this
                 .components
                 .get_disjoint_mut([s_id.index(), d_id.index()])
                 .map_err(|_| GenericAddDependecyError::SelfLoop)?;
-            let is_multi = match crate::pipeline::component::component_output(
-                &*src.component,
-                s_chan.as_deref(),
-            ) {
-                OutputKind::None => {
-                    return Err(GenericAddDependecyError::NoOutputChannel {
-                        src_id: s_id,
-                        src_name: src.name.clone(),
-                        src_chan: s_chan,
-                    });
-                }
-                OutputKind::Single => false,
-                OutputKind::Multiple => true,
-            };
+            let is_multi =
+                match crate::pipeline::component::component_output(&*src.component, &s_chan) {
+                    OutputKind::None => {
+                        return Err(GenericAddDependecyError::NoOutputChannel {
+                            src_id: s_id,
+                            src_name: src.name.clone(),
+                            src_chan: s_chan,
+                        });
+                    }
+                    OutputKind::Single => false,
+                    OutputKind::Multiple => true,
+                };
             let scc = s_chan.clone();
             let dcc = d_chan.clone();
             match &mut dst.inputs {
                 InputKind::Single(v) => {
-                    if d_chan.is_some() {
+                    if !d_chan.is_empty() {
                         return Err(GenericAddDependecyError::DoesntTakeInput {
                             dst_id: d_id,
                             dst_name: dst.name.clone(),
@@ -508,57 +506,48 @@ impl PipelineGraph {
                     }
                     v.push(ComponentChannel(s_id, s_chan))
                 }
-                InputKind::Multiple { single, multi } => {
-                    let Some(dc) = d_chan else {
-                        return Err(GenericAddDependecyError::DoesntTakeInput {
-                            dst_id: d_id,
-                            dst_name: dst.name.clone(),
-                            dst_chan: None,
-                        });
-                    };
-                    'search: {
-                        if let Some(MultiData { chan, inputs, .. }) = multi {
-                            if *chan == dc {
-                                inputs.push(ComponentChannel(s_id, s_chan));
-                                break 'search;
-                            }
-                            for (ch, s) in &mut *single {
-                                if *ch == dc {
-                                    if s.is_placeholder() {
-                                        *s = ComponentChannel(s_id, s_chan);
-                                        break 'search;
-                                    } else {
-                                        return Err(GenericAddDependecyError::OverloadedInputs {
-                                            dst_id: d_id,
-                                            dst_name: dst.name.clone(),
-                                            dst_chan: Some(dc),
-                                            already_connected: Some(chan.clone()),
-                                        });
-                                    }
-                                }
-                            }
-                        } else {
-                            for (n, (ch, s)) in single.iter_mut().enumerate() {
-                                if *ch == dc {
-                                    if s.is_placeholder() {
-                                        *s = ComponentChannel(s_id, s_chan);
-                                        break 'search;
-                                    } else {
-                                        let (chan, s) = single.swap_remove(n);
-                                        let (optional, s) = s.decompose();
-                                        *multi = Some(MultiData {
-                                            chan,
-                                            optional,
-                                            inputs: vec![s, ComponentChannel(s_id, s_chan)],
-                                        });
-                                        break 'search;
-                                    }
+                InputKind::Multiple { single, multi } => 'search: {
+                    if let Some(MultiData { chan, inputs, .. }) = multi {
+                        if *chan == d_chan {
+                            inputs.push(ComponentChannel(s_id, s_chan));
+                            break 'search;
+                        }
+                        for (ch, s) in &mut *single {
+                            if *ch == d_chan {
+                                if s.is_placeholder() {
+                                    *s = ComponentChannel(s_id, s_chan);
+                                    break 'search;
+                                } else {
+                                    return Err(GenericAddDependecyError::OverloadedInputs {
+                                        dst_id: d_id,
+                                        dst_name: dst.name.clone(),
+                                        dst_chan: d_chan,
+                                        already_connected: Some(chan.clone()),
+                                    });
                                 }
                             }
                         }
-                        if dst.component.can_take(&dc) {
-                            single.push((dc, ComponentChannel(s_id.flagged(), s_chan)));
+                    } else {
+                        for (n, (ch, s)) in single.iter_mut().enumerate() {
+                            if *ch == d_chan {
+                                if s.is_placeholder() {
+                                    *s = ComponentChannel(s_id, s_chan);
+                                    break 'search;
+                                } else {
+                                    let (chan, s) = single.swap_remove(n);
+                                    let (optional, s) = s.decompose();
+                                    *multi = Some(MultiData {
+                                        chan,
+                                        optional,
+                                        inputs: vec![s, ComponentChannel(s_id, s_chan)],
+                                    });
+                                    break 'search;
+                                }
+                            }
                         }
+                    }
+                    if dst.component.can_take(&d_chan) {
+                        single.push((d_chan, ComponentChannel(s_id.flagged(), s_chan)));
                     }
                 }
             }
@@ -652,9 +641,8 @@ impl PipelineGraph {
                     count = v.drain_filter(|c| c.0 == id).count();
                 }
                 InputKind::Multiple { single, multi } => {
-                    let Some(dc) = ch.1 else { continue };
                     if let Some(MultiData { chan, inputs, .. }) = multi {
-                        if *chan == dc {
+                        if *chan == ch.1 {
                             count = inputs.extract_if(.., |c| c.0 == id).count();
                             match &mut **inputs {
                                 [] => {

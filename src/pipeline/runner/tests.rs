@@ -22,12 +22,12 @@ impl<T: Clone + Send + Sync + 'static> Component for Cmp<T> {
     fn can_take(&self, _input: &str) -> bool {
         true
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, name: &str) -> OutputKind {
         match name {
-            Some("d1") => OutputKind::Multiple,
-            Some("d2") => OutputKind::Multiple,
-            Some("s1") => OutputKind::Single,
-            Some("s2") => OutputKind::Single,
+            "d1" => OutputKind::Multiple,
+            "d2" => OutputKind::Multiple,
+            "s1" => OutputKind::Single,
+            "s2" => OutputKind::Single,
             _ => OutputKind::None,
         }
     }

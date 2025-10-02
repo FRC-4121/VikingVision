@@ -84,8 +84,7 @@ pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
     #[allow(clippy::type_complexity)]
-    pub(crate) dependents:
-        HashMap<Option<SmolStr>, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
+    pub(crate) dependents: HashMap<SmolStr, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
     pub(crate) input_mode: InputMode,
 }
 impl Debug for ComponentData {
@@ -482,7 +481,7 @@ impl PipelineRunner {
     /// #         fn inputs(&self) -> Inputs {
     /// #             Inputs::named([("input")])
     /// #         }
-    /// #         fn output_kind(&self, _: Option<&str>) -> OutputKind {
+    /// #         fn output_kind(&self, _: &str) -> OutputKind {
     /// #             OutputKind::None
     /// #         }
     /// #         fn run<'s, 'r: 's>(&self, _: ComponentContext<'_, 's, 'r>) {}

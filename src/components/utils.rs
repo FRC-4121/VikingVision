@@ -20,7 +20,7 @@ impl Component for DebugComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, _: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _: &str) -> OutputKind {
         OutputKind::None
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
@@ -88,7 +88,7 @@ impl Component for CloneComponent {
             .get_state_flat()
             .map_or(Inputs::none(), |c| c.inputs())
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, name: &str) -> OutputKind {
         self.inner
             .get_state_flat()
             .map_or(OutputKind::None, |c| c.output_kind(name))
@@ -133,8 +133,8 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::None
@@ -144,7 +144,7 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
         let Ok(data) = context.get_as::<T>(None).and_log_err() else {
             return;
         };
-        context.submit(None, Mutex::new(T::clone(&data)));
+        context.submit("", Mutex::new(T::clone(&data)));
     }
 }
 
@@ -290,7 +290,7 @@ impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> 
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _name: &str) -> OutputKind {
         OutputKind::None
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
@@ -352,8 +352,8 @@ impl Component for FpsComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_some_and(|n| ["min", "max", "fps", "pretty"].contains(&n)) {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if ["min", "max", "fps", "pretty"].contains(&name) {
             OutputKind::Single
         } else {
             OutputKind::None

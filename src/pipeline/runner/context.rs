@@ -28,7 +28,7 @@ pub struct ComponentContextInner<'r> {
     pub(super) input: InputKind,
     pub(super) callback: Option<Callback<'r>>,
     pub(super) run_id: RunId,
-    pub(super) branch_count: Mutex<LiteMap<Option<SmolStr>, u32>>,
+    pub(super) branch_count: Mutex<LiteMap<SmolStr, u32>>,
     /// Context to be passed in and shared between components.
     pub context: Context<'r>,
 }
@@ -199,28 +199,29 @@ impl<'r> ComponentContextInner<'r> {
     }
 
     /// Check if any components are listening on a given channel.
-    pub fn listening<'b>(&self, channel: impl Into<Option<&'b str>>) -> bool {
+    pub fn listening(&self, channel: &str) -> bool {
         if self.finished() {
             return false;
         }
-        let channel: Option<&'b str> = channel.into();
         self.component
             .dependents
-            .get(&channel.map(SmolStr::from))
+            .get(channel)
             .is_some_and(|d| !d.is_empty())
     }
 
     /// Run a callback to submit to a channel, if there's a listener on the channel.
-    pub fn submit_if_listening<'b, 's, D: IntoData, F: FnOnce() -> D>(
+    pub fn submit_if_listening<'s, D: IntoData, F: FnOnce() -> D>(
         &self,
-        channel: impl Into<Option<&'b str>>,
+        channel: &str,
         create: F,
         scope: &rayon::Scope<'s>,
     ) -> bool
     where
         'r: 's,
     {
-        let channel = channel.into();
+        if channel.starts_with('$') {
+            tracing::warn!(channel, "submitted to a special-use channel");
+        }
         let listening = self.listening(channel);
         if listening {
             let data = create().into_data();
@@ -233,23 +234,18 @@ impl<'r> ComponentContextInner<'r> {
     ///
     /// This immediately runs any listening components if possible.
     #[inline(always)]
-    pub fn submit<'b, 's>(
-        &self,
-        channel: impl Into<Option<&'b str>>,
-        data: impl IntoData,
-        scope: &rayon::Scope<'s>,
-    ) where
+    pub fn submit<'s>(&self, channel: &str, data: impl IntoData, scope: &rayon::Scope<'s>)
+    where
         'r: 's,
     {
-        let channel = channel.into();
-        if channel.is_some_and(|v| v.starts_with('$')) {
-            tracing::warn!(?channel, "submitted to a special-use channel");
+        if channel.starts_with('$') {
+            tracing::warn!(channel, "submitted to a special-use channel");
         }
         self.submit_impl(channel, data.into_data(), scope);
     }
 
     /// Internal implementation of `submit` that handles data distribution and scheduling.
-    fn submit_impl<'s>(&self, channel: Option<&str>, data: Arc<dyn Data>, scope: &rayon::Scope<'s>)
+    fn submit_impl<'s>(&self, channel: &str, data: Arc<dyn Data>, scope: &rayon::Scope<'s>)
     where
         'r: 's,
     {
@@ -257,7 +253,7 @@ impl<'r> ComponentContextInner<'r> {
         let dependents = self
             .component
             .dependents
-            .get(&channel.map(SmolStr::from))
+            .get(channel)
             .map_or(&[] as _, Vec::as_slice);
         if dependents.is_empty() {
             return;
@@ -265,15 +261,15 @@ impl<'r> ComponentContextInner<'r> {
         let mut cloned;
         let run_id = match self.component.component.output_kind(channel) {
             OutputKind::None => {
-                if channel.is_none_or(|v| !v.starts_with('$')) {
-                    tracing::warn!(?channel, "submitted output to channel that wasn't expected");
+                if !channel.starts_with('$') {
+                    tracing::warn!(channel, "submitted output to channel that wasn't expected");
                 }
                 &self.run_id
             }
             OutputKind::Single => &self.run_id,
             OutputKind::Multiple => {
                 let mut guard = self.branch_count.lock().unwrap();
-                let b = guard.entry(channel.map(From::from)).or_insert(0);
+                let b = guard.entry(channel.into()).or_insert(0);
                 let old = *b;
                 *b += 1;
                 cloned = self.run_id.clone();
@@ -502,7 +498,7 @@ impl<'r> ComponentContextInner<'r> {
             return;
         }
         if let Some(scope) = signal {
-            self.submit_impl(Some("$finish"), UNIT_ARC.clone(), scope);
+            self.submit_impl("$finish", UNIT_ARC.clone(), scope);
         }
         let mut propagate = false;
         match (&self.component.input_mode, &self.input) {
@@ -642,17 +638,13 @@ impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
     }
     /// Publish a result on a given channel.
     #[inline(always)]
-    pub fn submit<'b>(&self, channel: impl Into<Option<&'b str>>, data: impl IntoData) {
+    pub fn submit(&self, channel: &str, data: impl IntoData) {
         self.inner.submit(channel, data, self.scope);
     }
 
     /// Publish a result on a given channel, if there's a listener.
     #[inline(always)]
-    pub fn submit_if_listening<'b, D: IntoData, F: FnOnce() -> D>(
-        &self,
-        channel: impl Into<Option<&'b str>>,
-        create: F,
-    ) {
+    pub fn submit_if_listening<D: IntoData, F: FnOnce() -> D>(&self, channel: &str, create: F) {
         self.inner.submit_if_listening(channel, create, self.scope);
     }
 

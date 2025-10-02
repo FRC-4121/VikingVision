@@ -14,8 +14,8 @@
 //! #         fn inputs(&self) -> Inputs {
 //! #             Inputs::Primary
 //! #         }
-//! #         fn output_kind(&self, name: Option<&str>) -> OutputKind {
-//! #             if name.is_none() {
+//! #         fn output_kind(&self, name: &str) -> OutputKind {
+//! #             if name.is_empty() {
 //! #                 OutputKind::Single
 //! #             } else {
 //! #                 OutputKind::None
@@ -23,7 +23,7 @@
 //! #         }
 //! #         fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
 //! #             if let Some(data) = ctx.get(None) {
-//! #                 ctx.submit(None, data);
+//! #                 ctx.submit("", data);
 //! #             }
 //! #         }
 //! #     }
@@ -279,10 +279,10 @@ impl<Marker> Default for ComponentId<Marker> {
 }
 
 #[derive(Debug, Default)]
-pub struct ComponentChannel<Marker>(pub ComponentId<Marker>, pub Option<SmolStr>);
+pub struct ComponentChannel<Marker>(pub ComponentId<Marker>, pub SmolStr);
 
 impl<Marker> ComponentChannel<Marker> {
-    pub const PLACEHOLDER: Self = Self(ComponentId::PLACEHOLDER, None);
+    pub const PLACEHOLDER: Self = Self(ComponentId::PLACEHOLDER, SmolStr::new_static(""));
     #[inline(always)]
     pub fn is_placeholder(&self) -> bool {
         self.0.is_placeholder()
@@ -329,8 +329,8 @@ impl<Marker> Ord for ComponentChannel<Marker> {
 impl<Marker> Display for ComponentChannel<Marker> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)?;
-        if let Some(chan) = &self.1 {
-            write!(f, "/{chan}")
+        if self.1.is_empty() {
+            write!(f, "/{}", self.1)
         } else {
             Ok(())
         }
@@ -389,15 +389,15 @@ pub mod prelude {
             fn inputs(&self) -> Inputs {
                 Inputs::none()
             }
-            fn output_kind(&self, name: Option<&str>) -> OutputKind {
-                if name.is_none() {
+            fn output_kind(&self, name: &str) -> OutputKind {
+                if name.is_empty() {
                     OutputKind::Single
                 } else {
                     OutputKind::None
                 }
             }
             fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
-                ctx.submit(None, Arc::new("data".to_string()));
+                ctx.submit("", Arc::new("data".to_string()));
             }
         }
 
@@ -406,7 +406,7 @@ pub mod prelude {
             fn inputs(&self) -> Inputs {
                 Inputs::Primary
             }
-            fn output_kind(&self, _: Option<&str>) -> OutputKind {
+            fn output_kind(&self, _: &str) -> OutputKind {
                 OutputKind::None
             }
             fn run<'s, 'r: 's>(&self, _: ComponentContext<'_, 's, 'r>) {}

@@ -277,8 +277,8 @@ impl<T: Drawable> Component for DrawComponent<T> {
     fn inputs(&self) -> Inputs {
         Inputs::named(["canvas", "elem"])
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name == Some("echo") {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name == "echo" {
             OutputKind::Single
         } else {
             OutputKind::None
