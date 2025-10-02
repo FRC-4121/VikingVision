@@ -577,12 +577,16 @@ impl PipelineGraph {
     pub fn remove_component<C: ComponentSpecifier<Self>>(&mut self, id: C) -> Result<(), C::Error> {
         let id = ComponentSpecifier::resolve(&id, self)?;
         self.detach_impl(id);
-        let comp = &mut self.components[id.index()];
+        let idx = id.index();
+        let comp = &mut self.components[idx];
         if comp.in_lookup {
             self.lookup.remove(&comp.name);
         }
         comp.component = DEFAULT_COMPONENT.clone();
         comp.name = DEFAULT_NAME;
+        if idx < self.first_free {
+            self.first_free = idx;
+        }
         Ok(())
     }
     fn detach_impl(&mut self, id: GraphComponentId) {
@@ -841,15 +845,15 @@ impl PipelineGraph {
         tracing::debug!(iters, "finished topological sort");
 
         if components.len() < self.components.len() {
-            return Err(CompileError::ContainsCycle(
-                self.components
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(n, c)| {
-                        (!c.is_placeholder()).then_some((ComponentId::new(n), c.name))
-                    })
-                    .collect(),
-            ));
+            let cycle: Vec<_> = self
+                .components
+                .into_iter()
+                .enumerate()
+                .filter_map(|(n, c)| (!c.is_placeholder()).then_some((ComponentId::new(n), c.name)))
+                .collect();
+            if !cycle.is_empty() {
+                return Err(CompileError::ContainsCycle(cycle));
+            }
         }
 
         for i in 0..auxiliary.len() {

@@ -56,24 +56,25 @@ fn assert_terminates<T: Debug>(recv: Receiver<Option<T>>) -> Vec<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Msg2 {
+    Send,
+    Recv,
+}
+
 #[test]
 fn simple() {
     let _guard = tracing_subscriber::fmt()
         .with_test_writer()
         .finish()
         .set_default();
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    enum Msg {
-        Send,
-        Recv,
-    }
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg::Send), "prod")
+        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
         .unwrap();
     let cons = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg::Recv), "cons")
+        .add_named_component(Cmp::new(tx.clone(), Msg2::Recv), "cons")
         .unwrap();
     graph.add_dependency((prod, "s1"), (cons, "in")).unwrap();
     println!("{graph:#?}");
@@ -91,7 +92,7 @@ fn simple() {
             .unwrap();
         assert_terminates(rx)
     });
-    assert_eq!(resp, &[Msg::Send, Msg::Recv]);
+    assert_eq!(resp, &[Msg2::Send, Msg2::Recv]);
     runner.assert_clean().unwrap();
 }
 
@@ -101,18 +102,13 @@ fn duplicating() {
         .with_test_writer()
         .finish()
         .set_default();
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    enum Msg {
-        Send,
-        Recv,
-    }
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg::Send), "prod")
+        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
         .unwrap();
     let cons = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg::Recv), "cons")
+        .add_named_component(Cmp::new(tx.clone(), Msg2::Recv), "cons")
         .unwrap();
     graph.add_dependency((prod, "d1"), (cons, "in")).unwrap();
     println!("{graph:#?}");
@@ -130,6 +126,46 @@ fn duplicating() {
             .unwrap();
         assert_terminates(rx)
     });
-    assert_eq!(resp, &[Msg::Send, Msg::Recv, Msg::Recv]);
+    assert_eq!(resp, &[Msg2::Send, Msg2::Recv, Msg2::Recv]);
+    runner.assert_clean().unwrap();
+}
+
+#[test]
+fn graph_mutation() {
+    let _guard = tracing_subscriber::fmt()
+        .with_test_writer()
+        .finish()
+        .set_default();
+    let mut graph = PipelineGraph::new();
+    let (tx, rx) = channel();
+    let p1 = graph
+        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
+        .unwrap();
+    let cons = graph
+        .add_named_component(Cmp::new(tx.clone(), Msg2::Recv), "cons")
+        .unwrap();
+    graph.add_dependency((p1, "d2"), (cons, "in")).unwrap();
+    graph.remove_component(p1).unwrap();
+    let p2 = graph
+        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
+        .unwrap();
+    graph.add_dependency((p2, "s1"), (cons, "in")).unwrap();
+    println!("{graph:#?}");
+    let (remap, runner) = graph.compile().unwrap();
+    assert_eq!(runner.components().len(), 2);
+    let p2 = remap[p2];
+    let resp = rayon::scope(|scope| {
+        runner
+            .run(
+                (p2, [("in", ())])
+                    .into_run_params(&runner)
+                    .unwrap()
+                    .with_callback(|_| tx.send(None).unwrap()),
+                scope,
+            )
+            .unwrap();
+        assert_terminates(rx)
+    });
+    assert_eq!(resp, &[Msg2::Send, Msg2::Recv]);
     runner.assert_clean().unwrap();
 }
