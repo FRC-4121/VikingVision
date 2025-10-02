@@ -87,10 +87,12 @@ impl PixelFormat {
             _ => None,
         }
     }
+    #[cfg(feature = "v4l")]
     pub const fn known_fourcc(fourcc: v4l::FourCC) -> bool {
         matches!(&fourcc.repr, b"YUYV" | b"RGB8" | b"RGBA" | b"MJPG")
     }
 }
+#[cfg(feature = "v4l")]
 impl TryFrom<v4l::FourCC> for PixelFormat {
     type Error = UnrecognizedFourCC;
     fn try_from(value: v4l::FourCC) -> Result<Self, Self::Error> {

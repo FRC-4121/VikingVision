@@ -30,7 +30,7 @@ tracing.workspace = true
 triomphe = "0.1.14"
 ty-tag = "0.1.1"
 typetag = "0.2.20"
-v4l.workspace = true
+v4l = { workspace = true, optional = true }
 zune-jpeg = "0.4.14"
 zune-png = "0.4.10"
 
@@ -39,8 +39,9 @@ anyhow = "1.0"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [features]
-default = ["apriltag"]
+default = ["apriltag", "v4l"]
 apriltag = ["dep:apriltag-sys", "dep:libc"]
+v4l = ["dep:v4l"]
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }

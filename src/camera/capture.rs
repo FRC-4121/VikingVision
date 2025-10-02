@@ -1,3 +1,5 @@
+#![cfg(feature = "v4l")]
+
 use super::CameraImpl;
 use super::config::{BasicConfig, CameraConfig};
 use crate::buffer::{Buffer, PixelFormat};

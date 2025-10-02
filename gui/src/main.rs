@@ -4,8 +4,10 @@ use std::error::Error;
 use std::io;
 use std::path::PathBuf;
 use tracing::error;
+#[cfg(feature = "v4l")]
 use v4l::Device;
 use viking_vision::camera::Camera;
+#[cfg(feature = "v4l")]
 use viking_vision::camera::capture::CaptureCamera;
 use viking_vision::camera::config::{BasicConfig, CameraConfig};
 use viking_vision::camera::frame::{Color, FrameCameraConfig};
@@ -13,6 +15,7 @@ use viking_vision::pipeline::daemon::DaemonHandle;
 
 mod camera;
 
+#[cfg(feature = "v4l")]
 fn open_from_v4l_path(
     cameras: &mut Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
 ) -> impl FnMut(&PathBuf) -> bool {
@@ -134,6 +137,7 @@ struct Monochrome {
 
 #[derive(Debug)]
 struct VikingVision {
+    #[cfg(feature = "v4l")]
     open_caps: Vec<PathBuf>,
     open_imgs: Vec<PathBuf>,
     monochrome: Vec<Monochrome>,
@@ -145,6 +149,7 @@ struct VikingVision {
 }
 impl VikingVision {
     fn new(ctx: &CreationContext) -> io::Result<Self> {
+        #[cfg(feature = "v4l")]
         let mut open_caps = ctx
             .storage
             .and_then(|s| s.get_string("open_caps"))
@@ -173,6 +178,7 @@ impl VikingVision {
         while monochrome.iter().any(|m| m.id == mono_count) {
             mono_count += 1; // I don't care enough to do this right
         }
+        #[cfg(feature = "v4l")]
         open_caps.retain(open_from_v4l_path(&mut cameras));
         open_imgs.retain(open_from_img_path(&mut cameras));
         let text_buffers = ctx
@@ -186,6 +192,7 @@ impl VikingVision {
             .and_then(|s| s.parse().ok())
             .unwrap_or_default();
         Ok(Self {
+            #[cfg(feature = "v4l")]
             open_caps,
             open_imgs,
             monochrome,
@@ -212,6 +219,7 @@ impl App for VikingVision {
                 ui.collapsing("Textures", |ui| ctx.texture_ui(ui));
                 ui.collapsing("Memory", |ui| ctx.memory_ui(ui));
             });
+        #[cfg(feature = "v4l")]
         {
             let mut i = self.open_caps.len();
             egui::Window::new("V4L Cameras").show(ctx, camera::show_cams(&mut self.open_caps));
@@ -285,6 +293,7 @@ impl App for VikingVision {
             }
             if handle.is_finished() {
                 match &state.ident {
+                    #[cfg(feature = "v4l")]
                     camera::Ident::V4l(path) => self.open_caps.retain(|p| p != path),
                     camera::Ident::Img(path) => self.open_imgs.retain(|p| p != path),
                     camera::Ident::Mono(ident) => self.monochrome.retain(|m| m.id != *ident),
@@ -325,6 +334,7 @@ impl App for VikingVision {
         });
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        #[cfg(feature = "v4l")]
         storage.set_string(
             "open_caps",
             self.open_caps.iter().filter_map(|c| c.to_str()).fold(

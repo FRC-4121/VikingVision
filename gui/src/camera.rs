@@ -1,20 +1,27 @@
 use eframe::egui;
+#[cfg(feature = "v4l")]
 use egui_extras::{Column, TableBuilder};
 use std::cell::Cell;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "v4l")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::error;
+#[cfg(feature = "v4l")]
 use v4l::FourCC;
+#[cfg(feature = "v4l")]
 use v4l::video::Capture;
 use viking_vision::broadcast::par_broadcast1;
 use viking_vision::buffer::{Buffer, PixelFormat};
 use viking_vision::camera::Camera;
+#[cfg(feature = "v4l")]
 use viking_vision::camera::capture::CaptureCamera;
 use viking_vision::camera::frame::{Color, FrameCamera, ImageSource};
 use viking_vision::pipeline::daemon::{DaemonHandle, Worker};
 use viking_vision::utils::FpsCounter;
 
+#[cfg(feature = "v4l")]
 fn enum_cams() -> Vec<PathBuf> {
     v4l::context::enum_devices()
         .iter()
@@ -22,6 +29,7 @@ fn enum_cams() -> Vec<PathBuf> {
         .collect()
 }
 
+#[cfg(feature = "v4l")]
 pub fn path_index(path: &Path) -> Option<usize> {
     let name = path.file_name()?.to_str()?;
     if let Ok(dev) = path.strip_prefix("/dev/") {
@@ -35,6 +43,8 @@ pub fn path_index(path: &Path) -> Option<usize> {
     }
     None
 }
+
+#[cfg(feature = "v4l")]
 pub fn dev_name(path: &Path) -> Option<String> {
     let index = path_index(path)?;
     let mut buf = PathBuf::from("/sys/class/video4linux");
@@ -47,6 +57,7 @@ pub fn dev_name(path: &Path) -> Option<String> {
     Some(name)
 }
 
+#[cfg(feature = "v4l")]
 pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnOnce(&mut egui::Ui) {
     move |ui| {
         let refresh = ui.button("Refresh").clicked();
@@ -154,6 +165,7 @@ pub fn show_controls(
     move |ui| {
         let mut ret = None;
         let mut lock = handle.context().context.locked.lock().unwrap();
+        #[cfg(feature = "v4l")]
         if let Some(opts) = &mut lock.cap {
             ui.collapsing("V4L Options", |ui| {
                 {
@@ -242,6 +254,7 @@ pub fn show_controls(
 
 #[derive(Debug)]
 pub enum Ident {
+    #[cfg(feature = "v4l")]
     V4l(PathBuf),
     Img(PathBuf),
     Mono(usize),
@@ -252,6 +265,7 @@ pub struct State {
     pub ident: Ident,
 }
 
+#[cfg(feature = "v4l")]
 #[derive(Debug, Default)]
 pub struct CapOptions {
     pub fourcc: FourCC,
@@ -278,6 +292,7 @@ pub struct MonochromeOptions {
 pub struct LockedState {
     pub frame: Buffer<'static>,
     pub fps: FpsCounter,
+    #[cfg(feature = "v4l")]
     pub cap: Option<CapOptions>,
     pub mono: Option<MonochromeOptions>,
 }
@@ -318,6 +333,7 @@ impl Worker<Context> for CameraWorker {
                 };
                 frame.convert_into(&mut state.frame);
                 state.fps.tick();
+                #[cfg(feature = "v4l")]
                 if let Some(capture) = camera.downcast_mut::<CaptureCamera>() {
                     let opts = state.cap.get_or_insert_default();
                     let dev = &capture.device;
