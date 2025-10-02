@@ -1,7 +1,9 @@
 use crate::camera::config::CameraConfig;
+use crate::pipeline::UnknownComponentName;
 use crate::pipeline::component::ComponentFactory;
-use crate::pipeline::runner::{AddComponentError, AddDependencyError, PipelineRunner};
+use crate::pipeline::graph::{AddDependencyError, DuplicateNamedComponent, PipelineGraph};
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use supply::prelude::*;
@@ -25,7 +27,7 @@ pub enum ParseSourceError {
 #[serde(try_from = "&str")]
 pub struct Source {
     pub component: String,
-    pub channel: Option<String>,
+    pub channel: Option<SmolStr>,
 }
 impl Display for Source {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -56,7 +58,7 @@ impl TryFrom<&str> for Source {
             }
             Ok(Source {
                 component: component.to_string(),
-                channel: Some(channel.to_string()),
+                channel: Some(channel.into()),
             })
         } else {
             if let Some((n, _)) = value
@@ -91,7 +93,7 @@ pub enum InputConfig {
     /// One input, on the default channel
     Single(Source),
     /// Multiple named inputs
-    Multiple(HashMap<String, Source>),
+    Multiple(HashMap<SmolStr, Source>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -105,9 +107,9 @@ pub struct ComponentConfig {
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum BuildRunnerError<'a> {
     #[error(transparent)]
-    AddComponentError(AddComponentError),
+    AddComponentError(DuplicateNamedComponent),
     #[error(transparent)]
-    AddDependencyError(AddDependencyError<'a>),
+    AddDependencyError(AddDependencyError<UnknownComponentName, UnknownComponentName>),
     #[error("No component named {0:?}")]
     NoComponent(&'a str),
 }
@@ -149,12 +151,12 @@ pub struct ConfigFile {
     #[serde(alias = "camera")]
     pub cameras: HashMap<String, Box<dyn CameraConfig>>,
     #[serde(alias = "component")]
-    pub components: HashMap<String, ComponentConfig>,
+    pub components: HashMap<SmolStr, ComponentConfig>,
 }
 impl ConfigFile {
-    pub fn add_to_runner(
+    pub fn add_to_graph(
         &self,
-        runner: &mut PipelineRunner,
+        graph: &mut PipelineGraph,
         context: &mut dyn ProviderDyn,
     ) -> Result<(), BuildRunnerError<'_>> {
         for (name, config) in &self.components {
@@ -162,34 +164,28 @@ impl ConfigFile {
                 inner: context,
                 name,
             });
-            runner
-                .add_component(name.clone(), component.into())
+            graph
+                .add_named_component(component.into(), name.clone())
                 .map_err(BuildRunnerError::AddComponentError)?;
         }
         for (name, config) in &self.components {
             if config.input == InputConfig::None {
                 continue;
             }
-            let sub_id = runner.components()[name.as_str()];
             match &config.input {
                 InputConfig::None => unreachable!(),
                 InputConfig::Single(s) => {
-                    let pub_id = *runner
-                        .components()
-                        .get(s.component.as_str())
-                        .ok_or(BuildRunnerError::NoComponent(&s.component))?;
-                    runner
-                        .add_dependency(pub_id, s.channel.as_deref(), sub_id, None)
+                    graph
+                        .add_dependency((s.component.as_str(), s.channel.clone()), name)
                         .map_err(BuildRunnerError::AddDependencyError)?;
                 }
                 InputConfig::Multiple(m) => {
                     for (channel, s) in m {
-                        let pub_id = *runner
-                            .components()
-                            .get(s.component.as_str())
-                            .ok_or(BuildRunnerError::NoComponent(&s.component))?;
-                        runner
-                            .add_dependency(pub_id, s.channel.as_deref(), sub_id, Some(channel))
+                        graph
+                            .add_dependency(
+                                (s.component.as_str(), s.channel.clone()),
+                                (name, channel),
+                            )
                             .map_err(BuildRunnerError::AddDependencyError)?;
                     }
                 }
@@ -198,11 +194,11 @@ impl ConfigFile {
         Ok(())
     }
     #[inline(always)]
-    pub fn build_runner(
+    pub fn build_graph(
         &self,
         context: &mut dyn ProviderDyn,
-    ) -> Result<PipelineRunner, BuildRunnerError<'_>> {
-        let mut runner = PipelineRunner::new();
-        self.add_to_runner(&mut runner, context).map(|_| runner)
+    ) -> Result<PipelineGraph, BuildRunnerError<'_>> {
+        let mut graph = PipelineGraph::new();
+        self.add_to_graph(&mut graph, context).map(|_| graph)
     }
 }

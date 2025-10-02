@@ -275,16 +275,16 @@ impl<T: Drawable> DrawComponent<T> {
 }
 impl<T: Drawable> Component for DrawComponent<T> {
     fn inputs(&self) -> Inputs {
-        Inputs::Named(vec!["canvas".to_string(), "elem".to_string()])
+        Inputs::named(["canvas", "elem"])
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name == Some("echo") {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name == "echo" {
             OutputKind::Single
         } else {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(canvas) = context.get_as::<Mutex<Buffer>>("canvas").and_log_err() else {
             return;
         };

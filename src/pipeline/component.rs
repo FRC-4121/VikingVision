@@ -1,5 +1,10 @@
-use super::runner::{ComponentContext, ComponentId, PipelineRunner};
+//! Definition of the [`Component`] trait
+//!
+//! See the documentation for [`Component`] for more information on implementation.
+
+use super::runner::ComponentContext;
 use crate::buffer::Buffer;
+use crate::pipeline::graph::{GraphComponentId, IdResolver, PipelineGraph};
 use crate::utils::LogErr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
@@ -88,6 +93,8 @@ impl dyn Data {
         }
     }
 }
+
+/// A type that can be converted into a [`Arc<dyn Data>`]
 pub trait IntoData {
     fn into_data(self) -> Arc<dyn Data>;
 }
@@ -222,13 +229,16 @@ pub enum Inputs {
     /// This component takes inputs through its primary input.
     Primary,
     /// This component takes multiple, named inputs (or none at all).
-    Named(Vec<String>),
+    Named(Vec<smol_str::SmolStr>),
 }
 impl Inputs {
     /// `Named(Vec::new())` means a component taktes no inputs; this is just an alias for that.
     #[inline(always)]
     pub const fn none() -> Self {
         Self::Named(Vec::new())
+    }
+    pub fn named<S: Into<smol_str::SmolStr>, I: IntoIterator<Item = S>>(iter: I) -> Self {
+        Self::Named(iter.into_iter().map(Into::into).collect())
     }
 }
 
@@ -248,36 +258,56 @@ impl Inputs {
 ///
 /// impl Component for ImageProcessor {
 ///     fn inputs(&self) -> Inputs {
-///         Inputs::Named(vec!["image".to_string()])
+///         Inputs::named(["image"])
 ///     }
 ///
-///     fn output_kind(&self, name: Option<&str>) -> OutputKind {
+///     fn output_kind(&self, name: &str) -> OutputKind {
 ///         match name {
-///             None => OutputKind::Single,
-///             Some("debug") => OutputKind::Multiple,
+///             "" => OutputKind::Single,
+///             "debug" => OutputKind::Multiple,
 ///             _ => OutputKind::None,
 ///         }
 ///     }
 ///
-///     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'r, '_, 's>) {
+///     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
 ///         let Ok(image) = ctx.get_as::<Buffer<'static>>("image").and_log_err() else { return };
 ///         
 ///         // Process image...
 ///         let result = process_image(&image);
 ///         
 ///         // Submit result
-///         ctx.submit(None, Arc::new(result));
+///         ctx.submit("", Arc::new(result));
 ///     }
 /// }
 /// ```
+#[allow(unused_variables)]
 pub trait Component: Send + Sync + 'static {
     /// Get the inputs that this component is expecting.
+    ///
+    /// This should specify the values that a component *needs* in order to run.
     fn inputs(&self) -> Inputs;
+    /// Check if this component can take an additional input.
+    ///
+    /// This is only called if an input wasn't specified as an input through [`inputs`](Self::inputs).
+    fn can_take(&self, input: &str) -> bool {
+        false
+    }
     /// Check if an output channel is available.
-    fn output_kind(&self, name: Option<&str>) -> OutputKind;
+    fn output_kind(&self, name: &str) -> OutputKind;
     /// Run a component on a given input.
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>);
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>);
     /// Perform startup initialization on this component.
-    #[allow(unused_variables)]
-    fn initialize(&self, runner: &mut PipelineRunner, self_id: ComponentId) {}
+    fn initialize(&self, graph: &mut PipelineGraph, self_id: GraphComponentId) {}
+    /// Remap any indices on compilation, if necessary.
+    fn remap(&self, resolver: &IdResolver) {}
+}
+
+/// Get the output of a component for a channel.
+///
+/// This wraps [`Component::output_kind`] but overrides the channel for special output channels (currently just `$finish`).
+pub fn component_output(component: &dyn Component, channel: &str) -> OutputKind {
+    match channel {
+        "$finish" => OutputKind::Single,
+        _ => component.output_kind(channel),
+    }
 }

@@ -1,4 +1,4 @@
-use crate::pipeline::runner::ComponentId;
+use crate::pipeline::graph::GraphComponentId;
 
 pub mod apriltag;
 pub mod draw;
@@ -14,15 +14,15 @@ pub mod vision;
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComponentIdentifier {
     Name(String),
-    Id(ComponentId),
+    Id(GraphComponentId),
 }
 impl From<String> for ComponentIdentifier {
     fn from(value: String) -> Self {
         Self::Name(value)
     }
 }
-impl From<ComponentId> for ComponentIdentifier {
-    fn from(value: ComponentId) -> Self {
+impl From<GraphComponentId> for ComponentIdentifier {
+    fn from(value: GraphComponentId) -> Self {
         Self::Id(value)
     }
 }

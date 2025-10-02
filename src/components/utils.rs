@@ -20,10 +20,10 @@ impl Component for DebugComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, _: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _: &str) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(val) = context.get_res(None).and_log_err() else {
             return;
         };
@@ -41,7 +41,7 @@ impl ComponentFactory for DebugFactory {
     }
 }
 
-impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRunner>
+impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineGraph>
     for PhantomData<CloneComponent>
 {
     fn name(&self) -> impl std::fmt::Display {
@@ -50,7 +50,7 @@ impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRun
     fn configure(
         &self,
         config: ComponentIdentifier,
-        arg: &mut PipelineRunner,
+        arg: &mut PipelineGraph,
     ) -> Option<Arc<dyn Component>> {
         match config {
             ComponentIdentifier::Id(id) => {
@@ -61,7 +61,7 @@ impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineRun
                 component.cloned()
             }
             ComponentIdentifier::Name(name) => {
-                let id = arg.components().get(&*name);
+                let id = arg.lookup().get(&*name);
                 if id.is_none() {
                     error!(name = name, "couldn't resolve component name");
                 }
@@ -88,17 +88,17 @@ impl Component for CloneComponent {
             .get_state_flat()
             .map_or(Inputs::none(), |c| c.inputs())
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, name: &str) -> OutputKind {
         self.inner
             .get_state_flat()
             .map_or(OutputKind::None, |c| c.output_kind(name))
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         if let Some(comp) = self.inner.get_state_flat() {
             comp.run(context);
         }
     }
-    fn initialize(&self, runner: &mut PipelineRunner, _self_id: ComponentId) {
+    fn initialize(&self, runner: &mut PipelineGraph, _self_id: GraphComponentId) {
         self.inner.init(runner);
     }
 }
@@ -133,18 +133,18 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_none() {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
             OutputKind::Single
         } else {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(data) = context.get_as::<T>(None).and_log_err() else {
             return;
         };
-        context.submit(None, Mutex::new(T::clone(&data)));
+        context.submit("", Mutex::new(T::clone(&data)));
     }
 }
 
@@ -290,10 +290,10 @@ impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> 
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _name: &str) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Some(val) = context
             .get_res(None)
             .and_log_err()
@@ -352,14 +352,14 @@ impl Component for FpsComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, name: Option<&str>) -> OutputKind {
-        if name.is_some_and(|n| ["min", "max", "fps", "pretty"].contains(&n)) {
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if ["min", "max", "fps", "pretty"].contains(&name) {
             OutputKind::Single
         } else {
             OutputKind::None
         }
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(mut lock) = self.inner.lock() else {
             error!("poisoned FPS counter lock");
             return;

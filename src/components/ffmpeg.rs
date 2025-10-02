@@ -95,10 +95,10 @@ impl Component for FfmpegComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
-    fn output_kind(&self, _name: Option<&str>) -> OutputKind {
+    fn output_kind(&self, _name: &str) -> OutputKind {
         OutputKind::None
     }
-    fn run<'s, 'r: 's>(&self, context: ComponentContext<'r, '_, 's>) {
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let Ok(frame) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
