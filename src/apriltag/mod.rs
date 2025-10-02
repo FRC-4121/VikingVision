@@ -275,7 +275,6 @@ pub struct DetectorConfig {
     pub decimate: Option<f32>,
 }
 
-#[derive(Debug)]
 pub struct Detector {
     ptr: *mut apriltag_detector_t,
 }
@@ -293,6 +292,26 @@ impl Drop for Detector {
 impl Default for Detector {
     fn default() -> Self {
         Self::new()
+    }
+}
+impl Debug for Detector {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        unsafe {
+            let d = &*self.ptr;
+            f.debug_struct("Detector")
+                .field("ptr", &self.ptr)
+                .field("nthreads", &d.nthreads)
+                .field("quad_decimate", &d.quad_decimate)
+                .field("quad_sigma", &d.quad_sigma)
+                .field("refine_edges", &d.refine_edges)
+                .field("decode_sharpening", &d.decode_sharpening)
+                .field("debug", &d.debug)
+                .field("qtp", &d.qtp)
+                .field("nedges", &d.nedges)
+                .field("nsegments", &d.nsegments)
+                .field("nquads", &d.nquads)
+                .finish()
+        }
     }
 }
 impl Detector {
@@ -395,7 +414,7 @@ impl Detector {
             | PixelFormat::Rgb
             | PixelFormat::Rgba
             | PixelFormat::Hsv
-            | PixelFormat::Hsva => buffer.convert_inplace(PixelFormat::Gray),
+            | PixelFormat::Hsva => buffer.convert_inplace(PixelFormat::Luma),
             PixelFormat::LumaA | PixelFormat::YCbCr | PixelFormat::YCbCrA | PixelFormat::Yuyv => {
                 buffer.convert_inplace(PixelFormat::Luma)
             }
@@ -406,6 +425,21 @@ impl Detector {
             "Buffer lengths don't match"
         );
         unsafe {
+            // let stride = (buffer.width * 96).div_ceil(96);
+            // let len = stride as usize * buffer.height as usize;
+            // let mut data = std::alloc::alloc(std::alloc::Layout::from_size_align(len, 8).unwrap());
+            // let raw = image_u8 {
+            //     width: buffer.width as _,
+            //     height: buffer.height as _,
+            //     stride: stride as _,
+            //     buf: data,
+            // };
+            // let mut src = buffer.data.as_ptr();
+            // for _ in 0..buffer.height {
+            //     std::ptr::copy_nonoverlapping(src, data, buffer.width as usize);
+            //     src = src.add(buffer.width as usize);
+            //     data = data.add(stride as usize);
+            // }
             let raw = image_u8 {
                 width: buffer.width as _,
                 height: buffer.height as _,
@@ -540,7 +574,7 @@ impl Clone for Detection {
             let ptr = libc::malloc(size_of::<apriltag_detection_t>()) as *mut _;
             std::ptr::copy_nonoverlapping(self.ptr, ptr, 1);
             (*ptr).H = libc::malloc(size_of::<matd_t>()) as *mut _;
-            std::ptr::copy_nonoverlapping((*ptr).H, (*self.ptr).H, 1);
+            std::ptr::copy_nonoverlapping((*self.ptr).H, (*ptr).H, 1);
             Self { ptr }
         }
     }
@@ -580,7 +614,7 @@ impl Detection {
             let mat = &*data.H;
             assert_eq!(mat.ncols, 3);
             assert_eq!(mat.nrows, 3);
-            buf.copy_from_slice(mat.data.as_slice(9));
+            std::ptr::copy_nonoverlapping(mat.data.as_ptr(), buf.as_mut_ptr(), 9);
             buf
         }
     }
