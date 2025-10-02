@@ -33,7 +33,6 @@ pub(crate) struct MutableData {
 pub(crate) enum InputMode {
     Single {
         name: Option<SmolStr>,
-        #[allow(clippy::type_complexity)]
         refs: Mutex<Vec<(SmallVec<[u32; 2]>, NonZero<u32>)>>,
     },
     Multiple {
@@ -83,7 +82,6 @@ impl RunId {
 pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
-    #[allow(clippy::type_complexity)]
     pub(crate) dependents: HashMap<SmolStr, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
     pub(crate) input_mode: InputMode,
 }

@@ -1,4 +1,5 @@
 //! The pipeline runner, component context, and related traits and errors
+#![allow(clippy::type_complexity)]
 
 use super::component::{Component, Data};
 use super::{ComponentChannel, ComponentId};
