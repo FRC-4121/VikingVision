@@ -90,7 +90,7 @@ impl<T>
         let inputs = component.inputs();
         let mut outputs = HashMap::with_capacity(config.outputs.len());
         for (name, out) in config.outputs {
-            let id = match out.component {
+            let output_component = match out.component {
                 ComponentIdentifier::Name(name) => {
                     if let Some(&id) = graph.lookup().get(&*name) {
                         id
@@ -101,18 +101,20 @@ impl<T>
                 }
                 ComponentIdentifier::Id(id) => id,
             };
-            let Some(component) = graph.component(input_component) else {
-                error!(%id, "output component ID out of range");
+            let Some(component) = graph.component(output_component) else {
+                error!(%output_component, "output component ID out of range");
                 return None;
             };
             let mut kind = crate::pipeline::component::component_output(&**component, &name);
-            if graph.branches_between(input_component, id) {
+            if graph.branches_between(input_component, output_component) {
                 kind = OutputKind::Multiple;
             }
             let listener = Arc::new(Listener::default());
             let listen_id = graph
                 .add_hidden_component(listener.clone(), format!("listener-{self_id}: {name:?}"));
-            if let Err(err) = graph.add_dependency((id, out.channel.as_deref()), listen_id) {
+            if let Err(err) =
+                graph.add_dependency((output_component, out.channel.as_deref()), listen_id)
+            {
                 error!(%err, "failed to add primary listener");
                 return None;
             }
