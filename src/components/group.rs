@@ -34,7 +34,7 @@ impl Component for Listener {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Source {
     pub component: ComponentIdentifier,
-    pub channel: Option<String>,
+    pub channel: Option<SmolStr>,
 }
 impl From<crate::serialized::Source> for Source {
     fn from(value: crate::serialized::Source) -> Self {
@@ -113,7 +113,7 @@ impl<T>
             let listen_id = graph
                 .add_hidden_component(listener.clone(), format!("listener-{self_id}: {name:?}"));
             if let Err(err) =
-                graph.add_dependency((output_component, out.channel.as_deref()), listen_id)
+                graph.add_dependency((output_component, out.channel.clone()), listen_id)
             {
                 error!(%err, "failed to add primary listener");
                 return None;

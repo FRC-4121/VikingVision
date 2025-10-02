@@ -27,7 +27,7 @@ pub enum ParseSourceError {
 #[serde(try_from = "&str")]
 pub struct Source {
     pub component: String,
-    pub channel: Option<String>,
+    pub channel: Option<SmolStr>,
 }
 impl Display for Source {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -58,7 +58,7 @@ impl TryFrom<&str> for Source {
             }
             Ok(Source {
                 component: component.to_string(),
-                channel: Some(channel.to_string()),
+                channel: Some(channel.into()),
             })
         } else {
             if let Some((n, _)) = value

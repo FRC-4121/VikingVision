@@ -21,9 +21,9 @@ mod trait_impls {
             SmolStr::new_static("")
         }
     }
-    impl IntoChannelName for &str {
+    impl IntoChannelName for &'static str {
         fn into_channel_name(self) -> SmolStr {
-            self.into()
+            SmolStr::new_static(self)
         }
     }
     impl IntoChannelName for String {
@@ -132,9 +132,9 @@ mod trait_impls {
     }
 }
 
-/// A type that can be converted to `Option<SmolStr>`.
+/// A type that can be converted to a channel name.
 ///
-/// This works better than relying on `Into` or similar, and allows direct conversion from `()` (to `None`), string slices, and options.
+/// This works better than relying on `Into<SmolStr>` or similar because it allows conversions from `()` (to `""`) and `Option`s (to an `""` for `None`).
 pub trait IntoChannelName {
     fn into_channel_name(self) -> SmolStr;
 }
