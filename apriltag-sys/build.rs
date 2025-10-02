@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
@@ -7,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[allow(dead_code)]
 static MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 static OUT_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let path = env::var_os("OUT_DIR").expect("The OUT_DIR environment variable is not set");
