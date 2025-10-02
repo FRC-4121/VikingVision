@@ -573,8 +573,7 @@ impl Clone for Detection {
         unsafe {
             let ptr = libc::malloc(size_of::<apriltag_detection_t>()) as *mut _;
             std::ptr::copy_nonoverlapping(self.ptr, ptr, 1);
-            (*ptr).H = libc::malloc(size_of::<matd_t>()) as *mut _;
-            std::ptr::copy_nonoverlapping((*self.ptr).H, (*ptr).H, 1);
+            (*ptr).H = matd_copy((*self.ptr).H);
             Self { ptr }
         }
     }
