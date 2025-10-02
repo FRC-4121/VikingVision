@@ -47,6 +47,10 @@ impl Data for PlaceholderData {}
 pub(super) static PLACEHOLDER_DATA: LazyLock<Arc<dyn Data>> =
     LazyLock::new(|| Arc::new(PlaceholderData));
 
+/// A unique identifier for an execution of a component.
+///
+/// Each component will be called with a particular [`RunId`] at most once. They are
+/// not unique between different components, and their length is not guaranteed to be the same (if a component takes multiple inputs).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunId(pub SmallVec<[u32; 2]>);
 impl Display for RunId {
@@ -75,7 +79,7 @@ impl RunId {
     }
 }
 
-/// Data associated with components.
+/// Data associated with components in the graph.
 pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
@@ -94,8 +98,9 @@ impl Debug for ComponentData {
     }
 }
 
+/// Context passed to a post-run callback.
 #[derive(Debug)]
-pub struct CleanupContext<'r> {
+pub struct CallbackContext<'r> {
     pub runner: &'r PipelineRunner,
     pub run_id: u32,
     pub context: Context<'r>,
@@ -108,10 +113,10 @@ pub type Callback<'a> = Arc<dyn CallbackInner<'a>>;
 ///
 /// This consumes a reference to an [`Arc`], calling `self` if it's unique.
 pub trait CallbackInner<'r>: Send + Sync + 'r {
-    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>) -> bool;
+    fn call_if_unique(self: Arc<Self>, ctx: CallbackContext<'r>) -> bool;
 }
-impl<'r, F: FnOnce(CleanupContext<'r>) + Send + Sync + 'r> CallbackInner<'r> for F {
-    fn call_if_unique(self: Arc<Self>, ctx: CleanupContext<'r>) -> bool {
+impl<'r, F: FnOnce(CallbackContext<'r>) + Send + Sync + 'r> CallbackInner<'r> for F {
+    fn call_if_unique(self: Arc<Self>, ctx: CallbackContext<'r>) -> bool {
         if let Some(this) = Arc::into_inner(self) {
             let _guard = tracing::info_span!("callback", run_id = ctx.run_id);
             this(ctx);
@@ -123,7 +128,7 @@ impl<'r, F: FnOnce(CleanupContext<'r>) + Send + Sync + 'r> CallbackInner<'r> for
 }
 struct NoopCallback;
 impl<'r> CallbackInner<'r> for NoopCallback {
-    fn call_if_unique(self: Arc<Self>, _ctx: CleanupContext<'r>) -> bool {
+    fn call_if_unique(self: Arc<Self>, _ctx: CallbackContext<'r>) -> bool {
         Arc::into_inner(self).is_some()
     }
 }
@@ -248,7 +253,7 @@ impl<'a> RunParams<'a> {
     #[inline(always)]
     pub fn with_callback(
         mut self,
-        callback: impl FnOnce(CleanupContext) + Send + Sync + 'a,
+        callback: impl FnOnce(CallbackContext) + Send + Sync + 'a,
     ) -> Self {
         self.callback = Some(Arc::new(callback));
         self
@@ -324,26 +329,6 @@ pub mod markers {
 ///
 /// The marker type parameter allows for multiple implementations for the same
 /// type without conflicts.
-///
-/// # Examples
-///
-/// ```rust
-/// # use viking_vision::pipeline::prelude::for_test::*;
-/// # let mut runner = PipelineRunner::new();
-/// # let component_id = runner.add_component("processor", produce_component()).unwrap();
-///
-/// rayon::scope(|scope| {
-///     // Direct parameters
-///     let params = RunParams::new(component_id);
-///     runner.run(params, scope);
-///
-///     // Component with data
-///     runner.run((component_id, vec![1, 2, 3]), scope);
-///
-///     // Component with named inputs
-///     runner.run((component_id, [("input", "data".to_string())]), scope);
-/// });
-/// ```
 pub trait IntoRunParams<'a, Marker> {
     /// The error type returned if conversion fails
     type Error;
@@ -504,19 +489,24 @@ impl PipelineRunner {
     /// #     }
     /// #     Arc::new(NamedInput)
     /// # }
-    /// let mut runner = PipelineRunner::new();
-    /// let no_args = runner.add_component("no-args", some_component_no_args()).unwrap();
-    /// let primary = runner.add_component("primary", some_component_with_primary()).unwrap();
-    /// let named = runner.add_component("named", some_component_with_named()).unwrap();
+    /// let mut graph = PipelineGraph::new();
+    /// let no_args = graph.add_named_component(some_component_no_args(), "no-args").unwrap();
+    /// let primary = graph.add_named_component(some_component_with_primary(), "primary").unwrap();
+    /// let named = graph.add_named_component(some_component_with_named(), "named").unwrap();
+    /// let (resolver, runner) = graph.compile().unwrap();
+    /// let [no_args, primary, named] = resolver.get_all([no_args, primary, named]).map(Option::unwrap);
     /// rayon::scope(|scope| {
     ///     // Run with direct parameters
-    ///     runner.run(RunParams::new(no_args), scope).unwrap();
+    ///     runner.run(no_args, scope).unwrap();
     ///
     ///     // Run with component and data
     ///     runner.run((primary, "primary input".to_string()), scope).unwrap();
     ///
     ///     // Run with named inputs
     ///     runner.run((named, [("input", "named input".to_string())]), scope).unwrap();
+    ///
+    ///     // alternatively, look up by name
+    ///     runner.run("no-args", scope).unwrap();
     /// });
     /// ```
     #[inline(always)]

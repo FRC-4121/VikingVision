@@ -1,29 +1,4 @@
-//! A pipeline execution system for managing and running interdependent components.
-//!
-//! The pipeline system manages component execution with dependency tracking and parallel
-//! processing support. Components can be registered, connected through dependencies, and executed concurrently.
-//!
-//! # Example
-//! ```rust
-//! # use viking_vision::pipeline::prelude::for_test::{*, produce_component as process_image, consume_component as detect_features};
-//! let mut runner = PipelineRunner::new();
-//!
-//! // Register components with unique names
-//! let component_a = runner.add_component("image_processor", process_image()).unwrap();
-//! let component_b = runner.add_component("feature_detector", detect_features()).unwrap();
-//!
-//! // Set up dependencies between components
-//! runner.add_dependency(component_a, (), component_b, ()).unwrap();
-//!
-//! // Execute the pipeline using rayon's parallel execution
-//! rayon::scope(|scope| {
-//!     // Run the pipeline with initial input
-//!     runner.run((component_a, "input data".to_string()), scope);
-//!
-//!     // Multiple pipeline runs can be executed in parallel
-//!     runner.run((component_a, "different data".to_string()), scope);
-//! });
-//! ```
+//! The pipeline runner, component context, and related traits and errors
 
 use super::component::{Component, Data};
 use super::{ComponentChannel, ComponentId};
@@ -104,63 +79,22 @@ mod trait_impls {
     }
 }
 
-/// A pipeline execution system for managing interdependent components.
+/// The compiled runner for a pipeline.
 ///
-/// PipelineRunner manages component registration, dependencies, and parallel execution. Components
-/// are stored internally and can be referenced by [`ComponentId`]s, with optional name-based lookup.
-///
-/// # Example
-///
-/// ```rust
-/// # use viking_vision::pipeline::prelude::for_test::{*, consume_component as process_component};
-/// # use std::sync::Arc;
-/// # fn input_component() -> Arc<dyn Component> {
-/// #     pub struct EchoComponent;
-/// #     impl Component for EchoComponent {
-/// #         fn inputs(&self) -> Inputs {
-/// #             Inputs::Primary
-/// #         }
-/// #         fn output_kind(&self, name: Option<&str>) -> OutputKind {
-/// #             if name.is_none() {
-/// #                 OutputKind::Single
-/// #             } else {
-/// #                 OutputKind::None
-/// #             }
-/// #         }
-/// #         fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
-/// #             if let Some(data) = ctx.get(None) {
-/// #                 ctx.submit(None, data);
-/// #             }
-/// #         }
-/// #     }
-/// #     Arc::new(EchoComponent)
-/// # }
-/// let mut runner = PipelineRunner::new();
-///
-/// // Register components
-/// let input = runner.add_component("input", input_component()).unwrap();
-/// let process = runner.add_component("process", process_component()).unwrap();
-///
-/// // Set up dependencies
-/// runner.add_dependency(input, (), process, ()).unwrap();
-///
-/// // Run the pipeline
-/// rayon::scope(|scope| {
-///     runner.run((input, "initial data".to_string()), scope).unwrap();
-/// });
-/// ```
+/// The pipeline runner is immutable, and a non-empty runner can only be created by compiling a pipeline graph.
+/// See the [pipeline module documentation](super) for how to compile and run a runner.
 #[derive(Debug, Default)]
 pub struct PipelineRunner {
     pub(crate) components: Vec<ComponentData>,
-    pub(crate) lookup: HashMap<SmolStr, RunnerComponentId>,
+    pub lookup: HashMap<SmolStr, RunnerComponentId>,
     pub(crate) running: AtomicUsize,
     pub(crate) run_id: AtomicU32,
 }
 
 impl PipelineRunner {
-    /// Create a new empty pipeline runner.
+    /// Create a new, empty pipeline runner.
     #[inline(always)]
-    pub fn new() -> Self {
+    pub fn empty() -> Self {
         Self {
             components: Vec::new(),
             lookup: HashMap::new(),
@@ -180,9 +114,16 @@ impl PipelineRunner {
     pub fn run_count(&self) -> u32 {
         self.run_id.load(Ordering::Relaxed)
     }
-    /// Get the component associated with an ID.
+    /// Get the component data associated with an ID.
     #[inline(always)]
-    pub fn component(&self, id: RunnerComponentId) -> Option<&Arc<dyn Component>> {
-        self.components.get(id.index()).map(|c| &c.component)
+    pub fn component(&self, id: RunnerComponentId) -> Option<&ComponentData> {
+        self.components.get(id.index())
+    }
+    /// Get the component storage for this runner.
+    ///
+    /// It can be indexed with the [`index`](ComponentId::index) function of a [`RunnerComponentId`].
+    #[inline(always)]
+    pub fn components(&self) -> &[ComponentData] {
+        &self.components
     }
 }

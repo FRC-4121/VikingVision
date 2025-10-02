@@ -573,7 +573,7 @@ impl<'r> ComponentContextInner<'r> {
                 count = Arc::strong_count(&callback) - 1,
                 "decrementing refcount"
             );
-            let is_last = callback.call_if_unique(CleanupContext {
+            let is_last = callback.call_if_unique(CallbackContext {
                 runner: self.runner,
                 run_id: self.run_id.0[0],
                 context: std::mem::take(&mut self.context),

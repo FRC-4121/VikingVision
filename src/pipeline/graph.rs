@@ -267,6 +267,12 @@ impl IdResolver {
         let idx = self.0.get(id.index())?;
         idx.is_valid().then_some(*idx)
     }
+    pub fn get_all<const N: usize>(
+        &self,
+        ids: [GraphComponentId; N],
+    ) -> [Option<RunnerComponentId>; N] {
+        ids.map(|i| self.get(i))
+    }
 }
 impl std::ops::Index<GraphComponentId> for IdResolver {
     type Output = RunnerComponentId;
@@ -353,16 +359,16 @@ impl PipelineGraph {
     /// ```rust
     /// # use viking_vision::pipeline::prelude::for_test::{*, ProduceComponent as ImageProcessor, ConsumeComponent as OtherProcessor};
     ///
-    /// let mut runner = PipelineRunner::new();
+    /// let mut graph = PipelineGraph::new();
     ///
     /// // Add a component
-    /// let processor = runner.add_component(
+    /// let processor = graph.add_named_component(
+    ///     Arc::new(ImageProcessor::new()),
     ///     "image_processor",
-    ///     Arc::new(ImageProcessor::new())
     /// ).unwrap();
     ///
     /// // Adding with same name fails
-    /// assert!(runner.add_component("image_processor", Arc::new(OtherProcessor)).is_err());
+    /// assert!(graph.add_named_component(Arc::new(OtherProcessor), "image_processor").is_err());
     /// ```
     #[inline(always)]
     pub fn add_named_component(

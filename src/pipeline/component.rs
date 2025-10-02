@@ -1,3 +1,7 @@
+//! Definition of the [`Component`] trait
+//!
+//! See the documentation for [`Component`] for more information on implementation.
+
 use super::runner::ComponentContext;
 use crate::buffer::Buffer;
 use crate::pipeline::graph::{GraphComponentId, IdResolver, PipelineGraph};
@@ -89,6 +93,8 @@ impl dyn Data {
         }
     }
 }
+
+/// A type that can be converted into a [`Arc<dyn Data>`]
 pub trait IntoData {
     fn into_data(self) -> Arc<dyn Data>;
 }
@@ -296,9 +302,9 @@ pub trait Component: Send + Sync + 'static {
     fn remap(&self, resolver: &IdResolver) {}
 }
 
-/// Get the output of a component.
+/// Get the output of a component for a channel.
 ///
-/// This is the authoritative output, with overrides for special output channels (currently just `$finish`).
+/// This wraps [`Component::output_kind`] but overrides the channel for special output channels (currently just `$finish`).
 pub fn component_output(component: &dyn Component, channel: Option<&str>) -> OutputKind {
     match channel {
         Some("$finish") => OutputKind::Single,

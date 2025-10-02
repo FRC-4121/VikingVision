@@ -1,3 +1,52 @@
+//! Pipeline running utilities
+//!
+//! A pipeline is a collection of components connected by channels. To create a pipeline, start with a [`PipelineGraph`],
+//! and then [compile](PipelineGraph::compile) it to a [`PipelineRunner`] to run the pipeline.
+//!
+//! # Example
+//!
+//! ```rust
+//! # use viking_vision::pipeline::prelude::for_test::{*, consume_component as process_component};
+//! # use std::sync::Arc;
+//! # fn input_component() -> Arc<dyn Component> {
+//! #     pub struct EchoComponent;
+//! #     impl Component for EchoComponent {
+//! #         fn inputs(&self) -> Inputs {
+//! #             Inputs::Primary
+//! #         }
+//! #         fn output_kind(&self, name: Option<&str>) -> OutputKind {
+//! #             if name.is_none() {
+//! #                 OutputKind::Single
+//! #             } else {
+//! #                 OutputKind::None
+//! #             }
+//! #         }
+//! #         fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
+//! #             if let Some(data) = ctx.get(None) {
+//! #                 ctx.submit(None, data);
+//! #             }
+//! #         }
+//! #     }
+//! #     Arc::new(EchoComponent)
+//! # }
+//! let mut graph = PipelineGraph::new();
+//!
+//! // Register components
+//! let input = graph.add_named_component(input_component(), "input").unwrap();
+//! let process = graph.add_named_component(process_component(), "process").unwrap();
+//!
+//! // Set up dependencies
+//! graph.add_dependency(input, process).unwrap();
+//!
+//! let (resolver, runner) = graph.compile().unwrap();
+//! let input = resolver[input];
+//!
+//! // Run the pipeline
+//! rayon::scope(|scope| {
+//!     runner.run((input, "initial data".to_string()), scope).unwrap();
+//! });
+//! ```
+
 use smol_str::SmolStr;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hash};
@@ -8,6 +57,9 @@ pub mod component;
 pub mod daemon;
 pub mod graph;
 pub mod runner;
+
+pub use graph::PipelineGraph;
+pub use runner::PipelineRunner;
 
 /// A comparable ID for pipeline runs.
 ///
@@ -302,10 +354,12 @@ impl<T, S: ComponentSpecifier<T> + ?Sized> ComponentSpecifier<T> for &S {
     }
 }
 
+/// An error that occurs if a component ID can't be found
 #[derive(Debug, Clone, PartialEq, Error)]
 #[error("Component ID {0} doesn't point to a valid component")]
 pub struct InvalidComponentId<T>(pub ComponentId<T>);
 
+/// An error that occurs if a component can't be looked up by name
 #[derive(Debug, Clone, PartialEq, Error)]
 #[error("No component named {0:?}")]
 pub struct UnknownComponentName(pub SmolStr);
