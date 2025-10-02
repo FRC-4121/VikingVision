@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
+use tracing_subscriber::util::SubscriberInitExt;
 
 struct Cmp<T> {
     send: Sender<Option<T>>,
@@ -57,6 +58,10 @@ fn assert_terminates<T: Debug>(recv: Receiver<Option<T>>) -> Vec<T> {
 
 #[test]
 fn simple() {
+    let _guard = tracing_subscriber::fmt()
+        .with_test_writer()
+        .finish()
+        .set_default();
     #[derive(Debug, Clone, Copy, PartialEq)]
     enum Msg {
         Send,
@@ -87,10 +92,15 @@ fn simple() {
         assert_terminates(rx)
     });
     assert_eq!(resp, &[Msg::Send, Msg::Recv]);
+    runner.assert_clean().unwrap();
 }
 
 #[test]
 fn duplicating() {
+    let _guard = tracing_subscriber::fmt()
+        .with_test_writer()
+        .finish()
+        .set_default();
     #[derive(Debug, Clone, Copy, PartialEq)]
     enum Msg {
         Send,
@@ -121,4 +131,5 @@ fn duplicating() {
         assert_terminates(rx)
     });
     assert_eq!(resp, &[Msg::Send, Msg::Recv, Msg::Recv]);
+    runner.assert_clean().unwrap();
 }
