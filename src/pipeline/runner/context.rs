@@ -881,12 +881,13 @@ impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
         self.inner.submit_if_listening(channel, create, self.scope);
     }
 
-    /// Finish, sending a signal
+    /// Finish this component and send a finish signal.
     #[inline(always)]
     pub fn finish(&mut self) {
         self.inner.finish(Some(self.scope));
     }
 
+    /// Finish this component and maybe send a finish singal.
     #[inline(always)]
     pub fn finish_signal(&mut self, signal: bool) {
         self.inner.finish(signal.then_some(self.scope));
@@ -905,6 +906,7 @@ impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
     }
 }
 
+/// ZST error for [`PipelineRunner::assert_clean`]
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 #[error("Runner has leaked inputs")]
 pub struct LeakedInputs;
