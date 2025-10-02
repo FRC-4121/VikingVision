@@ -329,7 +329,7 @@ impl<Marker> Ord for ComponentChannel<Marker> {
 impl<Marker> Display for ComponentChannel<Marker> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)?;
-        if self.1.is_empty() {
+        if !self.1.is_empty() {
             write!(f, "/{}", self.1)
         } else {
             Ok(())

@@ -159,10 +159,10 @@ pub enum AddDependencyError<E1, E2> {
     #[error("Missing destination component: {0:?}")]
     MissingDest(E2),
     #[error(transparent)]
-    Generic(GenericAddDependecyError),
+    Generic(GenericAddDependencyError),
 }
 #[derive(Debug, Clone, PartialEq, Error)]
-pub enum GenericAddDependecyError {
+pub enum GenericAddDependencyError {
     #[error("Source and destination components cannot be the same")]
     SelfLoop,
     #[error("Component {src_id} ({src_name:?}) doesn't take an input on channel {src_chan:?}")]
@@ -454,7 +454,7 @@ impl PipelineGraph {
             components[idx] = new_data;
             *first_free = components[(idx + 1)..]
                 .iter()
-                .position(|c| !c.is_placeholder())
+                .position(ComponentData::is_placeholder)
                 .map_or(components.len(), |n| n + idx);
         }
         out
@@ -476,15 +476,15 @@ impl PipelineGraph {
             s_chan: SmolStr,
             d_id: GraphComponentId,
             d_chan: SmolStr,
-        ) -> Result<(), GenericAddDependecyError> {
+        ) -> Result<(), GenericAddDependencyError> {
             let [src, dst] = this
                 .components
                 .get_disjoint_mut([s_id.index(), d_id.index()])
-                .map_err(|_| GenericAddDependecyError::SelfLoop)?;
+                .map_err(|_| GenericAddDependencyError::SelfLoop)?;
             let is_multi =
                 match crate::pipeline::component::component_output(&*src.component, &s_chan) {
                     OutputKind::None => {
-                        return Err(GenericAddDependecyError::NoOutputChannel {
+                        return Err(GenericAddDependencyError::NoOutputChannel {
                             src_id: s_id,
                             src_name: src.name.clone(),
                             src_chan: s_chan,
@@ -498,7 +498,7 @@ impl PipelineGraph {
             match &mut dst.inputs {
                 InputKind::Single(v) => {
                     if !d_chan.is_empty() {
-                        return Err(GenericAddDependecyError::DoesntTakeInput {
+                        return Err(GenericAddDependencyError::DoesntTakeInput {
                             dst_id: d_id,
                             dst_name: dst.name.clone(),
                             dst_chan: d_chan,
@@ -518,7 +518,7 @@ impl PipelineGraph {
                                     *s = ComponentChannel(s_id, s_chan);
                                     break 'search;
                                 } else {
-                                    return Err(GenericAddDependecyError::OverloadedInputs {
+                                    return Err(GenericAddDependencyError::OverloadedInputs {
                                         dst_id: d_id,
                                         dst_name: dst.name.clone(),
                                         dst_chan: d_chan,

@@ -312,7 +312,7 @@ impl Component for BoxBlurComponent {
         if name.is_empty() {
             OutputKind::Single
         } else {
-            OutputKind::Multiple
+            OutputKind::None
         }
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {

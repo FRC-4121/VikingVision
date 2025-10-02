@@ -598,7 +598,7 @@ impl PipelineRunner {
                     lock.first = lock.inputs[(n + 1)..]
                         .iter()
                         .position(Option::is_none)
-                        .map_or(lock.inputs.len(), |x| x + n);
+                        .map_or(lock.inputs.len(), |x| x + n + 1);
                 }
                 InputKind::Multiple(indices)
             }
