@@ -1,7 +1,6 @@
 use crate::camera::config::CameraConfig;
 use crate::pipeline::serialized::{ComponentChannel, SerializedGraph};
 use serde::{Deserialize, Serialize};
-use smol_str::SmolStr;
 use std::collections::HashMap;
 
 fn default_running() -> usize {
@@ -27,7 +26,7 @@ pub struct CameraWithOutputs {
 pub struct ConfigFile {
     pub config: RunConfig,
     #[serde(alias = "camera")]
-    pub cameras: HashMap<SmolStr, CameraWithOutputs>,
+    pub cameras: HashMap<String, CameraWithOutputs>,
     #[serde(alias = "component")]
     pub components: SerializedGraph,
 }

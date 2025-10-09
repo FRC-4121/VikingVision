@@ -4,9 +4,11 @@ use std::fs::File;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::exit;
+use tracing::{debug, error, info};
 use tracing_subscriber::fmt::writer as tsfw;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use viking_vision::camera::Camera;
 
 #[cfg(not(windows))]
 fn env_allows_color() -> bool {
@@ -85,8 +87,13 @@ struct Cli {
     /// Whether or not colored output should be used
     ///
     /// Log files never have color, and by default, color support is auto-detected.
-    #[arg(long, default_value_t = Color::Auto)]
+    #[arg(short, long, default_value_t = Color::Auto)]
     color: Color,
+    /// Regex to match cameras against
+    ///
+    /// If unspecified, all available cameras will be used
+    #[arg(short, long)]
+    filter: Option<String>,
 }
 
 fn format_log_file(arg: &str, now: time::OffsetDateTime) -> String {
@@ -145,21 +152,23 @@ fn main() {
         )
         .init();
 
-    tracing::info!(path = path.as_deref(), "starting logging at {startup_time}");
+    let _guard = tracing::error_span!("main").entered();
+
+    info!(path = path.as_deref(), "starting logging at {startup_time}");
 
     let config_file = match std::fs::read(&args.config) {
         Ok(file) => {
-            tracing::info!(path = ?args.config, "loaded config file");
+            info!(path = ?args.config, "loaded config file");
             file
         }
         Err(err) => {
-            tracing::error!(path = ?args.config, %err, "failed to load config file");
+            error!(path = ?args.config, %err, "failed to load config file");
             exit(2);
         }
     };
-    let config = match toml::from_slice::<viking_vision::serialized::ConfigFile>(&config_file) {
+    let mut config = match toml::from_slice::<viking_vision::serialized::ConfigFile>(&config_file) {
         Ok(config) => {
-            tracing::info!(
+            info!(
                 cameras = config.cameras.len(),
                 components = config.components.0.len(),
                 "loaded config file"
@@ -167,30 +176,69 @@ fn main() {
             config
         }
         Err(err) => {
-            tracing::error!(%err, "failed to parse config file");
+            error!(%err, "failed to parse config file");
             exit(3);
         }
     };
+
+    if let Some(filter) = &args.filter {
+        info!(filter, "filtering cameras with regex");
+        match matchers::Pattern::new(filter) {
+            Ok(pat) => {
+                debug!("compiled pattern");
+                config.cameras.retain(|k, _| pat.matches(k));
+            }
+            Err(err) => {
+                error!(%err, "failed to compile pattern, no cameras will be matched");
+                config.cameras.clear();
+            }
+        }
+    } else {
+        info!("no filter specified, using all available cameras");
+    }
+
+    info!(cameras = ?config.cameras.keys().collect::<Vec<_>>(), "loading cameras");
+
+    let cameras = config
+        .cameras
+        .into_iter()
+        .filter_map(|(name, config)| {
+            debug!(name, "loading camera");
+            match config.camera.build_camera() {
+                Ok(inner) => {
+                    debug!(name, "loaded camera");
+                    Some(Camera::new(name, inner))
+                }
+                Err(err) => {
+                    error!(%err, "failed to load camera");
+                    None
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    info!(cameras = ?cameras.iter().map(Camera::name).collect::<Vec<_>>(), "loaded cameras");
+
     let graph = match config
         .components
         .build_graph(&mut viking_vision::utils::NoContext)
     {
         Ok(graph) => {
-            tracing::info!("built pipeline graph");
+            info!("built pipeline graph");
             graph
         }
         Err(err) => {
-            tracing::error!(%err, "failed to build pipeline graph");
+            error!(%err, "failed to build pipeline graph");
             exit(3);
         }
     };
     let (_, runner) = match graph.compile() {
         Ok(runner) => {
-            tracing::info!("built pipeline runner");
+            info!("built pipeline runner");
             runner
         }
         Err(err) => {
-            tracing::error!(%err, "failed to compile runner");
+            error!(%err, "failed to compile runner");
             exit(3);
         }
     };
