@@ -161,7 +161,7 @@ fn main() {
         Ok(config) => {
             tracing::info!(
                 cameras = config.cameras.len(),
-                components = config.components.len(),
+                components = config.components.0.len(),
                 "loaded config file"
             );
             config
@@ -171,7 +171,10 @@ fn main() {
             exit(3);
         }
     };
-    let graph = match config.build_graph(&mut viking_vision::utils::NoContext) {
+    let graph = match config
+        .components
+        .build_graph(&mut viking_vision::utils::NoContext)
+    {
         Ok(graph) => {
             tracing::info!("built pipeline graph");
             graph

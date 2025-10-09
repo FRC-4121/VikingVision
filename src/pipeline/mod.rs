@@ -57,9 +57,11 @@ pub mod component;
 pub mod daemon;
 pub mod graph;
 pub mod runner;
+pub mod serialized;
 
 pub use graph::PipelineGraph;
 pub use runner::PipelineRunner;
+pub use serialized::SerializedGraph;
 
 /// A comparable ID for pipeline runs.
 ///

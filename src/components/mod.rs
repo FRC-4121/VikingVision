@@ -1,4 +1,5 @@
 use crate::pipeline::graph::GraphComponentId;
+use smol_str::SmolStr;
 
 pub mod apriltag;
 pub mod draw;
@@ -13,11 +14,16 @@ pub mod vision;
 /// usable from code, so they can be configured using component IDs, too.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComponentIdentifier {
-    Name(String),
+    Name(SmolStr),
     Id(GraphComponentId),
 }
 impl From<String> for ComponentIdentifier {
     fn from(value: String) -> Self {
+        Self::Name(value.into())
+    }
+}
+impl From<SmolStr> for ComponentIdentifier {
+    fn from(value: SmolStr) -> Self {
         Self::Name(value)
     }
 }
