@@ -1,10 +1,12 @@
 use crate::buffer::Buffer;
+use crate::pipeline::{PipelineId, PipelineName};
 use config::CameraConfig;
 use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
 use std::any::Any;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::time::Instant;
+use supply::prelude::*;
 use tracing::{debug, error, info, info_span};
 
 pub mod capture;
@@ -121,5 +123,14 @@ impl Camera {
                 Err(err)
             }
         }
+    }
+}
+impl<'r> Provider<'r> for Camera {
+    type Lifetimes = l!['r];
+
+    fn provide(&'r self, want: &mut dyn Want<Self::Lifetimes>) {
+        want.provide_value(self)
+            .provide_value(PipelineId::from_ptr(self))
+            .provide_value(PipelineName(&self.name));
     }
 }

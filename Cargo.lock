@@ -3819,6 +3819,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "matchers",
+ "rayon",
  "time",
  "toml",
  "tracing",

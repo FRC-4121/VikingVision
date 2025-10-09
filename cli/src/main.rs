@@ -4,11 +4,12 @@ use std::fs::File;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::exit;
-use tracing::{debug, error, info};
+use tracing::{debug, error, error_span, info};
 use tracing_subscriber::fmt::writer as tsfw;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use viking_vision::camera::Camera;
+use viking_vision::pipeline::prelude::*;
 
 #[cfg(not(windows))]
 fn env_allows_color() -> bool {
@@ -152,7 +153,7 @@ fn main() {
         )
         .init();
 
-    let _guard = tracing::error_span!("main").entered();
+    let _guard = error_span!("main").entered();
 
     info!(path = path.as_deref(), "starting logging at {startup_time}");
 
@@ -197,28 +198,6 @@ fn main() {
         info!("no filter specified, using all available cameras");
     }
 
-    info!(cameras = ?config.cameras.keys().collect::<Vec<_>>(), "loading cameras");
-
-    let cameras = config
-        .cameras
-        .into_iter()
-        .filter_map(|(name, config)| {
-            debug!(name, "loading camera");
-            match config.camera.build_camera() {
-                Ok(inner) => {
-                    debug!(name, "loaded camera");
-                    Some(Camera::new(name, inner))
-                }
-                Err(err) => {
-                    error!(%err, "failed to load camera");
-                    None
-                }
-            }
-        })
-        .collect::<Vec<_>>();
-
-    info!(cameras = ?cameras.iter().map(Camera::name).collect::<Vec<_>>(), "loaded cameras");
-
     let graph = match config
         .components
         .build_graph(&mut viking_vision::utils::NoContext)
@@ -242,4 +221,110 @@ fn main() {
             exit(3);
         }
     };
+
+    info!(cameras = ?config.cameras.keys().collect::<Vec<_>>(), "loading cameras");
+
+    let cameras = config
+        .cameras
+        .into_iter()
+        .filter_map(|(name, mut config)| {
+            let _guard = error_span!("load", name).entered();
+            debug!("loading camera");
+            match config.camera.build_camera() {
+                Ok(inner) => {
+                    debug!("loaded camera");
+                    config.outputs.extend(config.output);
+                    let targets = config
+                        .outputs
+                        .into_iter()
+                        .filter_map(|ch| {
+                            let opt = runner.lookup.get(&ch.component);
+                            if let Some(&id) = opt {
+                                debug!(name = &*ch.component, %id, "found component to send frames to");
+                                let Some(comp) = runner.component(id) else {
+                                    error!("lookup table points to a nonexistent component");
+                                    return None;
+                                };
+                                let inputs = comp.component.inputs();
+                                if inputs.expecting() > 1 {
+                                    error!(expecting = inputs.expecting(), "sending input to a component that doesn't expect one input");
+                                    return None;
+                                }
+                                if !inputs.can_take(ch.channel.as_deref(), Some(&*comp.component)) {
+                                    error!(channel = ?ch.channel, ?inputs, "component can't take input on the expected channel");
+                                    return None;
+                                }
+                                Some((id, ch.channel))
+                            } else {
+                                error!(name = &*ch.component, "couldn't find a componenet with the given name");
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    Some((Camera::new(name, inner), targets))
+                }
+                Err(err) => {
+                    error!(%err, "failed to load camera");
+                    None
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    info!(cameras = ?cameras.iter().map(|c| c.0.name()).collect::<Vec<_>>(), "loaded cameras");
+
+    let runner = &runner;
+    let mut refs = Vec::new();
+    refs.resize_with(cameras.len(), || None);
+
+    rayon::scope(|rscope| {
+        std::thread::scope(|tscope| {
+            for ((mut cam, next), provider) in cameras.into_iter().zip(&mut refs) {
+                let builder = std::thread::Builder::new().name(format!("camera-{}", cam.name()));
+                let cam_name = cam.name().to_string();
+                let provider = &*provider.get_or_insert(PipelineProvider {
+                    id: &cam as *const _ as usize as u64,
+                    name: cam_name.clone(),
+                });
+                let res = builder.spawn_scoped(tscope, move || {
+                    use viking_vision::pipeline::runner::{
+                        RunError, RunErrorCause, RunErrorWithParams,
+                    };
+                    loop {
+                        if let Ok(frame) = cam.read() {
+                            let arg = ComponentArgs::single(frame.clone_static());
+                            for (id, _chan) in &next {
+                                let res = runner.run(
+                                    RunParams::new(*id)
+                                        .with_args(arg.clone())
+                                        .with_context(provider)
+                                        .with_max_running(config.config.max_running),
+                                    rscope,
+                                );
+                                if let Err(RunError::WithParams(RunErrorWithParams {
+                                    cause, ..
+                                })) = res
+                                {
+                                    match cause {
+                                        RunErrorCause::ArgsMismatch { expected, given } => {
+                                            error!(expected, given, "argument length mismatch");
+                                            return;
+                                        }
+                                        RunErrorCause::NoComponent(id) => {
+                                            error!(%id, "missing component");
+                                            return;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                if let Err(err) = res {
+                    error!(camera = cam_name, %err, "failed to spawn thread");
+                }
+            }
+        });
+    });
 }

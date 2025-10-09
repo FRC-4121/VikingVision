@@ -51,6 +51,7 @@ use smol_str::SmolStr;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hash};
 use std::marker::PhantomData;
+use supply::prelude::*;
 use thiserror::Error;
 
 pub mod component;
@@ -105,6 +106,20 @@ impl Debug for PipelineName<'_> {
 impl Display for PipelineName<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(self.0, f)
+    }
+}
+
+/// A [`Provider`] implementation that provides a [`PipelineName`] and [`PipelineContext`] for requests through [`supply`].
+pub struct PipelineProvider<T> {
+    pub id: u64,
+    pub name: T,
+}
+impl<'r, T: Display> Provider<'r> for PipelineProvider<T> {
+    type Lifetimes = l!['r];
+
+    fn provide(&'r self, want: &mut dyn supply::Want<Self::Lifetimes>) {
+        want.provide_value(PipelineName(&self.name))
+            .provide_value(PipelineId(self.id));
     }
 }
 
@@ -367,10 +382,13 @@ pub struct InvalidComponentId<T>(pub ComponentId<T>);
 pub struct UnknownComponentName(pub SmolStr);
 
 pub mod prelude {
-    pub use super::ComponentId;
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
     pub use super::graph::{GraphComponentId, PipelineGraph};
-    pub use super::runner::{ComponentContext, PipelineRunner, RunParams, RunnerComponentId};
+    pub use super::runner::{
+        ComponentArgs, ComponentContext, PipelineRunner, ProviderRef, ProviderTrait, RunParams,
+        RunnerComponentId,
+    };
+    pub use super::{ComponentId, PipelineProvider};
     pub use crate::utils::LogErr;
     pub use supply::prelude::*;
 
