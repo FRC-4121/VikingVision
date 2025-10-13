@@ -292,7 +292,7 @@ fn main() {
                     };
                     loop {
                         if let Ok(frame) = cam.read() {
-                            let arg = ComponentArgs::single(frame.clone_static());
+                            let arg = ComponentArgs::single(frame.into_static());
                             for (id, _chan) in &next {
                                 let res = runner.run(
                                     RunParams::new(*id)
