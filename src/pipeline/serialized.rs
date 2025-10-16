@@ -18,8 +18,7 @@ pub enum ParseSourceError {
     NonAlphaNumComponent(usize),
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
-#[serde(try_from = "&str")]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct ComponentChannel {
     pub component: SmolStr,
     pub channel: Option<SmolStr>,
@@ -69,6 +68,42 @@ impl TryFrom<&str> for ComponentChannel {
         }
     }
 }
+impl TryFrom<String> for ComponentChannel {
+    type Error = ParseSourceError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if let Some(idx) = value.find('.') {
+            if idx == 0 {
+                return Err(ParseSourceError::EmptyComponent);
+            }
+            let component = &value[..idx];
+            let channel = &value[(idx + 1)..];
+            if channel.is_empty() {
+                return Err(ParseSourceError::EmptyChannel);
+            }
+            if let Some((n, _)) = component
+                .char_indices()
+                .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
+            {
+                return Err(ParseSourceError::NonAlphaNumComponent(n));
+            }
+            Ok(ComponentChannel {
+                component: component.into(),
+                channel: Some(channel.into()),
+            })
+        } else {
+            if let Some((n, _)) = value
+                .char_indices()
+                .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
+            {
+                return Err(ParseSourceError::NonAlphaNumComponent(n));
+            }
+            Ok(ComponentChannel {
+                component: value.into(),
+                channel: None,
+            })
+        }
+    }
+}
 impl Serialize for ComponentChannel {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -77,9 +112,37 @@ impl Serialize for ComponentChannel {
         serializer.serialize_str(&self.to_string())
     }
 }
+impl<'de> Deserialize<'de> for ComponentChannel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ChannelVisitor;
+        impl<'de> serde::de::Visitor<'de> for ChannelVisitor {
+            type Value = ComponentChannel;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a component channel")
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ComponentChannel::try_from(v).map_err(E::custom)
+            }
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ComponentChannel::try_from(v).map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_string(ChannelVisitor)
+    }
+}
 
 /// Which inputs to use for the given component
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum InputConfig {
     /// No pre-configured input; instead an input will be passed externally
@@ -90,10 +153,66 @@ pub enum InputConfig {
     /// Multiple named inputs
     Multiple(HashMap<SmolStr, ComponentChannel>),
 }
+impl<'de> Deserialize<'de> for InputConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct InputVisitor;
+        impl<'de> serde::de::Visitor<'de> for InputVisitor {
+            type Value = InputConfig;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an input specification")
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ComponentChannel::try_from(v)
+                    .map(InputConfig::Single)
+                    .map_err(E::custom)
+            }
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ComponentChannel::try_from(v)
+                    .map(InputConfig::Single)
+                    .map_err(E::custom)
+            }
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                use serde::de::Error;
+                use std::collections::hash_map::Entry;
+                let mut inputs = map
+                    .size_hint()
+                    .map_or_else(HashMap::new, HashMap::with_capacity);
+                while let Some((k, v)) = map.next_entry()? {
+                    match inputs.entry(k) {
+                        Entry::Occupied(e) => {
+                            return Err(A::Error::custom(format_args!(
+                                "duplicate input {:?}",
+                                e.key()
+                            )));
+                        }
+                        Entry::Vacant(e) => {
+                            e.insert(v);
+                        }
+                    }
+                }
+                Ok(InputConfig::Multiple(inputs))
+            }
+        }
+        deserializer.deserialize_any(InputVisitor)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct ComponentConfig {
     /// Inputs for this component
+    #[serde(default)]
     pub input: InputConfig,
     #[serde(flatten)]
     pub factory: Box<dyn ComponentFactory>,

@@ -7,6 +7,12 @@ fn default_running() -> usize {
     rayon::current_num_threads() / 2
 }
 
+fn default_run_config() -> RunConfig {
+    RunConfig {
+        max_running: default_running(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunConfig {
     #[serde(default = "default_running")]
@@ -24,6 +30,7 @@ pub struct CameraWithOutputs {
 
 #[derive(Serialize, Deserialize)]
 pub struct ConfigFile {
+    #[serde(default = "default_run_config")]
     pub config: RunConfig,
     #[serde(alias = "camera")]
     pub cameras: HashMap<String, CameraWithOutputs>,
