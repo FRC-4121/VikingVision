@@ -377,7 +377,7 @@ impl App for VikingVision {
 fn main() {
     tracing_subscriber::fmt().init();
     let res = eframe::run_native(
-        "VikingVision",
+        "VikingVision Playground",
         Default::default(),
         Box::new(VikingVision::new_boxed),
     );
