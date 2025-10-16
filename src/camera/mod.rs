@@ -130,7 +130,7 @@ impl<'r> Provider<'r> for Camera {
 
     fn provide(&'r self, want: &mut dyn Want<Self::Lifetimes>) {
         want.provide_value(self)
-            .provide_value(PipelineId::from_ptr(self))
+            .provide_value(PipelineId::from_ptr(self.inner()))
             .provide_value(PipelineName(&self.name));
     }
 }

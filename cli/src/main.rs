@@ -282,10 +282,8 @@ fn main() {
             for ((mut cam, next), provider) in cameras.into_iter().zip(&mut refs) {
                 let builder = std::thread::Builder::new().name(format!("camera-{}", cam.name()));
                 let cam_name = cam.name().to_string();
-                let provider = &*provider.get_or_insert(PipelineProvider {
-                    id: &cam as *const _ as usize as u64,
-                    name: cam_name.clone(),
-                });
+                let provider = &*provider
+                    .get_or_insert(PipelineProvider::from_ptr(cam.inner(), cam_name.clone()));
                 let res = builder.spawn_scoped(tscope, move || {
                     use viking_vision::pipeline::runner::{
                         RunError, RunErrorCause, RunErrorWithParams,
