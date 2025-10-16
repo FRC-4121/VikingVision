@@ -4,6 +4,8 @@ path = "/dev/video32" # the webcam for my laptop, the first 16 are something wei
 width = 640
 height = 480
 fourcc = "YUYV"
+fps = 30
+# output = "fps"
 outputs = ["fps", "save"]
 
 [component.fps]
@@ -11,9 +13,9 @@ type = "fps"
 
 [component.debug]
 type = "debug"
-input = "fps.fps"
+input = "fps.pretty"
 
 [component.save]
 type = "ffmpeg"
 fps = 30
-args = ["-c:v", "libx264", "-crf", "23", "video_%N_%Y%m%d_%H%M%S.mp4"]
+args = ["-c:v", "libx264", "-crf", "23", "vv_%N_%Y%m%d_%H%M%S.mp4"]

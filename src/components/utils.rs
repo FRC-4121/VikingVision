@@ -378,7 +378,7 @@ impl Component for FpsComponent {
         context.submit_if_listening("fps", || fps.fps());
         context.submit_if_listening("pretty", || {
             let [min, max] = minmax.or_else(|| fps.minmax()).unwrap_or_default();
-            format!("{min:.2}/{max:.2}/{} FPS", fps.fps())
+            format!("{min:.2}/{max:.2}/{:.2} FPS", fps.fps())
         });
     }
 }
@@ -390,7 +390,11 @@ const fn default_fps_dur() -> Duration {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct FpsFactory {
-    #[serde(alias = "period", default, with = "humantime_serde")]
+    #[serde(
+        alias = "period",
+        default = "default_fps_dur",
+        with = "humantime_serde"
+    )]
     pub duration: Duration,
 }
 #[typetag::serde(name = "fps")]
