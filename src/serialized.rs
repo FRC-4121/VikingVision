@@ -4,19 +4,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 fn default_running() -> usize {
-    rayon::current_num_threads() / 2
-}
-
-fn default_run_config() -> RunConfig {
-    RunConfig {
-        max_running: default_running(),
-    }
+    rayon::current_num_threads().div_ceil(2)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunConfig {
     #[serde(default = "default_running")]
     pub max_running: usize,
+}
+
+impl Default for RunConfig {
+    fn default() -> Self {
+        Self {
+            max_running: default_running(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,7 +32,7 @@ pub struct CameraWithOutputs {
 
 #[derive(Serialize, Deserialize)]
 pub struct ConfigFile {
-    #[serde(default = "default_run_config")]
+    #[serde(default)]
     pub config: RunConfig,
     #[serde(alias = "camera")]
     pub cameras: HashMap<String, CameraWithOutputs>,
