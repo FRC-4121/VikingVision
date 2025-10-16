@@ -23,10 +23,10 @@ pub struct FfmpegComponent {
     framerate: f64,
     args: Vec<String>,
     #[allow(clippy::type_complexity)]
-    running: RwLock<HashMap<Option<PipelineId>, (Mutex<Child>, Mutex<ChildStdin>)>>,
+    running: RwLock<HashMap<Option<PipelineId>, Option<(Mutex<Child>, Mutex<ChildStdin>)>>>,
 }
 impl FfmpegComponent {
-    /// Create a new component, ready to output to `ffmpeg``.
+    /// Create a new component, ready to output to `ffmpeg`.
     ///
     /// `ffmpeg` is the name of the command, and `Cow::Borrowed("ffmpeg")` works as a default.
     /// `args` go *after* the input is specified, and the only control over the input format is the expected framerate.
@@ -90,6 +90,46 @@ impl FfmpegComponent {
         cmd.arg(framerate.to_string());
         cmd.args(["-i", "-"]);
     }
+    /// Stop all running processes
+    pub fn stop_all(&mut self) {
+        for (_, opt) in self
+            .running
+            .get_mut()
+            .inspect_err(|_| warn!("poisoned FFmpeg component lock"))
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain()
+        {
+            let Some((mut child, stdin)) = opt else {
+                continue;
+            };
+            drop(stdin);
+            match child
+                .get_mut()
+                .inspect_err(|_| warn!("poisoned FFmpeg child lock"))
+                .unwrap_or_else(PoisonError::into_inner)
+                .wait()
+            {
+                Ok(status) => {
+                    if !status.success() {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::ExitStatusExt;
+                            warn!(
+                                code = status.code(),
+                                signal = status.signal(),
+                                "child process exited with an error"
+                            );
+                        }
+                        #[cfg(not(unix))]
+                        warn!(code = status.code(), "child process exited with an error");
+                    }
+                }
+                Err(err) => {
+                    error!(%err, "failed to kill child process");
+                }
+            }
+        }
+    }
 }
 impl Component for FfmpegComponent {
     fn inputs(&self) -> Inputs {
@@ -117,11 +157,12 @@ impl Component for FfmpegComponent {
             let read_lock = self
                 .running
                 .read()
-                .inspect_err(|_| warn!("poisoned FFMPEG component lock"))
+                .inspect_err(|_| warn!("poisoned FFmpeg component lock"))
                 .unwrap_or_else(PoisonError::into_inner);
-            if let Some((child, stdin)) = read_lock.get(&id) {
+            if let Some(opt) = read_lock.get(&id) {
+                let Some((child, stdin)) = opt else { return };
                 let Ok(mut lock) = child.lock() else {
-                    error!("poisoned FFMPEG child lock");
+                    error!("poisoned FFmpeg child lock");
                     return;
                 };
                 match lock.try_wait() {
@@ -158,83 +199,62 @@ impl Component for FfmpegComponent {
         let mut lock = self
             .running
             .write()
-            .inspect_err(|_| warn!("poisoned FFMPEG component lock"))
+            .inspect_err(|_| warn!("poisoned FFmpeg component lock"))
             .unwrap_or_else(PoisonError::into_inner);
-        let mut cmd = Command::new(&*self.ffmpeg);
-        Self::prep_command(&mut cmd, frame.borrow(), self.framerate);
-        Self::format_args(&mut cmd, &self.args, id, name);
-        match cmd
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(mut child) => {
-                info!(cmd = ?DebugCommand(&cmd), pid = child.id(), "spawning new FFMPEG process");
-                let mut stdin = child.stdin.take().unwrap();
-                if let Err(err) = stdin.write_all(&converted.data) {
-                    error!(%err, "error writing data to stream");
-                }
-                if let Some((mut child, _)) =
-                    lock.insert(id, (Mutex::new(child), Mutex::new(stdin)))
-                {
-                    let child = child
-                        .get_mut()
-                        .inspect_err(|_| warn!("poisoned FFMPEG child lock"))
-                        .unwrap_or_else(PoisonError::into_inner);
-                    warn!(
-                        ?id,
-                        name = name.map(tracing::field::display),
-                        pid = child.id(),
-                        "duplicate running process"
-                    );
-                    if let Err(err) = child.kill() {
-                        error!(%err, id = child.id(), "failed to kill child");
+        let opt = lock.entry(id).or_insert_with(|| {
+            let mut cmd = Command::new(&*self.ffmpeg);
+            Self::prep_command(&mut cmd, frame.borrow(), self.framerate);
+            Self::format_args(&mut cmd, &self.args, id, name);
+            cmd
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .inspect_err(|err| error!(%err, cmd = ?DebugCommand(&cmd), "failed to spawn a child process"))
+                .ok()
+                .map(|mut child| {
+                    info!(cmd = ?DebugCommand(&cmd), pid = child.id(), "spawning new FFmpeg process");
+                    let stdin = child.stdin.take().unwrap();
+                    (Mutex::new(child), Mutex::new(stdin))
+                })
+        });
+        let Some((child, stdin)) = opt else { return };
+        let Ok(lock) = child.get_mut() else {
+            error!("poisoned FFmpeg child lock");
+            return;
+        };
+        match lock.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    warn!("child process exited successfully but unexpectedly");
+                } else {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        error!(
+                            code = status.code(),
+                            signal = status.signal(),
+                            "child process exited with an error"
+                        );
                     }
+                    #[cfg(not(unix))]
+                    error!(code = status.code(), "child process exited with an error");
+                }
+            }
+            Ok(None) => {
+                if let Err(err) = stdin.get_mut().unwrap().write_all(&converted.data) {
+                    error!(%err, "error writing data to stream");
                 }
             }
             Err(err) => {
-                error!(%err, cmd = ?DebugCommand(&cmd), "failed to spawn a child process");
+                error!(%err, "failed to get child status");
             }
         }
     }
 }
 impl Drop for FfmpegComponent {
     fn drop(&mut self) {
-        for (_, (mut child, stdin)) in self
-            .running
-            .get_mut()
-            .inspect_err(|_| warn!("poisoned FFMPEG component lock"))
-            .unwrap_or_else(PoisonError::into_inner)
-            .drain()
-        {
-            drop(stdin);
-            match child
-                .get_mut()
-                .inspect_err(|_| warn!("poisoned FFMPEG child lock"))
-                .unwrap_or_else(PoisonError::into_inner)
-                .wait()
-            {
-                Ok(status) => {
-                    if !status.success() {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::process::ExitStatusExt;
-                            warn!(
-                                code = status.code(),
-                                signal = status.signal(),
-                                "child process exited with an error"
-                            );
-                        }
-                        #[cfg(not(unix))]
-                        warn!(code = status.code(), "child process exited with an error");
-                    }
-                }
-                Err(err) => {
-                    error!(%err, "failed to kill child process");
-                }
-            }
-        }
+        self.stop_all();
     }
 }
 
