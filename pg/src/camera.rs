@@ -114,22 +114,26 @@ pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnOnce(&mut egui::Ui) {
             });
     }
 }
-pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) {
+pub fn show_camera(
+    handle: &DaemonHandle<Context>,
+    state: &mut State,
+) -> impl FnOnce(&mut egui::Ui) -> Option<super::Monochrome> {
     move |ui| {
         use viking_vision::pipeline::daemon::states::*;
-        let state = handle.context().run_state.load(Ordering::Relaxed);
-        let lock = handle.context().context.locked.lock().unwrap();
+        let mut ret = None;
+        let run_state = handle.context().run_state.load(Ordering::Relaxed);
+        let mut lock = handle.context().context.locked.lock().unwrap();
         ui.horizontal(|ui| {
-            if state == SHUTDOWN {
+            if run_state == SHUTDOWN {
                 ui.label("Closing...");
                 ui.spinner();
             } else {
                 #[allow(clippy::collapsible_if)]
-                if state == RUNNING {
+                if run_state == RUNNING {
                     if ui.button("Pause").clicked() {
                         handle.pause();
                     }
-                } else if state == PAUSED {
+                } else if run_state == PAUSED {
                     if ui.button("Start").clicked() {
                         handle.start();
                     }
@@ -144,6 +148,97 @@ pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) 
                 ui.label(format!("{min:.2}/{max:.2}/{avg:.2} FPS"));
             });
         });
+        {
+            if lock.cap.is_some() || lock.mono.is_some() {
+                ui.horizontal(|ui| {
+                    #[cfg(feature = "v4l")]
+                    if let Some(opts) = &mut lock.cap {
+                        {
+                            let (cc_idx, cc_desc) = opts
+                                .formats
+                                .iter()
+                                .enumerate()
+                                .find_map(|(n, (fourcc, desc))| {
+                                    (*fourcc == opts.fourcc).then_some((n, desc))
+                                })
+                                .unwrap();
+                            let mut index = cc_idx;
+                            ui.label("Format: ");
+                            egui::ComboBox::new("Format", "")
+                                .selected_text(cc_desc)
+                                .show_index(ui, &mut index, opts.formats.len(), |i| {
+                                    &opts.formats[i].1
+                                });
+                            if index != cc_idx {
+                                opts.selected_format = Some(index);
+                            }
+                        }
+                        {
+                            let mut index = opts.size_idx;
+                            let [w, h] = opts.sizes[index];
+                            ui.label("Resolution: ");
+                            egui::ComboBox::new("Resolution", "")
+                                .selected_text(format!("{w}x{h}"))
+                                .show_index(ui, &mut index, opts.sizes.len(), |i| {
+                                    let [w, h] = opts.sizes[i];
+                                    format!("{w}x{h}")
+                                });
+                            if index != opts.size_idx {
+                                opts.selected_size = Some(index);
+                            }
+                        }
+                        {
+                            let mut index = opts.interval_idx;
+                            ui.label("Interval: ");
+                            egui::ComboBox::new("Interval", "")
+                                .selected_text(opts.intervals[index].to_string())
+                                .show_index(ui, &mut index, opts.intervals.len(), |i| {
+                                    opts.intervals[i].to_string()
+                                });
+                            if index != opts.interval_idx {
+                                opts.selected_interval = Some(index);
+                            }
+                        }
+                    }
+                    if let Some(opts) = &mut lock.mono {
+                        ui.label("Width: ");
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut opts.width, 0..=1000)
+                                    .clamping(egui::SliderClamping::Never),
+                            )
+                            .changed()
+                        {
+                            opts.reshape = true;
+                        }
+                        ui.label("Height: ");
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut opts.height, 0..=1000)
+                                    .clamping(egui::SliderClamping::Never),
+                            )
+                            .changed()
+                        {
+                            opts.reshape = true;
+                        }
+                        ui.label("Color: ");
+                        if ui.color_edit_button_srgb(&mut opts.color).changed() {
+                            opts.recolor = true;
+                        }
+                        if opts.reshape || opts.recolor {
+                            if let Ident::Mono(id) = state.ident {
+                                ret = Some(super::Monochrome {
+                                    width: opts.width,
+                                    height: opts.height,
+                                    color: opts.color,
+                                    id,
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+        }
         let new_frames = handle.context().context.counter.swap(0, Ordering::Relaxed);
         if new_frames > 0 {
             ui.ctx().request_repaint();
@@ -156,98 +251,6 @@ pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) 
             .ctx()
             .load_texture(format!("{handle:p}"), img, Default::default());
         ui.image(&texture);
-    }
-}
-pub fn show_controls(
-    handle: &DaemonHandle<Context>,
-    state: &mut State,
-) -> impl FnOnce(&mut egui::Ui) -> Option<super::Monochrome> {
-    move |ui| {
-        let mut ret = None;
-        let mut lock = handle.context().context.locked.lock().unwrap();
-        #[cfg(feature = "v4l")]
-        if let Some(opts) = &mut lock.cap {
-            ui.collapsing("V4L Options", |ui| {
-                {
-                    let (cc_idx, cc_desc) = opts
-                        .formats
-                        .iter()
-                        .enumerate()
-                        .find_map(|(n, (fourcc, desc))| {
-                            (*fourcc == opts.fourcc).then_some((n, desc))
-                        })
-                        .unwrap();
-                    let mut index = cc_idx;
-                    egui::ComboBox::from_label("FourCC")
-                        .selected_text(cc_desc)
-                        .show_index(ui, &mut index, opts.formats.len(), |i| &opts.formats[i].1);
-                    if index != cc_idx {
-                        opts.selected_format = Some(index);
-                    }
-                }
-                {
-                    let mut index = opts.size_idx;
-                    let [w, h] = opts.sizes[index];
-                    egui::ComboBox::from_label("Resolution")
-                        .selected_text(format!("{w}x{h}"))
-                        .show_index(ui, &mut index, opts.sizes.len(), |i| {
-                            let [w, h] = opts.sizes[i];
-                            format!("{w}x{h}")
-                        });
-                    if index != opts.size_idx {
-                        opts.selected_size = Some(index);
-                    }
-                }
-                {
-                    let mut index = opts.interval_idx;
-                    egui::ComboBox::from_label("Interval")
-                        .selected_text(opts.intervals[index].to_string())
-                        .show_index(ui, &mut index, opts.intervals.len(), |i| {
-                            opts.intervals[i].to_string()
-                        });
-                    if index != opts.interval_idx {
-                        opts.selected_interval = Some(index);
-                    }
-                }
-            });
-        }
-        if let Some(opts) = &mut lock.mono {
-            ui.collapsing("Monochrome", |ui| {
-                if ui
-                    .add(
-                        egui::Slider::new(&mut opts.width, 0..=1000)
-                            .clamping(egui::SliderClamping::Never)
-                            .text("Width"),
-                    )
-                    .changed()
-                {
-                    opts.reshape = true;
-                }
-                if ui
-                    .add(
-                        egui::Slider::new(&mut opts.height, 0..=1000)
-                            .clamping(egui::SliderClamping::Never)
-                            .text("Height"),
-                    )
-                    .changed()
-                {
-                    opts.reshape = true;
-                }
-                if ui.color_edit_button_srgb(&mut opts.color).changed() {
-                    opts.recolor = true;
-                }
-            });
-            if opts.reshape || opts.recolor {
-                if let Ident::Mono(id) = state.ident {
-                    ret = Some(super::Monochrome {
-                        width: opts.width,
-                        height: opts.height,
-                        color: opts.color,
-                        id,
-                    });
-                }
-            }
-        }
         ret
     }
 }

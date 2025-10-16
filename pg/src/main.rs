@@ -266,12 +266,9 @@ impl App for VikingVision {
             }
         });
         self.cameras.retain_mut(|(name, handle, state)| {
-            egui::Window::new(format!("{name}- Image"))
-                .id(egui::Id::new((&**handle.context() as *const _, 1)))
-                .show(ctx, camera::show_image(handle));
-            let m = egui::Window::new(format!("{name}- Controls"))
-                .id(egui::Id::new((&**handle.context() as *const _, 2)))
-                .show(ctx, camera::show_controls(handle, state))
+            let m = egui::Window::new(format!("{name}- Image"))
+                .id(egui::Id::new(&**handle.context() as *const _))
+                .show(ctx, camera::show_camera(handle, state))
                 .and_then(|o| o.inner.flatten());
             if let Some(m) = m {
                 for m2 in &mut self.monochrome {
