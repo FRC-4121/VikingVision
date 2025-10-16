@@ -51,15 +51,18 @@ use smol_str::SmolStr;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hash};
 use std::marker::PhantomData;
+use supply::prelude::*;
 use thiserror::Error;
 
 pub mod component;
 pub mod daemon;
 pub mod graph;
 pub mod runner;
+pub mod serialized;
 
 pub use graph::PipelineGraph;
 pub use runner::PipelineRunner;
+pub use serialized::SerializedGraph;
 
 /// A comparable ID for pipeline runs.
 ///
@@ -74,8 +77,8 @@ impl PipelineId {
     /// Create a pipeline ID form a pointer.
     ///
     /// This gives a different value from [`from_hash`](Self::from_hash) being used with a pointer argument.
-    pub fn from_ptr(val: *const impl Sized) -> Self {
-        Self(val as usize as u64)
+    pub fn from_ptr(val: *const impl ?Sized) -> Self {
+        Self(val as *const () as usize as u64)
     }
 }
 impl Display for PipelineId {
@@ -103,6 +106,40 @@ impl Debug for PipelineName<'_> {
 impl Display for PipelineName<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(self.0, f)
+    }
+}
+
+/// A [`Provider`] implementation that provides a [`PipelineName`] and [`PipelineId`] for requests through [`supply`].
+pub struct PipelineProvider<T> {
+    pub id: PipelineId,
+    pub name: T,
+}
+impl<T> PipelineProvider<T> {
+    pub fn from_ptr(ptr: *const impl ?Sized, name: T) -> Self {
+        Self {
+            id: PipelineId::from_ptr(ptr),
+            name,
+        }
+    }
+    pub fn from_hash(val: impl Hash, name: T) -> Self {
+        Self {
+            id: PipelineId::from_hash(val),
+            name,
+        }
+    }
+    pub const fn from_raw(id: u64, name: T) -> Self {
+        Self {
+            id: PipelineId(id),
+            name,
+        }
+    }
+}
+impl<'r, T: Display> Provider<'r> for PipelineProvider<T> {
+    type Lifetimes = l!['r];
+
+    fn provide(&'r self, want: &mut dyn supply::Want<Self::Lifetimes>) {
+        want.provide_value(PipelineName(&self.name))
+            .provide_value(self.id);
     }
 }
 
@@ -365,10 +402,13 @@ pub struct InvalidComponentId<T>(pub ComponentId<T>);
 pub struct UnknownComponentName(pub SmolStr);
 
 pub mod prelude {
-    pub use super::ComponentId;
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
     pub use super::graph::{GraphComponentId, PipelineGraph};
-    pub use super::runner::{ComponentContext, PipelineRunner, RunParams, RunnerComponentId};
+    pub use super::runner::{
+        ComponentArgs, ComponentContext, PipelineRunner, ProviderRef, ProviderTrait, RunParams,
+        RunnerComponentId,
+    };
+    pub use super::{ComponentId, PipelineProvider};
     pub use crate::utils::LogErr;
     pub use supply::prelude::*;
 

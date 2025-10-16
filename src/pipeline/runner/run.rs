@@ -130,7 +130,8 @@ impl<'r> CallbackInner<'r> for NoopCallback {
     }
 }
 
-type ProviderTrait<'c> = dyn for<'a> ProviderDyn<'a> + Send + Sync + 'c;
+pub type ProviderTrait<'c> = dyn for<'a> ProviderDyn<'a> + Send + Sync + 'c;
+pub type ProviderRef<'c> = &'c ProviderTrait<'c>;
 
 /// Context to be passed around between components.
 ///
@@ -163,9 +164,9 @@ impl<'c> Deref for Context<'c> {
         }
     }
 }
-impl<'c> From<&'c ProviderTrait<'c>> for Context<'c> {
+impl<'c> From<ProviderRef<'c>> for Context<'c> {
     #[inline(always)]
-    fn from(value: &'c ProviderTrait) -> Self {
+    fn from(value: ProviderRef<'c>) -> Self {
         Self::Borrowed(value)
     }
 }
@@ -173,6 +174,18 @@ impl<'c> From<Arc<ProviderTrait<'c>>> for Context<'c> {
     #[inline(always)]
     fn from(value: Arc<ProviderTrait<'c>>) -> Self {
         Self::Owned(value)
+    }
+}
+impl<'c, T: for<'a> ProviderDyn<'a> + Send + Sync + 'c> From<&'c T> for Context<'c> {
+    #[inline(always)]
+    fn from(value: &'c T) -> Self {
+        Self::Borrowed(value as _)
+    }
+}
+impl<'c, T: for<'a> ProviderDyn<'a> + Send + Sync + 'c> From<Arc<T>> for Context<'c> {
+    #[inline(always)]
+    fn from(value: Arc<T>) -> Self {
+        Self::Owned(value as _)
     }
 }
 impl<'c> From<()> for Context<'c> {

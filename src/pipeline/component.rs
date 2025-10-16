@@ -240,6 +240,25 @@ impl Inputs {
     pub fn named<S: Into<smol_str::SmolStr>, I: IntoIterator<Item = S>>(iter: I) -> Self {
         Self::Named(iter.into_iter().map(Into::into).collect())
     }
+    /// Get the number of inputs this component is expecting
+    pub fn expecting(&self) -> usize {
+        match self {
+            Self::Primary => 1,
+            Self::Named(v) => v.len(),
+        }
+    }
+    /// Check whether a channel is expected from this component.
+    ///
+    /// If this is `Inputs::Named` and the channel is `Some` and not specified, a component can be specified to call
+    /// [`Component::can_take`] on instead.
+    pub fn can_take(&self, channel: Option<&str>, component: Option<&dyn Component>) -> bool {
+        match self {
+            Inputs::Primary => channel.is_none(),
+            Inputs::Named(vec) => channel.is_some_and(|ch| {
+                vec.iter().any(|v| v == ch) || component.is_some_and(|c| c.can_take(ch))
+            }),
+        }
+    }
 }
 
 /// A component that can be used in a vision processing pipeline.
@@ -310,4 +329,12 @@ pub fn component_output(component: &dyn Component, channel: &str) -> OutputKind 
         "$finish" => OutputKind::Single,
         _ => component.output_kind(channel),
     }
+}
+
+/// Check whether a component can accept input on a channel.
+///
+/// This matches against the result of [`Component::inputs`] and if it doesn't match, checks [`Component::can_take`].
+/// Possibly re-allocating a `Vec` of elements isn't the most efficient, but anything else would be less convenient.
+pub fn component_takes(component: &dyn Component, channel: Option<&str>) -> bool {
+    component.inputs().can_take(channel, Some(component))
 }

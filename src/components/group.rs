@@ -4,7 +4,7 @@
 use super::ComponentIdentifier;
 use crate::pipeline::graph::IdResolver;
 use crate::pipeline::prelude::*;
-use crate::serialized::Source as NameSource;
+use crate::pipeline::serialized::ComponentChannel as NameSource;
 use crate::utils::{Configurable, Configure};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
@@ -36,8 +36,8 @@ pub struct Source {
     pub component: ComponentIdentifier,
     pub channel: Option<SmolStr>,
 }
-impl From<crate::serialized::Source> for Source {
-    fn from(value: crate::serialized::Source) -> Self {
+impl From<NameSource> for Source {
+    fn from(value: NameSource) -> Self {
         Self {
             component: ComponentIdentifier::Name(value.component),
             channel: value.channel,
@@ -77,7 +77,7 @@ impl<T>
                 if let Some(&id) = graph.lookup().get(&*name) {
                     id
                 } else {
-                    error!(name = name, "couldn't resolve input name");
+                    error!(name = &*name, "couldn't resolve input name");
                     return None;
                 }
             }
@@ -95,7 +95,7 @@ impl<T>
                     if let Some(&id) = graph.lookup().get(&*name) {
                         id
                     } else {
-                        error!(name = name, "couldn't resolve output name");
+                        error!(name = &*name, "couldn't resolve output name");
                         return None;
                     }
                 }
@@ -248,7 +248,7 @@ fn spawn_recursive<'s>(
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GroupFactory {
-    pub input: String,
+    pub input: SmolStr,
     pub output: Option<NameSource>,
     pub outputs: HashMap<SmolStr, NameSource>,
 }

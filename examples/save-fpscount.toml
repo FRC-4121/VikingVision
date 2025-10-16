@@ -1,0 +1,22 @@
+[camera.video]
+type = "v4l"
+path = "/dev/video32" # the webcam for my laptop, the first 16 are something weird with my camera
+width = 640
+height = 480
+fourcc = "YUYV"
+fps = 30
+# output = "fps"
+outputs = ["fps", "save"]
+
+[component.fps]
+type = "fps"
+
+[component.debug]
+type = "debug"
+input = "fps.pretty"
+# input = ["fps.pretty", "fps.fps"]
+
+[component.save]
+type = "ffmpeg"
+fps = 30
+args = ["-c:v", "libx264", "-crf", "23", "vv_%N_%Y%m%d_%H%M%S.mp4"]

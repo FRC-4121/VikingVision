@@ -11,6 +11,7 @@ use supply::prelude::*;
 pub struct FpsCounter {
     duration: Duration,
     frames: VecDeque<Instant>,
+    started: Option<Instant>,
 }
 /// The default duration is 5 seconds.
 impl Default for FpsCounter {
@@ -24,10 +25,19 @@ impl FpsCounter {
         Self {
             duration,
             frames: VecDeque::new(),
+            started: None,
         }
+    }
+    /// Reset the counter.
+    pub fn reset(&mut self) {
+        self.frames.clear();
+        self.started = None;
     }
     /// Record a frame with the given timestamp.
     pub fn tick_at(&mut self, now: Instant) {
+        if self.started.is_none() {
+            self.started = Some(now);
+        }
         while let Some(&frame) = self.frames.front() {
             if now.duration_since(frame) > self.duration {
                 self.frames.pop_front();
@@ -72,7 +82,11 @@ impl FpsCounter {
         })
     }
     pub fn fps(&self) -> f64 {
-        self.frames.len() as f64 / self.duration.as_secs_f64()
+        if let (Some(first), Some(&last)) = (self.started, self.frames.back()) {
+            self.frames.len() as f64 / self.duration.min(last - first).as_secs_f64()
+        } else {
+            0.0
+        }
     }
     pub fn set_max_duration(&mut self, duration: Duration) {
         if self.duration > duration {
