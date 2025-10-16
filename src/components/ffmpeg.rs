@@ -155,6 +155,11 @@ impl Component for FfmpegComponent {
                 return;
             }
         }
+        let mut lock = self
+            .running
+            .write()
+            .inspect_err(|_| warn!("poisoned FFMPEG component lock"))
+            .unwrap_or_else(PoisonError::into_inner);
         let mut cmd = Command::new(&*self.ffmpeg);
         Self::prep_command(&mut cmd, frame.borrow(), self.framerate);
         Self::format_args(&mut cmd, &self.args, id, name);
@@ -170,11 +175,6 @@ impl Component for FfmpegComponent {
                 if let Err(err) = stdin.write_all(&converted.data) {
                     error!(%err, "error writing data to stream");
                 }
-                let mut lock = self
-                    .running
-                    .write()
-                    .inspect_err(|_| warn!("poisoned FFMPEG component lock"))
-                    .unwrap_or_else(PoisonError::into_inner);
                 if let Some((mut child, _)) =
                     lock.insert(id, (Mutex::new(child), Mutex::new(stdin)))
                 {
