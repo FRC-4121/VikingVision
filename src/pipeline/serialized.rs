@@ -141,6 +141,62 @@ impl<'de> Deserialize<'de> for ComponentChannel {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum OneOrMany {
+    One(ComponentChannel),
+    Many(Vec<ComponentChannel>),
+}
+impl OneOrMany {
+    pub fn as_slice(&self) -> &[ComponentChannel] {
+        match self {
+            Self::One(v) => std::slice::from_ref(v),
+            Self::Many(v) => v,
+        }
+    }
+}
+impl<'de> Deserialize<'de> for OneOrMany {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct OOMVisitor;
+        impl<'de> serde::de::Visitor<'de> for OOMVisitor {
+            type Value = OneOrMany;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a component channel")
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ComponentChannel::try_from(v)
+                    .map(OneOrMany::One)
+                    .map_err(E::custom)
+            }
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ComponentChannel::try_from(v)
+                    .map(OneOrMany::One)
+                    .map_err(E::custom)
+            }
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut out = seq.size_hint().map_or(Vec::new(), Vec::with_capacity);
+                while let Some(elem) = seq.next_element()? {
+                    out.push(elem);
+                }
+                Ok(OneOrMany::Many(out))
+            }
+        }
+        deserializer.deserialize_any(OOMVisitor)
+    }
+}
+
 /// Which inputs to use for the given component
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -149,9 +205,9 @@ pub enum InputConfig {
     #[default]
     None,
     /// One input, on the default channel
-    Single(ComponentChannel),
+    Single(OneOrMany),
     /// Multiple named inputs
-    Multiple(HashMap<SmolStr, ComponentChannel>),
+    Multiple(HashMap<SmolStr, OneOrMany>),
 }
 impl<'de> Deserialize<'de> for InputConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -169,6 +225,7 @@ impl<'de> Deserialize<'de> for InputConfig {
                 E: serde::de::Error,
             {
                 ComponentChannel::try_from(v)
+                    .map(OneOrMany::One)
                     .map(InputConfig::Single)
                     .map_err(E::custom)
             }
@@ -177,8 +234,19 @@ impl<'de> Deserialize<'de> for InputConfig {
                 E: serde::de::Error,
             {
                 ComponentChannel::try_from(v)
+                    .map(OneOrMany::One)
                     .map(InputConfig::Single)
                     .map_err(E::custom)
+            }
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut out = seq.size_hint().map_or(Vec::new(), Vec::with_capacity);
+                while let Some(elem) = seq.next_element()? {
+                    out.push(elem);
+                }
+                Ok(InputConfig::Single(OneOrMany::Many(out)))
             }
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
             where
@@ -279,18 +347,22 @@ impl SerializedGraph {
             match &config.input {
                 InputConfig::None => unreachable!(),
                 InputConfig::Single(s) => {
-                    graph
-                        .add_dependency((s.component.as_str(), s.channel.clone()), name)
-                        .map_err(BuildGraphError::AddDependencyError)?;
+                    for c in s.as_slice() {
+                        graph
+                            .add_dependency((c.component.as_str(), c.channel.clone()), name)
+                            .map_err(BuildGraphError::AddDependencyError)?;
+                    }
                 }
                 InputConfig::Multiple(m) => {
                     for (channel, s) in m {
-                        graph
-                            .add_dependency(
-                                (s.component.as_str(), s.channel.clone()),
-                                (name, channel),
-                            )
-                            .map_err(BuildGraphError::AddDependencyError)?;
+                        for c in s.as_slice() {
+                            graph
+                                .add_dependency(
+                                    (c.component.as_str(), c.channel.clone()),
+                                    (name, channel),
+                                )
+                                .map_err(BuildGraphError::AddDependencyError)?;
+                        }
                     }
                 }
             }
