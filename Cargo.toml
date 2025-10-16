@@ -19,7 +19,7 @@ humantime-serde = "1.1.1"
 libc = { version = "0.2.176", optional = true }
 litemap = "0.8.0"
 polonius-the-crab = "0.4.2"
-rayon = "1.11.0"
+rayon.workspace = true
 serde.workspace = true
 smallvec = { version = "1.15.1", features = ["const_new", "drain_filter"] }
 smol_str = { version = "0.3.2", features = ["serde"] }
@@ -44,6 +44,7 @@ apriltag = ["dep:apriltag-sys", "dep:libc"]
 v4l = ["dep:v4l"]
 
 [workspace.dependencies]
+rayon = "1.11.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 time = { version = "0.3.44", features = ["formatting", "local-offset"] }
 toml = "0.9.7"
