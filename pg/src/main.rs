@@ -2,7 +2,8 @@ use eframe::{App, CreationContext, egui};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use tracing::error;
 #[cfg(feature = "v4l")]
 use v4l::Device;
@@ -52,10 +53,13 @@ fn open_from_v4l_path(
         }
     }
 }
-fn open_from_img_path(
+fn open_from_img_path<P: AsRef<Path> + ?Sized>(
     cameras: &mut Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
-) -> impl FnMut(&PathBuf) -> bool {
-    move |path| {
+) -> impl FnMut(&P) -> bool {
+    fn inner(
+        cameras: &mut Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
+        path: &Path,
+    ) -> bool {
         let res = FrameCameraConfig {
             basic: BasicConfig {
                 width: 0,
@@ -63,7 +67,7 @@ fn open_from_img_path(
                 fov: None,
                 max_fps: Some(60.0),
             },
-            source: viking_vision::camera::frame::ImageSource::Path(path.clone()),
+            source: viking_vision::camera::frame::ImageSource::Path(path.to_path_buf()),
         }
         .build_camera();
         let name = path.display().to_string();
@@ -78,7 +82,7 @@ fn open_from_img_path(
                         name,
                         handle,
                         camera::State {
-                            ident: camera::Ident::Img(path.clone()),
+                            ident: camera::Ident::Img(path.to_path_buf()),
                         },
                     ));
                     true
@@ -92,6 +96,7 @@ fn open_from_img_path(
             }
         }
     }
+    move |path| inner(cameras, path.as_ref())
 }
 fn open_from_mono(
     mono: &Monochrome,
@@ -135,7 +140,6 @@ struct Monochrome {
     id: usize,
 }
 
-#[derive(Debug)]
 struct VikingVision {
     #[cfg(feature = "v4l")]
     open_caps: Vec<PathBuf>,
@@ -145,7 +149,7 @@ struct VikingVision {
     text_buffers: Vec<(String, String, usize)>,
     buffer_id: usize,
     mono_count: usize,
-    image_path_wip: String,
+    image_pick_future: Option<Pin<Box<dyn Future<Output = Option<rfd::FileHandle>>>>>,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext) -> io::Result<Self> {
@@ -200,7 +204,7 @@ impl VikingVision {
             text_buffers,
             buffer_id,
             mono_count,
-            image_path_wip: String::new(),
+            image_pick_future: None,
         })
     }
     fn new_boxed(ctx: &CreationContext) -> Result<Box<dyn App>, Box<dyn Error + Send + Sync>> {
@@ -253,19 +257,13 @@ impl App for VikingVision {
                 }
                 self.monochrome.push(mono);
             }
-            let image = ui.button("Load Image");
-            egui::Popup::menu(&image)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    ui.set_min_width(100.0);
-                    ui.horizontal(|ui| {
-                        ui.text_edit_singleline(&mut self.image_path_wip);
-                        if ui.button("Open").clicked() {
-                            let path = PathBuf::from(std::mem::take(&mut self.image_path_wip));
-                            open_from_img_path(&mut self.cameras)(&path);
-                        }
-                    })
-                });
+            if ui.button("Load Image").clicked() {
+                self.image_pick_future = Some(Box::pin(
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("Images", &["png", "jpg", "jpeg"])
+                        .pick_file(),
+                ));
+            }
         });
         self.cameras.retain_mut(|(name, handle, state)| {
             egui::Window::new(format!("{name}- Image"))
@@ -314,6 +312,15 @@ impl App for VikingVision {
                 });
             res.is_none_or(|res| res.inner.unwrap_or(true))
         });
+        if let Some(fut) = self.image_pick_future.as_mut() {
+            use std::task::*;
+            if let Poll::Ready(opt) = fut.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+                self.image_pick_future = None;
+                if let Some(handle) = opt {
+                    open_from_img_path(&mut self.cameras)(handle.path());
+                }
+            }
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         #[cfg(feature = "v4l")]
