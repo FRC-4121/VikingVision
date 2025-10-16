@@ -17,9 +17,7 @@ use viking_vision::pipeline::daemon::DaemonHandle;
 mod camera;
 
 #[cfg(feature = "v4l")]
-fn open_from_v4l_path(
-    cameras: &mut Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
-) -> impl FnMut(&PathBuf) -> bool {
+fn open_from_v4l_path(cameras: &mut Vec<CameraData>) -> impl FnMut(&PathBuf) -> bool {
     move |path| {
         let res = Device::with_path(path).and_then(CaptureCamera::from_device);
         match res {
@@ -34,13 +32,14 @@ fn open_from_v4l_path(
                     camera::CameraWorker::new(Camera::new(name.clone(), Box::new(inner))),
                 );
                 if let Ok(handle) = res {
-                    cameras.push((
+                    cameras.push(CameraData {
                         name,
                         handle,
-                        camera::State {
+                        egui_id: egui::Id::new(("v4l", path)),
+                        state: camera::State {
                             ident: camera::Ident::V4l(path.clone()),
                         },
-                    ));
+                    });
                     true
                 } else {
                     false
@@ -54,12 +53,9 @@ fn open_from_v4l_path(
     }
 }
 fn open_from_img_path<P: AsRef<Path> + ?Sized>(
-    cameras: &mut Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
+    cameras: &mut Vec<CameraData>,
 ) -> impl FnMut(&P) -> bool {
-    fn inner(
-        cameras: &mut Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
-        path: &Path,
-    ) -> bool {
+    fn inner(cameras: &mut Vec<CameraData>, path: &Path) -> bool {
         let res = FrameCameraConfig {
             basic: BasicConfig {
                 width: 0,
@@ -78,13 +74,14 @@ fn open_from_img_path<P: AsRef<Path> + ?Sized>(
                     camera::CameraWorker::new(Camera::new(name.clone(), inner)),
                 );
                 if let Ok(handle) = res {
-                    cameras.push((
+                    cameras.push(CameraData {
                         name,
                         handle,
-                        camera::State {
+                        egui_id: egui::Id::new(path),
+                        state: camera::State {
                             ident: camera::Ident::Img(path.to_path_buf()),
                         },
-                    ));
+                    });
                     true
                 } else {
                     false
@@ -98,9 +95,7 @@ fn open_from_img_path<P: AsRef<Path> + ?Sized>(
     }
     move |path| inner(cameras, path.as_ref())
 }
-fn open_from_mono(
-    mono: &Monochrome,
-) -> Option<(String, DaemonHandle<camera::Context>, camera::State)> {
+fn open_from_mono(mono: &Monochrome) -> Option<CameraData> {
     let id = mono.id;
     let inner = FrameCameraConfig {
         basic: BasicConfig {
@@ -122,13 +117,14 @@ fn open_from_mono(
     );
     res.ok().map(|handle| {
         handle.start();
-        (
-            format!("Monochrome {id}"),
+        CameraData {
+            name: format!("Monochrome {id}"),
             handle,
-            camera::State {
+            egui_id: egui::Id::new(("monochrome", id)),
+            state: camera::State {
                 ident: camera::Ident::Mono(mono.id),
             },
-        )
+        }
     })
 }
 
@@ -140,12 +136,19 @@ struct Monochrome {
     id: usize,
 }
 
+struct CameraData {
+    name: String,
+    handle: DaemonHandle<camera::Context>,
+    egui_id: egui::Id,
+    state: camera::State,
+}
+
 struct VikingVision {
     #[cfg(feature = "v4l")]
     open_caps: Vec<PathBuf>,
     open_imgs: Vec<PathBuf>,
     monochrome: Vec<Monochrome>,
-    cameras: Vec<(String, DaemonHandle<camera::Context>, camera::State)>,
+    cameras: Vec<CameraData>,
     text_buffers: Vec<(String, String, usize)>,
     buffer_id: usize,
     mono_count: usize,
@@ -265,10 +268,10 @@ impl App for VikingVision {
                 ));
             }
         });
-        self.cameras.retain_mut(|(name, handle, state)| {
-            let m = egui::Window::new(format!("{name}- Image"))
-                .id(egui::Id::new(&**handle.context() as *const _))
-                .show(ctx, camera::show_camera(handle, state))
+        self.cameras.retain_mut(|data| {
+            let m = egui::Window::new(&data.name)
+                .id(data.egui_id)
+                .show(ctx, camera::show_camera(&data.handle, &mut data.state))
                 .and_then(|o| o.inner.flatten());
             if let Some(m) = m {
                 for m2 in &mut self.monochrome {
@@ -277,15 +280,15 @@ impl App for VikingVision {
                     }
                 }
             }
-            if handle.is_finished() {
-                match &state.ident {
+            if data.handle.is_finished() {
+                match &data.state.ident {
                     #[cfg(feature = "v4l")]
                     camera::Ident::V4l(path) => self.open_caps.retain(|p| p != path),
                     camera::Ident::Img(path) => self.open_imgs.retain(|p| p != path),
                     camera::Ident::Mono(ident) => self.monochrome.retain(|m| m.id != *ident),
                 }
             }
-            !handle.is_finished()
+            !data.handle.is_finished()
         });
         self.text_buffers.retain_mut(|(title, body, id)| {
             let res = egui::Window::new(&*title)
@@ -354,9 +357,6 @@ impl App for VikingVision {
             storage.set_string("text_buffers", s);
         }
         storage.set_string("buffer_id", self.buffer_id.to_string());
-    }
-    fn persist_egui_memory(&self) -> bool {
-        false // window IDs don't persist
     }
 }
 

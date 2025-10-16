@@ -257,10 +257,10 @@ pub fn show_camera(
 
 #[derive(Debug)]
 pub enum Ident {
-    #[cfg(feature = "v4l")]
-    V4l(PathBuf),
     Img(PathBuf),
     Mono(usize),
+    #[cfg(feature = "v4l")]
+    V4l(PathBuf),
 }
 
 #[derive(Debug)]
