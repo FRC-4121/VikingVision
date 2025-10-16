@@ -254,17 +254,9 @@ impl App for VikingVision {
                 self.monochrome.push(mono);
             }
             let image = ui.button("Load Image");
-            let image_id = egui::Id::new("image-open");
-            if image.clicked() {
-                ui.memory_mut(|mem| mem.open_popup(image_id));
-            }
-            egui::popup_above_or_below_widget(
-                ui,
-                image_id,
-                &image,
-                egui::AboveOrBelow::Below,
-                egui::PopupCloseBehavior::CloseOnClickOutside,
-                |ui| {
+            egui::Popup::menu(&image)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
                     ui.set_min_width(100.0);
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut self.image_path_wip);
@@ -273,8 +265,7 @@ impl App for VikingVision {
                             open_from_img_path(&mut self.cameras)(&path);
                         }
                     })
-                },
-            );
+                });
         });
         self.cameras.retain_mut(|(name, handle, state)| {
             egui::Window::new(format!("{name}- Image"))
@@ -308,24 +299,15 @@ impl App for VikingVision {
                     let mut keep = true;
                     ui.horizontal(|ui| {
                         let rename = ui.button("Rename");
-                        let rename_id = egui::Id::new(("buffer-rename", *id));
-                        if rename.clicked() {
-                            ui.memory_mut(|mem| mem.open_popup(rename_id));
-                        }
                         if ui.button("Delete").clicked() {
                             keep = false;
                         }
-                        egui::popup_above_or_below_widget(
-                            ui,
-                            rename_id,
-                            &rename,
-                            egui::AboveOrBelow::Below,
-                            egui::PopupCloseBehavior::CloseOnClickOutside,
-                            |ui| {
+                        egui::Popup::menu(&rename)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show(|ui| {
                                 ui.set_min_width(100.0);
                                 ui.text_edit_singleline(title);
-                            },
-                        );
+                            });
                     });
                     ui.code_editor(body);
                     keep
