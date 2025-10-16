@@ -14,8 +14,8 @@ pub enum ParseSourceError {
     EmptyComponent,
     #[error("Channel name is empty")]
     EmptyChannel,
-    #[error("Non-alphanumeric character in byte {0} of channel")]
-    NonAlphaNumComponent(usize),
+    #[error("Non-alphanumeric character in byte {0} of source")]
+    NonAlphaNumChar(usize),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -48,7 +48,7 @@ impl TryFrom<&str> for ComponentChannel {
                 .char_indices()
                 .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
             {
-                return Err(ParseSourceError::NonAlphaNumComponent(n));
+                return Err(ParseSourceError::NonAlphaNumChar(n));
             }
             Ok(ComponentChannel {
                 component: component.into(),
@@ -59,7 +59,7 @@ impl TryFrom<&str> for ComponentChannel {
                 .char_indices()
                 .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
             {
-                return Err(ParseSourceError::NonAlphaNumComponent(n));
+                return Err(ParseSourceError::NonAlphaNumChar(n));
             }
             Ok(ComponentChannel {
                 component: value.into(),
@@ -84,7 +84,7 @@ impl TryFrom<String> for ComponentChannel {
                 .char_indices()
                 .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
             {
-                return Err(ParseSourceError::NonAlphaNumComponent(n));
+                return Err(ParseSourceError::NonAlphaNumChar(n));
             }
             Ok(ComponentChannel {
                 component: component.into(),
@@ -95,7 +95,7 @@ impl TryFrom<String> for ComponentChannel {
                 .char_indices()
                 .find(|&(_, c)| !(c == '-' || c == '_' || c.is_alphanumeric()))
             {
-                return Err(ParseSourceError::NonAlphaNumComponent(n));
+                return Err(ParseSourceError::NonAlphaNumChar(n));
             }
             Ok(ComponentChannel {
                 component: value.into(),

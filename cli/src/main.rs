@@ -256,7 +256,7 @@ fn main() {
                                 }
                                 Some((id, ch.channel))
                             } else {
-                                error!(name = &*ch.component, "couldn't find a componenet with the given name");
+                                error!(name = &*ch.component, "couldn't find a component with the given name");
                                 None
                             }
                         })

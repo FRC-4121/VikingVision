@@ -109,7 +109,7 @@ impl Display for PipelineName<'_> {
     }
 }
 
-/// A [`Provider`] implementation that provides a [`PipelineName`] and [`PipelineContext`] for requests through [`supply`].
+/// A [`Provider`] implementation that provides a [`PipelineName`] and [`PipelineId`] for requests through [`supply`].
 pub struct PipelineProvider<T> {
     pub id: u64,
     pub name: T,
