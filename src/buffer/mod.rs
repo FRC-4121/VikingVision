@@ -33,6 +33,7 @@ impl Error for UnrecognizedFourCC {}
 /// A format for the pixels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[repr(u8)]
 pub enum PixelFormat {
     Luma,
     LumaA,
@@ -107,6 +108,19 @@ impl PixelFormat {
             Self::Yuyv => &[255, 0, 255],
         }
     }
+    pub const VARIANTS: &[PixelFormat] = &[
+        Self::Luma,
+        Self::LumaA,
+        Self::Gray,
+        Self::GrayA,
+        Self::Rgb,
+        Self::Rgba,
+        Self::Hsv,
+        Self::Hsva,
+        Self::YCbCr,
+        Self::Yuyv,
+        Self::YCbCrA,
+    ];
 }
 #[cfg(feature = "v4l")]
 impl TryFrom<v4l::FourCC> for PixelFormat {

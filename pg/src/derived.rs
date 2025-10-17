@@ -302,7 +302,7 @@ pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<D
         }
     });
 }
-pub fn render_frame(ctx: &egui::Context) -> impl Fn(&mut DerivedFrame) -> bool {
+pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFrame) -> bool {
     move |frame| {
         let mut show = true;
         egui::Window::new(&frame.title)
@@ -314,6 +314,148 @@ pub fn render_frame(ctx: &egui::Context) -> impl Fn(&mut DerivedFrame) -> bool {
                         show = false;
                     }
                 });
+                let mut changed = false;
+                match &mut frame.transform {
+                    #[allow(unused_variables)]
+                    Transform::ColorFilter(filter) => {}
+                    Transform::BoxBlur {
+                        format,
+                        width,
+                        height,
+                    } => {
+                        changed = color_space_dropdown(ui, 0, format);
+                        changed |= ui
+                            .add(
+                                egui::Slider::from_get_set(1.0..=13.0, |old| {
+                                    if let Some(v) = old {
+                                        *width = (v * 0.5).max(0.0) as _;
+                                    }
+                                    (*width * 2 + 1) as _
+                                })
+                                .integer()
+                                .text("Width"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::from_get_set(1.0..=13.0, |old| {
+                                    if let Some(v) = old {
+                                        *height = (v * 0.5).max(0.0) as _;
+                                    }
+                                    (*height * 2 + 1) as _
+                                })
+                                .integer()
+                                .text("Height"),
+                            )
+                            .changed();
+                    }
+                    Transform::PercentileFilter {
+                        format,
+                        width,
+                        height,
+                        pixel,
+                    } => {
+                        changed = color_space_dropdown(ui, 0, format);
+                        changed |= ui
+                            .add(
+                                egui::Slider::from_get_set(1.0..=13.0, |old| {
+                                    if let Some(v) = old {
+                                        *width = (v * 0.5).max(0.0) as _;
+                                    }
+                                    (*width * 2 + 1) as _
+                                })
+                                .integer()
+                                .text("Width"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::from_get_set(1.0..=13.0, |old| {
+                                    if let Some(v) = old {
+                                        *height = (v * 0.5).max(0.0) as _;
+                                    }
+                                    (*height * 2 + 1) as _
+                                })
+                                .integer()
+                                .text("Height"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    pixel,
+                                    0..=((*width * 2 + 1) * (*height * 2 + 1) - 1),
+                                )
+                                .clamping(egui::SliderClamping::Always)
+                                .text("Selected"),
+                            )
+                            .changed();
+                    }
+                    Transform::Blobs {
+                        min_width,
+                        min_height,
+                        min_area,
+                        min_fill,
+                    } => {
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(min_width, 0..=100)
+                                    .clamping(egui::SliderClamping::Never)
+                                    .text("Min Width"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(min_height, 0..=100)
+                                    .clamping(egui::SliderClamping::Never)
+                                    .text("Min Height"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(min_area, 0..=10000)
+                                    .clamping(egui::SliderClamping::Never)
+                                    .text("Min Area"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(min_fill, 0.0..=1.0).text("Min Fill"))
+                            .changed();
+                    }
+                    #[cfg(feature = "apriltag")]
+                    Transform::Apriltag {
+                        #[allow(unused_variables)]
+                        families,
+                        max_threads,
+                        sigma,
+                        decimate,
+                        changed: at_changed,
+                    } => {
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    max_threads,
+                                    1..=(std::thread::available_parallelism()
+                                        .map_or(1, std::num::NonZero::get)
+                                        as u8
+                                        * 3
+                                        / 4),
+                                )
+                                .text("Threads"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(sigma, 0.0..=10.0).text("Sigma"))
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(decimate, 0.0..=10.0).text("Decimate"))
+                            .changed();
+                        *at_changed = changed;
+                    }
+                }
+                if changed {
+                    frame.update_title(prev);
+                }
                 let img = egui::ColorImage::from_rgb(
                     [frame.rgb.width as _, frame.rgb.height as _],
                     &frame.rgb.data,
@@ -323,7 +465,18 @@ pub fn render_frame(ctx: &egui::Context) -> impl Fn(&mut DerivedFrame) -> bool {
                         .load_texture(frame.id.short_debug_format(), img, Default::default());
                 ui.image(&texture);
             });
-        frame.derived.retain_mut(render_frame(ctx));
+        frame.derived.retain_mut(render_frame(ctx, &frame.title));
         show
     }
+}
+fn color_space_dropdown(ui: &mut egui::Ui, id_salt: u64, space: &mut PixelFormat) -> bool {
+    let mut idx = *space as usize;
+    let old = idx;
+    egui::ComboBox::new(id_salt, "Color Space")
+        .selected_text(space.to_string())
+        .show_index(ui, &mut idx, PixelFormat::VARIANTS.len(), |idx| {
+            PixelFormat::VARIANTS[idx].to_string()
+        });
+    *space = PixelFormat::VARIANTS[idx];
+    idx != old
 }

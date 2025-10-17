@@ -288,7 +288,7 @@ impl App for VikingVision {
                 .lock()
                 .unwrap()
                 .tree
-                .retain_mut(derived::render_frame(ctx));
+                .retain_mut(derived::render_frame(ctx, &data.name));
             let finished = data.handle.is_finished();
             if finished {
                 match &data.state.ident {
