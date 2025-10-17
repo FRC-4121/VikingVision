@@ -18,7 +18,7 @@ use viking_vision::camera::Camera;
 #[cfg(feature = "v4l")]
 use viking_vision::camera::capture::CaptureCamera;
 use viking_vision::camera::frame::{Color, FrameCamera, ImageSource};
-use viking_vision::pipeline::daemon::{DaemonHandle, Worker};
+use viking_vision::pipeline::daemon::Worker;
 use viking_vision::utils::FpsCounter;
 
 #[cfg(feature = "v4l")]
@@ -115,14 +115,13 @@ pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnOnce(&mut egui::Ui) {
     }
 }
 pub fn show_camera(
-    handle: &DaemonHandle<Context>,
-    state: &mut State,
+    data: &super::CameraData,
 ) -> impl FnOnce(&mut egui::Ui) -> Option<super::Monochrome> {
     move |ui| {
         use viking_vision::pipeline::daemon::states::*;
         let mut ret = None;
-        let run_state = handle.context().run_state.load(Ordering::Relaxed);
-        let mut lock = handle.context().context.locked.lock().unwrap();
+        let run_state = data.handle.context().run_state.load(Ordering::Relaxed);
+        let mut lock = data.handle.context().context.locked.lock().unwrap();
         ui.horizontal(|ui| {
             if run_state == SHUTDOWN {
                 ui.label("Closing...");
@@ -131,21 +130,22 @@ pub fn show_camera(
                 #[allow(clippy::collapsible_if)]
                 if run_state == RUNNING {
                     if ui.button("Pause").clicked() {
-                        handle.pause();
+                        data.handle.pause();
                     }
                 } else if run_state == PAUSED {
                     if ui.button("Start").clicked() {
-                        handle.start();
+                        data.handle.start();
                     }
                 }
                 if ui.button("Close").clicked() {
-                    handle.shutdown();
+                    data.handle.shutdown();
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 let [min, max] = lock.fps.minmax().unwrap_or_default();
                 let avg = lock.fps.fps();
                 ui.label(format!("{min:.2}/{max:.2}/{avg:.2} FPS"));
+                crate::derived::add_button(ui, &data.name, data.egui_id, &mut lock.tree);
             });
         });
         {
@@ -226,7 +226,7 @@ pub fn show_camera(
                             opts.recolor = true;
                         }
                         if opts.reshape || opts.recolor {
-                            if let Ident::Mono(id) = state.ident {
+                            if let Ident::Mono(id) = data.state.ident {
                                 ret = Some(super::Monochrome {
                                     width: opts.width,
                                     height: opts.height,
@@ -239,7 +239,12 @@ pub fn show_camera(
                 });
             }
         }
-        let new_frames = handle.context().context.counter.swap(0, Ordering::Relaxed);
+        let new_frames = data
+            .handle
+            .context()
+            .context
+            .counter
+            .swap(0, Ordering::Relaxed);
         if new_frames > 0 {
             ui.ctx().request_repaint();
         } else {
@@ -247,9 +252,11 @@ pub fn show_camera(
         }
         let buffer = &lock.frame;
         let img = egui::ColorImage::from_rgb([buffer.width as _, buffer.height as _], &buffer.data);
-        let texture = ui
-            .ctx()
-            .load_texture(format!("{handle:p}"), img, Default::default());
+        let texture = ui.ctx().load_texture(
+            format!("{:p}", std::sync::Arc::as_ptr(data.handle.context())),
+            img,
+            Default::default(),
+        );
         ui.image(&texture);
         ret
     }
@@ -291,16 +298,17 @@ pub struct MonochromeOptions {
     pub recolor: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct LockedState {
     pub frame: Buffer<'static>,
     pub fps: FpsCounter,
     #[cfg(feature = "v4l")]
     pub cap: Option<CapOptions>,
     pub mono: Option<MonochromeOptions>,
+    pub tree: Vec<crate::derived::DerivedFrame>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Context {
     pub locked: Mutex<LockedState>,
     pub counter: AtomicUsize,
@@ -335,6 +343,9 @@ impl Worker<Context> for CameraWorker {
                     return;
                 };
                 frame.convert_into(&mut state.frame);
+                for next in &mut state.tree {
+                    next.update_frame(frame.borrow(), frame.borrow());
+                }
                 state.fps.tick();
                 #[cfg(feature = "v4l")]
                 if let Some(capture) = camera.downcast_mut::<CaptureCamera>() {

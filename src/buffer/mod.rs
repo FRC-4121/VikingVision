@@ -91,6 +91,22 @@ impl PixelFormat {
     pub const fn known_fourcc(fourcc: v4l::FourCC) -> bool {
         matches!(&fourcc.repr, b"YUYV" | b"RGB8" | b"RGBA" | b"MJPG")
     }
+    /// Some bright color
+    ///
+    /// This is red in color spaces that have colors, and white for others
+    pub const fn bright_color(&self) -> &'static [u8] {
+        match self {
+            Self::Luma | Self::Gray => &[255],
+            Self::LumaA | Self::GrayA => &[255, 255],
+            Self::Rgb => &[255, 0, 0],
+            Self::Rgba => &[255, 0, 0, 255],
+            Self::Hsv => &[255, 255, 255],
+            Self::Hsva => &[255, 255, 255, 255],
+            Self::YCbCr => &[255, 0, 255],
+            Self::YCbCrA => &[255, 0, 255, 255],
+            Self::Yuyv => &[255, 0, 255],
+        }
+    }
 }
 #[cfg(feature = "v4l")]
 impl TryFrom<v4l::FourCC> for PixelFormat {

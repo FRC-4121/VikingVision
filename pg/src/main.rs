@@ -15,6 +15,7 @@ use viking_vision::camera::frame::{Color, FrameCameraConfig};
 use viking_vision::pipeline::daemon::DaemonHandle;
 
 mod camera;
+mod derived;
 
 #[cfg(feature = "v4l")]
 fn open_from_v4l_path(cameras: &mut Vec<CameraData>) -> impl FnMut(&PathBuf) -> bool {
@@ -271,7 +272,7 @@ impl App for VikingVision {
         self.cameras.retain_mut(|data| {
             let m = egui::Window::new(&data.name)
                 .id(data.egui_id)
-                .show(ctx, camera::show_camera(&data.handle, &mut data.state))
+                .show(ctx, camera::show_camera(data))
                 .and_then(|o| o.inner.flatten());
             if let Some(m) = m {
                 for m2 in &mut self.monochrome {
@@ -280,7 +281,16 @@ impl App for VikingVision {
                     }
                 }
             }
-            if data.handle.is_finished() {
+            data.handle
+                .context()
+                .context
+                .locked
+                .lock()
+                .unwrap()
+                .tree
+                .retain_mut(derived::render_frame(ctx));
+            let finished = data.handle.is_finished();
+            if finished {
                 match &data.state.ident {
                     #[cfg(feature = "v4l")]
                     camera::Ident::V4l(path) => self.open_caps.retain(|p| p != path),
@@ -288,7 +298,7 @@ impl App for VikingVision {
                     camera::Ident::Mono(ident) => self.monochrome.retain(|m| m.id != *ident),
                 }
             }
-            !data.handle.is_finished()
+            !finished
         });
         self.text_buffers.retain_mut(|(title, body, id)| {
             let res = egui::Window::new(&*title)

@@ -16,5 +16,6 @@ v4l = { workspace = true, optional = true }
 viking-vision.workspace = true
 
 [features]
-default = ["v4l"]
+default = ["apriltag", "v4l"]
+apriltag = ["viking-vision/apriltag"]
 v4l = ["dep:v4l", "viking-vision/v4l"]
