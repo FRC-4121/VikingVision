@@ -1,3 +1,4 @@
+use crate::range_slider::RangeSlider;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -221,7 +222,7 @@ impl DerivedFrame {
             }
         }
         for next in &mut self.derived {
-            next.update_title(&self.title);
+            next.update_title("...");
         }
     }
     fn with_updated_title(mut self, prev: &str) -> Self {
@@ -309,7 +310,7 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
             .id(frame.id)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    add_button(ui, &frame.title, frame.id, &mut frame.derived);
+                    add_button(ui, "...", frame.id, &mut frame.derived);
                     if ui.button("Delete").clicked() {
                         show = false;
                     }
@@ -317,7 +318,215 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                 let mut changed = false;
                 match &mut frame.transform {
                     #[allow(unused_variables)]
-                    Transform::ColorFilter(filter) => {}
+                    Transform::ColorFilter(filter) => {
+                        let mut space = filter.pixel_format();
+                        changed = color_space_dropdown(ui, 2, &mut space);
+                        if changed {
+                            *filter = match space {
+                                PixelFormat::Luma => ColorFilter::Luma {
+                                    min_l: 0,
+                                    max_l: 255,
+                                },
+                                PixelFormat::LumaA => ColorFilter::LumaA {
+                                    min_l: 0,
+                                    max_l: 255,
+                                    min_a: 0,
+                                    max_a: 255,
+                                },
+                                PixelFormat::Gray => ColorFilter::Gray {
+                                    min_v: 0,
+                                    max_v: 255,
+                                },
+                                PixelFormat::GrayA => ColorFilter::GrayA {
+                                    min_v: 0,
+                                    max_v: 255,
+                                    min_a: 0,
+                                    max_a: 255,
+                                },
+                                PixelFormat::Rgb => ColorFilter::Rgb {
+                                    min_r: 0,
+                                    min_g: 0,
+                                    min_b: 0,
+                                    max_r: 255,
+                                    max_g: 255,
+                                    max_b: 255,
+                                },
+                                PixelFormat::Rgba => ColorFilter::Rgba {
+                                    min_r: 0,
+                                    min_g: 0,
+                                    min_b: 0,
+                                    max_r: 255,
+                                    max_g: 255,
+                                    max_b: 255,
+                                    min_a: 0,
+                                    max_a: 255,
+                                },
+                                PixelFormat::Hsv => ColorFilter::Hsv {
+                                    min_h: 0,
+                                    max_h: 255,
+                                    min_s: 0,
+                                    max_s: 255,
+                                    min_v: 0,
+                                    max_v: 255,
+                                },
+                                PixelFormat::Hsva => ColorFilter::Hsva {
+                                    min_h: 0,
+                                    max_h: 255,
+                                    min_s: 0,
+                                    max_s: 255,
+                                    min_v: 0,
+                                    max_v: 255,
+                                    min_a: 0,
+                                    max_a: 255,
+                                },
+                                PixelFormat::Yuyv => ColorFilter::Yuyv {
+                                    min_y: 0,
+                                    max_y: 255,
+                                    min_u: 0,
+                                    max_u: 255,
+                                    min_v: 0,
+                                    max_v: 255,
+                                },
+                                PixelFormat::YCbCr => ColorFilter::YCbCr {
+                                    min_y: 0,
+                                    max_y: 255,
+                                    min_b: 0,
+                                    max_b: 255,
+                                    min_r: 0,
+                                    max_r: 255,
+                                },
+                                PixelFormat::YCbCrA => ColorFilter::YCbCrA {
+                                    min_y: 0,
+                                    max_y: 255,
+                                    min_b: 0,
+                                    max_b: 255,
+                                    min_r: 0,
+                                    max_r: 255,
+                                    min_a: 0,
+                                    max_a: 255,
+                                },
+                            };
+                        }
+                        match filter {
+                            ColorFilter::Luma { min_l, max_l } => {
+                                changed |= ui.add(RangeSlider::new("L", min_l, max_l)).changed();
+                            }
+                            ColorFilter::LumaA {
+                                min_l,
+                                max_l,
+                                min_a,
+                                max_a,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("L", min_l, max_l)).changed();
+                                changed |= ui.add(RangeSlider::new("A", min_a, max_a)).changed();
+                            }
+                            ColorFilter::Gray { min_v, max_v } => {
+                                changed |= ui.add(RangeSlider::new("V", min_v, max_v)).changed();
+                            }
+                            ColorFilter::GrayA {
+                                min_v,
+                                max_v,
+                                min_a,
+                                max_a,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("V", min_v, max_v)).changed();
+                                changed |= ui.add(RangeSlider::new("A", min_a, max_a)).changed();
+                            }
+                            ColorFilter::Rgb {
+                                min_r,
+                                min_g,
+                                min_b,
+                                max_r,
+                                max_g,
+                                max_b,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("R", min_r, max_r)).changed();
+                                changed |= ui.add(RangeSlider::new("G", min_g, max_g)).changed();
+                                changed |= ui.add(RangeSlider::new("B", min_b, max_b)).changed();
+                            }
+                            ColorFilter::Rgba {
+                                min_r,
+                                min_g,
+                                min_b,
+                                max_r,
+                                max_g,
+                                max_b,
+                                min_a,
+                                max_a,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("R", min_r, max_r)).changed();
+                                changed |= ui.add(RangeSlider::new("G", min_g, max_g)).changed();
+                                changed |= ui.add(RangeSlider::new("B", min_b, max_b)).changed();
+                                changed |= ui.add(RangeSlider::new("A", min_a, max_a)).changed();
+                            }
+                            ColorFilter::Hsv {
+                                min_h,
+                                max_h,
+                                min_s,
+                                max_s,
+                                min_v,
+                                max_v,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("H", min_h, max_h)).changed();
+                                changed |= ui.add(RangeSlider::new("S", min_s, max_s)).changed();
+                                changed |= ui.add(RangeSlider::new("V", min_v, max_v)).changed();
+                            }
+                            ColorFilter::Hsva {
+                                min_h,
+                                max_h,
+                                min_s,
+                                max_s,
+                                min_v,
+                                max_v,
+                                min_a,
+                                max_a,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("H", min_h, max_h)).changed();
+                                changed |= ui.add(RangeSlider::new("S", min_s, max_s)).changed();
+                                changed |= ui.add(RangeSlider::new("V", min_v, max_v)).changed();
+                                changed |= ui.add(RangeSlider::new("A", min_a, max_a)).changed();
+                            }
+                            ColorFilter::Yuyv {
+                                min_y,
+                                max_y,
+                                min_u,
+                                max_u,
+                                min_v,
+                                max_v,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("Y", min_y, max_y)).changed();
+                                changed |= ui.add(RangeSlider::new("U", min_u, max_u)).changed();
+                                changed |= ui.add(RangeSlider::new("V", min_v, max_v)).changed();
+                            }
+                            ColorFilter::YCbCr {
+                                min_y,
+                                max_y,
+                                min_b,
+                                max_b,
+                                min_r,
+                                max_r,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("Y", min_y, max_y)).changed();
+                                changed |= ui.add(RangeSlider::new("Cb", min_b, max_b)).changed();
+                                changed |= ui.add(RangeSlider::new("Cr", min_r, max_r)).changed();
+                            }
+                            ColorFilter::YCbCrA {
+                                min_y,
+                                max_y,
+                                min_b,
+                                max_b,
+                                min_r,
+                                max_r,
+                                min_a,
+                                max_a,
+                            } => {
+                                changed |= ui.add(RangeSlider::new("Y", min_y, max_y)).changed();
+                                changed |= ui.add(RangeSlider::new("Cb", min_b, max_b)).changed();
+                                changed |= ui.add(RangeSlider::new("Cr", min_r, max_r)).changed();
+                                changed |= ui.add(RangeSlider::new("A", min_a, max_a)).changed();
+                            }
+                        }
+                    }
                     Transform::BoxBlur {
                         format,
                         width,
@@ -355,7 +564,7 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         height,
                         pixel,
                     } => {
-                        changed = color_space_dropdown(ui, 0, format);
+                        changed = color_space_dropdown(ui, 1, format);
                         changed |= ui
                             .add(
                                 egui::Slider::from_get_set(1.0..=13.0, |old| {
@@ -465,7 +674,7 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         .load_texture(frame.id.short_debug_format(), img, Default::default());
                 ui.image(&texture);
             });
-        frame.derived.retain_mut(render_frame(ctx, &frame.title));
+        frame.derived.retain_mut(render_frame(ctx, "..."));
         show
     }
 }

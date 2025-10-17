@@ -16,6 +16,7 @@ use viking_vision::pipeline::daemon::DaemonHandle;
 
 mod camera;
 mod derived;
+mod range_slider;
 
 #[cfg(feature = "v4l")]
 fn open_from_v4l_path(cameras: &mut Vec<CameraData>) -> impl FnMut(&PathBuf) -> bool {
