@@ -58,7 +58,7 @@ macro_rules! impl_pixel_coord {
                 self * 2.0
             }
             fn to_usize(self) -> usize {
-                self.ceil() as _
+                self.max(0.0).ceil() as _
             }
         }
         impl_pixel_coord!($($rest)*);

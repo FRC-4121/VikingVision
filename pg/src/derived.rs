@@ -644,15 +644,13 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         decimate,
                         changed: at_changed,
                     } => {
+                        let threads =
+                            std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
                         changed |= ui
                             .add(
                                 egui::Slider::new(
                                     max_threads,
-                                    1..=(std::thread::available_parallelism()
-                                        .map_or(1, std::num::NonZero::get)
-                                        as u8
-                                        * 3
-                                        / 4),
+                                    1..=((threads * 3 / 4).clamp(1, 255) as u8),
                                 )
                                 .text("Threads"),
                             )
