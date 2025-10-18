@@ -12,7 +12,7 @@ Binary artifacts will be available from the releases tab... once we have a major
 
 Cargo makes it incredibly easy to build and our code. Installation instructions for it can be found on Rust's [getting started](https://www.rust-lang.org/learn/get-started) guide. Note that Cargo installs its binaries per-user, defaulting to `~/.cargo/bin` on Linux.
 
-If you just want the binaries, you can run `cargo install --git https://github.com/FRC-4121/VikingVision`, which will install three binaries: `vv-cli`, `vv-gui`, and `vv-pg`. These can be run from anywhere and are fully standalone.
+If you just want the binaries, you can run `cargo install --git https://github.com/FRC-4121/VikingVision vv-cli vv-gui vv-pg`, which will install three binaries: `vv-cli`, `vv-gui`, and `vv-pg`. These can be run from anywhere and are fully standalone.
 
 Alternatively, you can clone the repository, which has other useful utilities in it. From there, you can run `cargo build --workspace --release` to build both the GUI and CLI, which can be found in the generated `target/release/` directory.
 
