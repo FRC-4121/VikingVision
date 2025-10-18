@@ -622,16 +622,19 @@ impl Worker<Context> for CameraWorker {
                 if let Some(mono) = camera.downcast_mut::<FrameCamera>() {
                     if let ImageSource::Color(Color {
                         format: PixelFormat::Rgb,
-                        ref bytes,
+                        ref mut bytes,
                     }) = mono.config.source
                     {
                         let opts = state.mono.get_or_insert_default();
                         if opts.recolor {
+                            opts.recolor = false;
+                            bytes.copy_from_slice(&opts.color);
                             par_broadcast1(|c| *c = opts.color, &mut mono.buffer);
                         } else {
                             opts.color.copy_from_slice(bytes);
                         }
                         if opts.reshape {
+                            opts.reshape = false;
                             let _ = mono.reshape_monochrome(opts.width, opts.height);
                         } else {
                             opts.width = mono.buffer.width;
