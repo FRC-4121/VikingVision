@@ -66,7 +66,9 @@ impl DerivedFrame {
             id: id.with(UNIQUE_COUNTER.fetch_add(1, Ordering::Relaxed)),
             frame: Buffer::empty_rgb(),
             rgb: Buffer::empty_rgb(),
+            #[cfg(feature = "apriltag")]
             detector: None,
+            #[cfg(feature = "apriltag")]
             last_families: Vec::new(),
         }
     }
@@ -124,6 +126,7 @@ impl DerivedFrame {
                     blob.draw(self.frame.format.bright_color(), &mut self.frame);
                 }
             }
+            #[cfg(feature = "apriltag")]
             Transform::Apriltag {
                 ref families,
                 max_threads,
@@ -286,6 +289,7 @@ pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<D
                 .with_updated_title(title),
             );
         }
+        #[cfg(feature = "apriltag")]
         if ui.button("Apriltag").clicked() {
             next.push(
                 DerivedFrame::new(

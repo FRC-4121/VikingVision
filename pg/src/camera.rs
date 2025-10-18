@@ -190,7 +190,11 @@ pub fn show_camera(
             });
         });
         {
-            if lock.cap.is_some() || lock.mono.is_some() {
+            #[cfg(feature = "v4l")]
+            let has_cap = lock.cap.is_some();
+            #[cfg(not(feature = "v4l"))]
+            let has_cap = false;
+            if has_cap || lock.mono.is_some() {
                 ui.horizontal(|ui| {
                     #[cfg(feature = "v4l")]
                     if let Some(opts) = &mut lock.cap {
@@ -424,6 +428,7 @@ pub fn convert(mono: &[super::Monochrome]) -> impl Fn(DeserializedData) -> Optio
             tree,
         } = deserialized;
         let handle = match &state.ident {
+            #[cfg(feature = "v4l")]
             Ident::V4l(path) => spawn_from_v4l_path(path)?,
             Ident::Img(path) => spawn_from_img_path(path)?,
             Ident::Mono(id) => spawn_from_mono(mono.iter().find(|m| m.id == *id)?)?,
