@@ -1,25 +1,26 @@
 use eframe::egui;
 #[cfg(feature = "v4l")]
 use egui_extras::{Column, TableBuilder};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize};
 use std::cell::Cell;
-#[cfg(feature = "v4l")]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::error;
 #[cfg(feature = "v4l")]
-use v4l::FourCC;
-#[cfg(feature = "v4l")]
-use v4l::video::Capture;
+use v4l::{Device, FourCC, video::Capture};
 use viking_vision::broadcast::par_broadcast1;
 use viking_vision::buffer::{Buffer, PixelFormat};
 use viking_vision::camera::Camera;
 #[cfg(feature = "v4l")]
 use viking_vision::camera::capture::CaptureCamera;
-use viking_vision::camera::frame::{Color, FrameCamera, ImageSource};
+use viking_vision::camera::config::{BasicConfig, CameraConfig};
+use viking_vision::camera::frame::{Color, FrameCamera, FrameCameraConfig, ImageSource};
 use viking_vision::pipeline::daemon::{DaemonHandle, Worker};
 use viking_vision::utils::FpsCounter;
+
+use crate::Monochrome;
 
 #[cfg(feature = "v4l")]
 fn enum_cams() -> Vec<PathBuf> {
@@ -57,11 +58,35 @@ pub fn dev_name(path: &Path) -> Option<String> {
     Some(name)
 }
 
+pub fn open_from_img_path(path: PathBuf) -> Option<CameraData> {
+    spawn_from_img_path(&path).map(|handle| CameraData {
+        name: path.display().to_string(),
+        handle,
+        egui_id: egui::Id::new(("img", &path)),
+        state: State {
+            ident: Ident::Img(path),
+        },
+    })
+}
+pub fn open_from_mono(mono: &Monochrome) -> Option<CameraData> {
+    spawn_from_mono(mono).map(|handle| {
+        let id = mono.id;
+        CameraData {
+            name: format!("Monochrome {id}"),
+            handle,
+            egui_id: egui::Id::new(("monochrome", id)),
+            state: State {
+                ident: Ident::Mono(mono.id),
+            },
+        }
+    })
+}
+
 #[cfg(feature = "v4l")]
-pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnOnce(&mut egui::Ui) {
+pub fn show_cams(cams: &mut Vec<CameraData>) -> impl FnOnce(&mut egui::Ui) {
     move |ui| {
         let refresh = ui.button("Refresh").clicked();
-        let rows = ui.memory_mut(|mem| {
+        let mut rows = ui.memory_mut(|mem| {
             let id = egui::Id::new("V4L nodes");
             if refresh {
                 let rows = enum_cams();
@@ -93,58 +118,179 @@ pub fn show_cams(devs: &mut Vec<PathBuf>) -> impl FnOnce(&mut egui::Ui) {
             })
             .body(|body| {
                 body.rows(row_height, rows.len(), |mut row| {
-                    let node = &rows[row.index()];
+                    let path = &mut rows[row.index()];
                     row.col(|ui| {
-                        ui.label(dev_name(node).unwrap_or_else(|| "unknown".to_string()));
+                        ui.label(dev_name(path).unwrap_or_else(|| "unknown".to_string()));
                     });
                     row.col(|ui| {
                         ui.label(
-                            path_index(node).map_or_else(|| "?".to_string(), |i| i.to_string()),
+                            path_index(path).map_or_else(|| "?".to_string(), |i| i.to_string()),
                         );
                     });
                     row.col(|ui| {
-                        ui.code(node.display().to_string());
+                        ui.code(path.display().to_string());
                     });
                     row.col(|ui| {
                         if ui.button("Add").clicked() {
-                            devs.push(node.clone());
+                            if let Some(handle) = spawn_from_v4l_path(path) {
+                                let mut name =
+                                    dev_name(path).unwrap_or_else(|| "<unknown>".to_string());
+                                if let Some(index) = path_index(path) {
+                                    use std::fmt::Write;
+                                    let _ = write!(name, " (ID {index})");
+                                }
+
+                                cams.push(CameraData {
+                                    name,
+                                    handle,
+                                    egui_id: egui::Id::new(("v4l", &path)),
+                                    state: State {
+                                        ident: Ident::V4l(std::mem::take(path)),
+                                    },
+                                });
+                            }
                         }
                     });
                 });
             });
     }
 }
-pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) {
+pub fn show_camera(
+    data: &CameraData,
+    monochrome: &mut Vec<super::Monochrome>,
+) -> impl FnOnce(&mut egui::Ui) {
     move |ui| {
         use viking_vision::pipeline::daemon::states::*;
-        let state = handle.context().run_state.load(Ordering::Relaxed);
-        let lock = handle.context().context.locked.lock().unwrap();
+        let run_state = data.handle.context().run_state.load(Ordering::Relaxed);
+        let mut lock = data.handle.context().context.locked.lock().unwrap();
         ui.horizontal(|ui| {
-            if state == SHUTDOWN {
+            if run_state == SHUTDOWN {
                 ui.label("Closing...");
                 ui.spinner();
             } else {
                 #[allow(clippy::collapsible_if)]
-                if state == RUNNING {
+                if run_state == RUNNING {
                     if ui.button("Pause").clicked() {
-                        handle.pause();
+                        data.handle.pause();
                     }
-                } else if state == PAUSED {
+                } else if run_state == PAUSED {
                     if ui.button("Start").clicked() {
-                        handle.start();
+                        data.handle.start();
                     }
                 }
                 if ui.button("Close").clicked() {
-                    handle.shutdown();
+                    data.handle.shutdown();
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 let [min, max] = lock.fps.minmax().unwrap_or_default();
                 let avg = lock.fps.fps();
                 ui.label(format!("{min:.2}/{max:.2}/{avg:.2} FPS"));
+                crate::derived::add_button(ui, &data.name, data.egui_id, &mut lock.tree);
             });
         });
-        let new_frames = handle.context().context.counter.swap(0, Ordering::Relaxed);
+        {
+            #[cfg(feature = "v4l")]
+            let has_cap = lock.cap.is_some();
+            #[cfg(not(feature = "v4l"))]
+            let has_cap = false;
+            if has_cap || lock.mono.is_some() {
+                ui.horizontal(|ui| {
+                    #[cfg(feature = "v4l")]
+                    if let Some(opts) = &mut lock.cap {
+                        {
+                            let (cc_idx, cc_desc) = opts
+                                .formats
+                                .iter()
+                                .enumerate()
+                                .find_map(|(n, (fourcc, desc))| {
+                                    (*fourcc == opts.fourcc).then_some((n, desc))
+                                })
+                                .unwrap();
+                            let mut index = cc_idx;
+                            ui.label("Format: ");
+                            egui::ComboBox::new("Format", "")
+                                .selected_text(cc_desc)
+                                .show_index(ui, &mut index, opts.formats.len(), |i| {
+                                    &opts.formats[i].1
+                                });
+                            if index != cc_idx {
+                                opts.selected_format = Some(index);
+                            }
+                        }
+                        {
+                            let mut index = opts.size_idx;
+                            let [w, h] = opts.sizes[index];
+                            ui.label("Resolution: ");
+                            egui::ComboBox::new("Resolution", "")
+                                .selected_text(format!("{w}x{h}"))
+                                .show_index(ui, &mut index, opts.sizes.len(), |i| {
+                                    let [w, h] = opts.sizes[i];
+                                    format!("{w}x{h}")
+                                });
+                            if index != opts.size_idx {
+                                opts.selected_size = Some(index);
+                            }
+                        }
+                        {
+                            let mut index = opts.interval_idx;
+                            ui.label("Interval: ");
+                            egui::ComboBox::new("Interval", "")
+                                .selected_text(opts.intervals[index].to_string())
+                                .show_index(ui, &mut index, opts.intervals.len(), |i| {
+                                    opts.intervals[i].to_string()
+                                });
+                            if index != opts.interval_idx {
+                                opts.selected_interval = Some(index);
+                            }
+                        }
+                    }
+                    if let Some(opts) = &mut lock.mono {
+                        ui.label("Width: ");
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut opts.width, 0..=1000)
+                                    .clamping(egui::SliderClamping::Never),
+                            )
+                            .changed()
+                        {
+                            opts.reshape = true;
+                        }
+                        ui.label("Height: ");
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut opts.height, 0..=1000)
+                                    .clamping(egui::SliderClamping::Never),
+                            )
+                            .changed()
+                        {
+                            opts.reshape = true;
+                        }
+                        ui.label("Color: ");
+                        if ui.color_edit_button_srgb(&mut opts.color).changed() {
+                            opts.recolor = true;
+                        }
+                        if opts.reshape || opts.recolor {
+                            if let Ident::Mono(id) = data.state.ident {
+                                for m in monochrome {
+                                    if m.id == id {
+                                        m.width = opts.width;
+                                        m.height = opts.height;
+                                        m.color = opts.color;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        let new_frames = data
+            .handle
+            .context()
+            .context
+            .counter
+            .swap(0, Ordering::Relaxed);
         if new_frames > 0 {
             ui.ctx().request_repaint();
         } else {
@@ -152,117 +298,151 @@ pub fn show_image(handle: &DaemonHandle<Context>) -> impl FnOnce(&mut egui::Ui) 
         }
         let buffer = &lock.frame;
         let img = egui::ColorImage::from_rgb([buffer.width as _, buffer.height as _], &buffer.data);
-        let texture = ui
-            .ctx()
-            .load_texture(format!("{handle:p}"), img, Default::default());
+        let texture = ui.ctx().load_texture(
+            format!("{:p}", std::sync::Arc::as_ptr(data.handle.context())),
+            img,
+            Default::default(),
+        );
         ui.image(&texture);
     }
 }
-pub fn show_controls(
-    handle: &DaemonHandle<Context>,
-    state: &mut State,
-) -> impl FnOnce(&mut egui::Ui) -> Option<super::Monochrome> {
-    move |ui| {
-        let mut ret = None;
-        let mut lock = handle.context().context.locked.lock().unwrap();
-        #[cfg(feature = "v4l")]
-        if let Some(opts) = &mut lock.cap {
-            ui.collapsing("V4L Options", |ui| {
-                {
-                    let (cc_idx, cc_desc) = opts
-                        .formats
-                        .iter()
-                        .enumerate()
-                        .find_map(|(n, (fourcc, desc))| {
-                            (*fourcc == opts.fourcc).then_some((n, desc))
-                        })
-                        .unwrap();
-                    let mut index = cc_idx;
-                    egui::ComboBox::from_label("FourCC")
-                        .selected_text(cc_desc)
-                        .show_index(ui, &mut index, opts.formats.len(), |i| &opts.formats[i].1);
-                    if index != cc_idx {
-                        opts.selected_format = Some(index);
-                    }
-                }
-                {
-                    let mut index = opts.size_idx;
-                    let [w, h] = opts.sizes[index];
-                    egui::ComboBox::from_label("Resolution")
-                        .selected_text(format!("{w}x{h}"))
-                        .show_index(ui, &mut index, opts.sizes.len(), |i| {
-                            let [w, h] = opts.sizes[i];
-                            format!("{w}x{h}")
-                        });
-                    if index != opts.size_idx {
-                        opts.selected_size = Some(index);
-                    }
-                }
-                {
-                    let mut index = opts.interval_idx;
-                    egui::ComboBox::from_label("Interval")
-                        .selected_text(opts.intervals[index].to_string())
-                        .show_index(ui, &mut index, opts.intervals.len(), |i| {
-                            opts.intervals[i].to_string()
-                        });
-                    if index != opts.interval_idx {
-                        opts.selected_interval = Some(index);
-                    }
-                }
-            });
-        }
-        if let Some(opts) = &mut lock.mono {
-            ui.collapsing("Monochrome", |ui| {
-                if ui
-                    .add(
-                        egui::Slider::new(&mut opts.width, 0..=1000)
-                            .clamping(egui::SliderClamping::Never)
-                            .text("Width"),
-                    )
-                    .changed()
-                {
-                    opts.reshape = true;
-                }
-                if ui
-                    .add(
-                        egui::Slider::new(&mut opts.height, 0..=1000)
-                            .clamping(egui::SliderClamping::Never)
-                            .text("Height"),
-                    )
-                    .changed()
-                {
-                    opts.reshape = true;
-                }
-                if ui.color_edit_button_srgb(&mut opts.color).changed() {
-                    opts.recolor = true;
-                }
-            });
-            if opts.reshape || opts.recolor {
-                if let Ident::Mono(id) = state.ident {
-                    ret = Some(super::Monochrome {
-                        width: opts.width,
-                        height: opts.height,
-                        color: opts.color,
-                        id,
-                    });
-                }
-            }
-        }
-        ret
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Ident {
+    Img(PathBuf),
+    Mono(usize),
+    #[cfg(feature = "v4l")]
+    V4l(PathBuf),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct State {
+    pub ident: Ident,
+}
+
+pub struct CameraData {
+    pub name: String,
+    pub handle: DaemonHandle<Context>,
+    pub egui_id: egui::Id,
+    pub state: State,
+}
+
+impl Serialize for CameraData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("CameraData", 4)?;
+        s.serialize_field("name", &self.name)?;
+        s.serialize_field("egui_id", &self.egui_id)?;
+        s.serialize_field("state", &self.state)?;
+        let lock = self.handle.context().context.locked.lock().unwrap();
+        s.serialize_field("tree", &lock.tree)?;
+        s.end()
     }
 }
 
-#[derive(Debug)]
-pub enum Ident {
-    #[cfg(feature = "v4l")]
-    V4l(PathBuf),
-    Img(PathBuf),
-    Mono(usize),
+#[derive(Deserialize)]
+pub struct DeserializedData {
+    name: String,
+    egui_id: egui::Id,
+    state: State,
+    tree: Vec<crate::derived::DerivedFrame>,
 }
 
-#[derive(Debug)]
-pub struct State {
-    pub ident: Ident,
+#[cfg(feature = "v4l")]
+fn spawn_from_v4l_path(path: &Path) -> Option<DaemonHandle<Context>> {
+    Device::with_path(path)
+        .and_then(CaptureCamera::from_device)
+        .inspect_err(|err| error!(%err, "failed to open camera"))
+        .ok()
+        .and_then(|inner| {
+            let mut name = dev_name(path).unwrap_or_else(|| "<unknown>".to_string());
+            if let Some(index) = path_index(path) {
+                use std::fmt::Write;
+                let _ = write!(name, " (ID {index})");
+            }
+            let res = DaemonHandle::new(
+                Default::default(),
+                CameraWorker::new(Camera::new(name.clone(), Box::new(inner))),
+            );
+            res.ok()
+        })
+        .inspect(DaemonHandle::start)
+}
+
+fn spawn_from_img_path(path: &Path) -> Option<DaemonHandle<Context>> {
+    FrameCameraConfig {
+        basic: BasicConfig {
+            width: 0,
+            height: 0,
+            fov: None,
+            max_fps: Some(60.0),
+        },
+        source: viking_vision::camera::frame::ImageSource::Path(path.to_path_buf()),
+    }
+    .build_camera()
+    .inspect_err(|err| error!(%err, "error loading image file"))
+    .ok()
+    .and_then(|inner| {
+        let name = path.display().to_string();
+        DaemonHandle::new(
+            Default::default(),
+            CameraWorker::new(Camera::new(name.clone(), inner)),
+        )
+        .ok()
+        .inspect(DaemonHandle::start)
+    })
+}
+
+fn spawn_from_mono(mono: &Monochrome) -> Option<DaemonHandle<Context>> {
+    let id = mono.id;
+    let inner = FrameCameraConfig {
+        basic: BasicConfig {
+            width: mono.width,
+            height: mono.height,
+            fov: None,
+            max_fps: Some(60.0),
+        },
+        source: viking_vision::camera::frame::ImageSource::Color(Color {
+            format: viking_vision::buffer::PixelFormat::Rgb,
+            bytes: mono.color.to_vec(),
+        }),
+    }
+    .build_camera()
+    .unwrap();
+    DaemonHandle::new(
+        Default::default(),
+        CameraWorker::new(Camera::new(format!("Monochrome {id}"), inner)),
+    )
+    .ok()
+    .inspect(DaemonHandle::start)
+}
+
+pub fn convert(mono: &[super::Monochrome]) -> impl Fn(DeserializedData) -> Option<CameraData> {
+    move |deserialized| {
+        let DeserializedData {
+            name,
+            egui_id,
+            state,
+            tree,
+        } = deserialized;
+        let handle = match &state.ident {
+            #[cfg(feature = "v4l")]
+            Ident::V4l(path) => spawn_from_v4l_path(path)?,
+            Ident::Img(path) => spawn_from_img_path(path)?,
+            Ident::Mono(id) => spawn_from_mono(mono.iter().find(|m| m.id == *id)?)?,
+        };
+        let mut lock = handle.context().context.locked.lock().unwrap();
+        lock.tree = tree;
+        drop(lock);
+        Some(CameraData {
+            name,
+            handle,
+            egui_id,
+            state,
+        })
+    }
 }
 
 #[cfg(feature = "v4l")]
@@ -288,16 +468,17 @@ pub struct MonochromeOptions {
     pub recolor: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct LockedState {
     pub frame: Buffer<'static>,
     pub fps: FpsCounter,
     #[cfg(feature = "v4l")]
     pub cap: Option<CapOptions>,
     pub mono: Option<MonochromeOptions>,
+    pub tree: Vec<crate::derived::DerivedFrame>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Context {
     pub locked: Mutex<LockedState>,
     pub counter: AtomicUsize,
@@ -332,6 +513,9 @@ impl Worker<Context> for CameraWorker {
                     return;
                 };
                 frame.convert_into(&mut state.frame);
+                for next in &mut state.tree {
+                    next.update_frame(frame.borrow(), frame.borrow());
+                }
                 state.fps.tick();
                 #[cfg(feature = "v4l")]
                 if let Some(capture) = camera.downcast_mut::<CaptureCamera>() {
@@ -443,16 +627,19 @@ impl Worker<Context> for CameraWorker {
                 if let Some(mono) = camera.downcast_mut::<FrameCamera>() {
                     if let ImageSource::Color(Color {
                         format: PixelFormat::Rgb,
-                        ref bytes,
+                        ref mut bytes,
                     }) = mono.config.source
                     {
                         let opts = state.mono.get_or_insert_default();
                         if opts.recolor {
+                            opts.recolor = false;
+                            bytes.copy_from_slice(&opts.color);
                             par_broadcast1(|c| *c = opts.color, &mut mono.buffer);
                         } else {
                             opts.color.copy_from_slice(bytes);
                         }
                         if opts.reshape {
+                            opts.reshape = false;
                             let _ = mono.reshape_monochrome(opts.width, opts.height);
                         } else {
                             opts.width = mono.buffer.width;

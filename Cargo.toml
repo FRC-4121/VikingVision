@@ -1,5 +1,5 @@
 [workspace]
-members = ["apriltag-sys", "cli", "gui"]
+members = ["apriltag-sys", "cli", "gui", "pg"]
 
 [workspace.package]
 version = "0.1.0"
@@ -44,6 +44,7 @@ apriltag = ["dep:apriltag-sys", "dep:libc"]
 v4l = ["dep:v4l"]
 
 [workspace.dependencies]
+eframe = { version = "0.33.0", features = ["persistence"] }
 rayon = "1.11.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 time = { version = "0.3.44", features = ["formatting", "local-offset"] }

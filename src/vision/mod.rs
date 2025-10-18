@@ -5,8 +5,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
+use std::fmt::{self, Display, Formatter};
 use std::iter::FusedIterator;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Deref, DerefMut, RangeInclusive};
 
 #[cfg(test)]
 mod tests;
@@ -60,26 +61,32 @@ macro_rules! color_bytes {
 
 /// A filter, along with a color space to filter in.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase", tag = "space")]
+#[serde(
+    rename_all = "lowercase",
+    rename_all_fields = "kebab-case",
+    tag = "space"
+)]
 pub enum ColorFilter {
-    #[serde(rename_all = "kebab-case")]
-    Luma { min_l: u8, max_l: u8 },
-    #[serde(rename_all = "kebab-case")]
+    Luma {
+        min_l: u8,
+        max_l: u8,
+    },
     LumaA {
         min_l: u8,
         max_l: u8,
         min_a: u8,
         max_a: u8,
     },
-    #[serde(rename_all = "kebab-case")]
-    Gray { min_v: u8, max_v: u8 },
+    Gray {
+        min_v: u8,
+        max_v: u8,
+    },
     GrayA {
         min_v: u8,
         max_v: u8,
         min_a: u8,
         max_a: u8,
     },
-    #[serde(rename_all = "kebab-case")]
     Rgb {
         min_r: u8,
         min_g: u8,
@@ -88,7 +95,6 @@ pub enum ColorFilter {
         max_g: u8,
         max_b: u8,
     },
-    #[serde(rename_all = "kebab-case")]
     Rgba {
         min_r: u8,
         min_g: u8,
@@ -99,7 +105,6 @@ pub enum ColorFilter {
         min_a: u8,
         max_a: u8,
     },
-    #[serde(rename_all = "kebab-case")]
     Hsv {
         min_h: u8,
         max_h: u8,
@@ -108,7 +113,6 @@ pub enum ColorFilter {
         min_v: u8,
         max_v: u8,
     },
-    #[serde(rename_all = "kebab-case")]
     Hsva {
         min_h: u8,
         max_h: u8,
@@ -119,7 +123,6 @@ pub enum ColorFilter {
         min_a: u8,
         max_a: u8,
     },
-    #[serde(rename_all = "kebab-case")]
     Yuyv {
         min_y: u8,
         max_y: u8,
@@ -128,7 +131,7 @@ pub enum ColorFilter {
         min_v: u8,
         max_v: u8,
     },
-    #[serde(rename = "ycc", rename_all = "kebab-case")]
+    #[serde(rename = "ycc")]
     YCbCr {
         min_y: u8,
         max_y: u8,
@@ -137,7 +140,7 @@ pub enum ColorFilter {
         min_r: u8,
         max_r: u8,
     },
-    #[serde(rename = "ycca", rename_all = "kebab-case")]
+    #[serde(rename = "ycca")]
     YCbCrA {
         min_y: u8,
         max_y: u8,
@@ -164,6 +167,178 @@ impl ColorFilter {
             Self::YCbCrA { .. } => PixelFormat::YCbCrA,
             Self::Yuyv { .. } => PixelFormat::Yuyv,
         }
+    }
+    pub fn to_range(self) -> RangeInclusive<Color> {
+        match self {
+            Self::Luma { min_l, max_l } => Color::Luma { l: min_l }..=Color::Luma { l: max_l },
+
+            Self::LumaA {
+                min_l,
+                max_l,
+                min_a,
+                max_a,
+            } => Color::LumaA { l: min_l, a: min_a }..=Color::LumaA { l: max_l, a: max_a },
+
+            Self::Gray { min_v, max_v } => Color::Gray { v: min_v }..=Color::Gray { v: max_v },
+
+            Self::GrayA {
+                min_v,
+                max_v,
+                min_a,
+                max_a,
+            } => Color::GrayA { v: min_v, a: min_a }..=Color::GrayA { v: max_v, a: max_a },
+
+            Self::Rgb {
+                min_r,
+                min_g,
+                min_b,
+                max_r,
+                max_g,
+                max_b,
+            } => {
+                Color::Rgb {
+                    r: min_r,
+                    g: min_g,
+                    b: min_b,
+                }..=Color::Rgb {
+                    r: max_r,
+                    g: max_g,
+                    b: max_b,
+                }
+            }
+
+            Self::Rgba {
+                min_r,
+                min_g,
+                min_b,
+                max_r,
+                max_g,
+                max_b,
+                min_a,
+                max_a,
+            } => {
+                Color::Rgba {
+                    r: min_r,
+                    g: min_g,
+                    b: min_b,
+                    a: min_a,
+                }..=Color::Rgba {
+                    r: max_r,
+                    g: max_g,
+                    b: max_b,
+                    a: max_a,
+                }
+            }
+
+            Self::Hsv {
+                min_h,
+                max_h,
+                min_s,
+                max_s,
+                min_v,
+                max_v,
+            } => {
+                Color::Hsv {
+                    h: min_h,
+                    s: min_s,
+                    v: min_v,
+                }..=Color::Hsv {
+                    h: max_h,
+                    s: max_s,
+                    v: max_v,
+                }
+            }
+
+            Self::Hsva {
+                min_h,
+                max_h,
+                min_s,
+                max_s,
+                min_v,
+                max_v,
+                min_a,
+                max_a,
+            } => {
+                Color::Hsva {
+                    h: min_h,
+                    s: min_s,
+                    v: min_v,
+                    a: min_a,
+                }..=Color::Hsva {
+                    h: max_h,
+                    s: max_s,
+                    v: max_v,
+                    a: max_a,
+                }
+            }
+
+            Self::Yuyv {
+                min_y,
+                max_y,
+                min_u,
+                max_u,
+                min_v,
+                max_v,
+            } => {
+                Color::Yuyv {
+                    y: min_y,
+                    u: min_u,
+                    v: min_v,
+                }..=Color::Yuyv {
+                    y: max_y,
+                    u: max_u,
+                    v: max_v,
+                }
+            }
+
+            Self::YCbCr {
+                min_y,
+                max_y,
+                min_b,
+                max_b,
+                min_r,
+                max_r,
+            } => {
+                Color::YCbCr {
+                    y: min_y,
+                    b: min_b,
+                    r: min_r,
+                }..=Color::YCbCr {
+                    y: max_y,
+                    b: max_b,
+                    r: max_r,
+                }
+            }
+
+            Self::YCbCrA {
+                min_y,
+                max_y,
+                min_b,
+                max_b,
+                min_r,
+                max_r,
+                min_a,
+                max_a,
+            } => {
+                Color::YCbCrA {
+                    y: min_y,
+                    b: min_b,
+                    r: min_r,
+                    a: min_a,
+                }..=Color::YCbCrA {
+                    y: max_y,
+                    b: max_b,
+                    r: max_r,
+                    a: max_a,
+                }
+            }
+        }
+    }
+}
+impl Display for ColorFilter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let (min, max) = self.to_range().into_inner();
+        write!(f, "{min}..={max}")
     }
 }
 
@@ -255,6 +430,23 @@ impl Color {
             Self::Yuyv { y, u, v } => color_bytes![y, u, v],
             Self::YCbCr { y, b, r } => color_bytes![y, b, r],
             Self::YCbCrA { y, b, r, a } => color_bytes![y, b, r, a],
+        }
+    }
+}
+impl Display for Color {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Luma { l } => write!(f, "luma({l})"),
+            Self::LumaA { l, a } => write!(f, "lumaa({l}, {a})"),
+            Self::Gray { v } => write!(f, "gray({v})"),
+            Self::GrayA { v, a } => write!(f, "graya({v}, {a})"),
+            Self::Rgb { r, g, b } => write!(f, "rgb({r}, {g}, {b})"),
+            Self::Rgba { r, g, b, a } => write!(f, "rgba({r}, {g}, {b}, {a})"),
+            Self::Hsv { h, s, v } => write!(f, "hsv({h}, {s}, {v})"),
+            Self::Hsva { h, s, v, a } => write!(f, "hsva({h}, {s}, {v}, {a})"),
+            Self::Yuyv { y, u, v } => write!(f, "yuv({y}, {u}, {v})"),
+            Self::YCbCr { y, b, r } => write!(f, "ycc({y}, {b}, {r})"),
+            Self::YCbCrA { y, b, r, a } => write!(f, "ycca({y}, {b}, {r}, {a})"),
         }
     }
 }
@@ -441,6 +633,10 @@ impl Blob {
     pub const fn height(&self) -> u32 {
         self.max_y - self.min_y
     }
+    /// Get the area of this blob.
+    pub const fn area(&self) -> u64 {
+        self.width() as u64 * self.height() as u64
+    }
     /// Merge another blob into this one.
     ///
     /// This creates a bounding box that covers both and adds their pixel counts.
@@ -460,7 +656,7 @@ impl Blob {
         self.pixels += other.pixels;
     }
     pub fn filled(&self) -> f64 {
-        self.pixels as f64 / (self.width() as u64 * self.height() as u64) as f64
+        self.pixels as f64 / self.area() as f64
     }
 }
 impl Data for Blob {}
