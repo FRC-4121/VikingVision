@@ -1,5 +1,5 @@
 [workspace]
-members = ["apriltag-sys", "cli", "pg"]
+members = ["apriltag-sys", "cli", "gui", "pg"]
 
 [workspace.package]
 version = "0.1.0"
