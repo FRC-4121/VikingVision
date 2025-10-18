@@ -17,6 +17,7 @@ pub trait SignedCoordinate:
     const ONE: Self;
     fn abs(self) -> Self;
     fn double(self) -> Self;
+    fn to_usize(self) -> usize;
 }
 pub trait PixelCoordinate: TryFrom<Self::Signed> + TryInto<Self::Signed> {
     type Signed: SignedCoordinate;
@@ -37,6 +38,10 @@ macro_rules! impl_pixel_coord {
             fn double(self) -> Self {
                 self << 1
             }
+            #[allow(clippy::identity_op)]
+            fn to_usize(self) -> usize {
+                self as _
+            }
         }
         impl_pixel_coord!($($rest)*);
     };
@@ -51,6 +56,9 @@ macro_rules! impl_pixel_coord {
             }
             fn double(self) -> Self {
                 self * 2.0
+            }
+            fn to_usize(self) -> usize {
+                self.ceil() as _
             }
         }
         impl_pixel_coord!($($rest)*);
@@ -136,6 +144,9 @@ impl<T: PixelCoordinate> Iterator for DrawLineIterator<T> {
         loop {
             let x = self.x0;
             let y = self.y0;
+            if x == self.x1 && y == self.y1 {
+                return None;
+            }
             let e2 = self.err.double();
             if e2 >= self.dy {
                 match self.x0.partial_cmp(&self.x1) {
@@ -145,7 +156,7 @@ impl<T: PixelCoordinate> Iterator for DrawLineIterator<T> {
                     Some(Ordering::Greater) => {
                         self.x0 -= T::Signed::ONE;
                     }
-                    _ => return None,
+                    _ => {}
                 }
                 self.err += self.dy;
             }
@@ -157,14 +168,26 @@ impl<T: PixelCoordinate> Iterator for DrawLineIterator<T> {
                     Some(Ordering::Greater) => {
                         self.y0 -= T::Signed::ONE;
                     }
-                    _ => return None,
+                    _ => {}
                 }
-                self.err += self.dy;
+                self.err += self.dx;
             }
             if let (Ok(x), Ok(y)) = (x.try_into(), y.try_into()) {
                 return Some((x, y));
             }
         }
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
+}
+impl<T: PixelCoordinate> std::iter::FusedIterator for DrawLineIterator<T> {}
+impl<T: PixelCoordinate> ExactSizeIterator for DrawLineIterator<T> {
+    fn len(&self) -> usize {
+        let dx = (self.x1 - self.x0).abs();
+        let dy = (self.y1 - self.y0).abs();
+        dx.to_usize().max(dy.to_usize())
     }
 }
 
