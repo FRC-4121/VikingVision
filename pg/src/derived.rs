@@ -96,7 +96,7 @@ impl DerivedFrame {
                 });
                 let w = width * 2 + 1;
                 let h = height * 2 + 1;
-                percentile_filter(from, &mut self.frame, w, w, pixel.min(w * h - 1));
+                percentile_filter(from, &mut self.frame, w, h, pixel.min(w * h - 1));
             }
             Transform::Blobs {
                 min_width,
