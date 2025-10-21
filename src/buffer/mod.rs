@@ -110,8 +110,8 @@ impl PixelFormat {
         Self::Rgba,
         Self::Hsv,
         Self::Hsva,
-        Self::YCbCr,
         Self::Yuyv,
+        Self::YCbCr,
         Self::YCbCrA,
     ];
 }
@@ -452,8 +452,7 @@ impl<'a> Buffer<'a> {
             return;
         }
         if self.format.pixel_size() == to.pixel_size() {
-            self.format = to;
-            match (self.format, to) {
+            match (std::mem::replace(&mut self.format, to), to) {
                 (Rgb, Hsv) => par_broadcast1(to_inplace(rgb::hsv), self),
                 (Rgb, YCbCr) => par_broadcast1(to_inplace(rgb::ycc), self),
                 (Hsv, Rgb) => par_broadcast1(to_inplace(hsv::rgb), self),
