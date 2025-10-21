@@ -257,6 +257,6 @@ macro_rules! generate_test {
     };
 }
 
-generate_test!(test_img_1, "33369213973_9d9bb4cc96_c" ignore);
-generate_test!(test_img_2, "34085369442_304b6bafd9_c" ignore);
-generate_test!(test_img_3, "34139872896_defdb2f8d9_c");
+generate_test!(test_img_1, "33369213973_9d9bb4cc96_c");
+generate_test!(test_img_2, "34085369442_304b6bafd9_c");
+generate_test!(test_img_3, "34139872896_defdb2f8d9_c" ignore);
