@@ -80,9 +80,7 @@ impl DerivedFrame {
                 width,
                 height,
             } => {
-                tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::new(), || {
-                    from.convert_inplace(format);
-                });
+                from.convert_inplace(format);
                 box_blur(from, &mut self.frame, width * 2 + 1, height * 2 + 1);
             }
             Transform::PercentileFilter {
@@ -91,9 +89,7 @@ impl DerivedFrame {
                 height,
                 pixel,
             } => {
-                tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::new(), || {
-                    from.convert_inplace(format);
-                });
+                from.convert_inplace(format);
                 let w = width * 2 + 1;
                 let h = height * 2 + 1;
                 percentile_filter(from, &mut self.frame, w, h, pixel.min(w * h - 1));

@@ -434,14 +434,11 @@ fn filter_px<const N: usize>(min: [u8; N], max: [u8; N]) -> impl Fn(&[u8; N], &m
 /// The destination image will have the same dimensions as the source, with a [`Gray`](PixelFormat::Gray) format.
 /// A pixel in the range will have a value of 255, and one outside the range will have a value of 0.
 pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilter) {
-    use tracing::subscriber::*;
     dst.format = PixelFormat::Luma;
     dst.width = src.width;
     dst.height = src.height;
     dst.resize_data();
-    with_default(NoSubscriber::new(), || {
-        src.convert_inplace(filter.pixel_format())
-    });
+    src.convert_inplace(filter.pixel_format());
     match filter {
         ColorFilter::Luma { min_l, max_l } => {
             par_broadcast2(filter_px([min_l], [max_l]), &src, dst)

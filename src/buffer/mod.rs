@@ -6,7 +6,7 @@ use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::io;
 use thiserror::Error;
-use tracing::{error, info_span, warn};
+use tracing::{error, info_span};
 use zune_jpeg::{JpegDecoder, errors::DecodeErrors as JpegDecodeErrors};
 use zune_png::zune_core::{colorspace::ColorSpace, options::DecoderOptions};
 use zune_png::{PngDecoder, error::PngDecodeErrors};
@@ -477,7 +477,6 @@ impl<'a> Buffer<'a> {
                 _ => unreachable!("attempted to convert {} to {}", self.format, to),
             }
         } else {
-            warn!(from = %self.format, %to, "in-place pixel sizes don't match");
             let buf = self.convert(to);
             *self = buf;
         }
