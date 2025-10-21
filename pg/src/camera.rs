@@ -634,7 +634,7 @@ impl Worker<Context> for CameraWorker {
                         if opts.recolor {
                             opts.recolor = false;
                             bytes.copy_from_slice(&opts.color);
-                            par_broadcast1(|c| *c = opts.color, &mut mono.buffer);
+                            par_broadcast1(|c: &mut [u8; 3]| *c = opts.color, &mut mono.buffer);
                         } else {
                             opts.color.copy_from_slice(bytes);
                         }

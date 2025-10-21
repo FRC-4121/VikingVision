@@ -535,7 +535,7 @@ pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilte
             min_v,
             max_v,
         } => par_broadcast2(
-            |&[y1, u, y2, v], [a, b]| {
+            |&[y1, u, y2, v]: &[u8; 4], [a, b]: &mut [u8; 2]| {
                 if u < min_u || u > max_u || v < min_v || v > max_v {
                     *a = 0;
                     *b = 0;

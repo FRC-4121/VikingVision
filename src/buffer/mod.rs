@@ -351,9 +351,9 @@ impl<'a> Buffer<'a> {
                 maybe!($yuyv_in => {
                     if $from == Yuyv {
                         match $to {
-                            YCbCr => pb::<4, { (3 + $oadd) * 2 }, _, _>(compose(yuyv::ycc, double($tr(iden))), self, out),
-                            Luma => pb::<4, { (1 + $oadd) * 2 }, _, _>(compose(yuyv::luma, double($tr(iden))), self, out),
-                            Rgb => pb::<4, { (3 + $oadd) * 2 }, _, _>(compose(yuyv::ycc, double($tr(ycc::rgb))), self, out),
+                            YCbCr => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(iden))), self, out),
+                            Luma => pb::<(&[u8; 4], &mut [u8; { (1 + $oadd) * 2 }]), _, _, _>(compose(yuyv::luma, double($tr(iden))), self, out),
+                            Rgb => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(ycc::rgb))), self, out),
                             _ => {
                                 base_impl!(@from_rgb (|conv| compose(yuyv::ycc, double($tr(compose(ycc::rgb, conv)))), 4, $oadd, 2), $to, false);
                             }
@@ -363,12 +363,12 @@ impl<'a> Buffer<'a> {
                 });
                 match $from {
                     Luma => match $to {
-                        YCbCr => pb::<{ 1 + $iadd }, { 3 + $oadd }, _, _>($tr(luma::ycc), self, out),
-                        Rgb => pb::<{ 1 + $iadd }, { 3 + $oadd }, _, _>($tr(luma::rgb), self, out),
+                        YCbCr => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::ycc), self, out),
+                        Rgb => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::rgb), self, out),
                         _ => {
                             maybe!($yuyv_out => {
                                 if $to == Yuyv {
-                                    pb::<{ (1 + $iadd) * 2 }, 4, _, _>(compose(double($tr(iden)), luma::yuyv), self, out);
+                                    pb::<(&[u8; { (1 + $iadd) * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(iden)), luma::yuyv), self, out);
                                     return;
                                 }
                             });
@@ -389,20 +389,20 @@ impl<'a> Buffer<'a> {
             };
             (@to_rgb ($tr:expr => $conv:expr, $i:expr, $oadd:expr), $to:expr, $yuyv_out:tt) => {
                 if $to == Rgb {
-                    pb::<{ $i }, { 3 + $oadd }, _, _>($tr($conv), self, out)
+                    pb::<(&[u8; { $i }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr($conv), self, out)
                 } else {
                     base_impl!(@from_rgb ((|conv| $tr(compose($conv, conv))), $i, $oadd, 1), $to, $yuyv_out);
                 }
             };
             (@from_rgb ($tr:expr, $i:expr, $oadd:expr, $omul:expr), $to:expr, $yuyv_out:tt) => {
                 match $to {
-                    Hsv => pb::<{ $i }, { (3 + $oadd) * $omul }, _, _>($tr(rgb::hsv), self, out),
-                    YCbCr => pb::<{ $i }, { (3 + $oadd) * $omul }, _, _>($tr(rgb::ycc), self, out),
-                    Luma => pb::<{ $i }, { (1 + $oadd) * $omul }, _, _>($tr(rgb::luma), self, out),
+                    Hsv => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::hsv), self, out),
+                    YCbCr => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::ycc), self, out),
+                    Luma => pb::<(&[u8; { $i }], &mut [u8; { (1 + $oadd) * $omul }]), _, _, _>($tr(rgb::luma), self, out),
                     _ => {
                         maybe!($yuyv_out => {
                             if $to == Yuyv {
-                                pb::<{ $i * 2 }, 4, _, _>(compose(double($tr(rgb::ycc)), ycc::yuyv), self, out);
+                                pb::<(&[u8; { $i * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(rgb::ycc)), ycc::yuyv), self, out);
                             }
                         });
                     }
@@ -460,15 +460,23 @@ impl<'a> Buffer<'a> {
                 (Hsv, YCbCr) => par_broadcast1(to_inplace(compose(hsv::rgb, rgb::ycc)), self),
                 (YCbCr, Rgb) => par_broadcast1(to_inplace(ycc::rgb), self),
                 (YCbCr, Hsv) => par_broadcast1(to_inplace(compose(ycc::rgb, rgb::hsv)), self),
-                (Rgba, Hsva) => par_broadcast1::<4, _>(to_inplace(lift_alpha(rgb::hsv)), self),
-                (Rgba, YCbCrA) => par_broadcast1::<4, _>(to_inplace(lift_alpha(rgb::ycc)), self),
-                (Hsva, Rgba) => par_broadcast1::<4, _>(to_inplace(lift_alpha(hsv::rgb)), self),
-                (Hsva, YCbCrA) => par_broadcast1::<4, _>(
+                (Rgba, Hsva) => {
+                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(rgb::hsv)), self)
+                }
+                (Rgba, YCbCrA) => {
+                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(rgb::ycc)), self)
+                }
+                (Hsva, Rgba) => {
+                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(hsv::rgb)), self)
+                }
+                (Hsva, YCbCrA) => par_broadcast1::<(&mut [u8; 4],), _, _>(
                     to_inplace(lift_alpha(compose(hsv::rgb, rgb::ycc))),
                     self,
                 ),
-                (YCbCrA, Rgba) => par_broadcast1::<4, _>(to_inplace(lift_alpha(ycc::rgb)), self),
-                (YCbCrA, Hsva) => par_broadcast1::<4, _>(
+                (YCbCrA, Rgba) => {
+                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(ycc::rgb)), self)
+                }
+                (YCbCrA, Hsva) => par_broadcast1::<(&mut [u8; 4],), _, _>(
                     to_inplace(lift_alpha(compose(ycc::rgb, rgb::hsv))),
                     self,
                 ),
