@@ -12,6 +12,7 @@ static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Serialize, Deserialize)]
 pub enum Transform {
+    ColorSpace(PixelFormat),
     ColorFilter(ColorFilter),
     BoxBlur {
         format: PixelFormat,
@@ -74,6 +75,10 @@ impl DerivedFrame {
     }
     pub fn update_frame(&mut self, mut from: Buffer<'_>, original: Buffer<'_>) {
         match self.transform {
+            Transform::ColorSpace(space) => {
+                self.frame.format = space;
+                from.convert_into(&mut self.frame);
+            }
             Transform::ColorFilter(filter) => filter_into(from, &mut self.frame, filter),
             Transform::BoxBlur {
                 format,
@@ -168,6 +173,9 @@ impl DerivedFrame {
         self.title.push_str(prev);
         self.title.push_str(" > ");
         match self.transform {
+            Transform::ColorSpace(space) => {
+                let _ = write!(self.title, "Color Space: {space}");
+            }
             Transform::ColorFilter(filter) => {
                 let _ = write!(self.title, "Color Filter: {filter}");
             }
@@ -232,6 +240,12 @@ impl DerivedFrame {
 
 pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<DerivedFrame>) {
     ui.menu_button("Add derived", |ui| {
+        if ui.button("Color Space").clicked() {
+            next.push(
+                DerivedFrame::new(Transform::ColorSpace(PixelFormat::Luma), id)
+                    .with_updated_title(title),
+            );
+        }
         if ui.button("Color Filter").clicked() {
             next.push(
                 DerivedFrame::new(
@@ -317,7 +331,9 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                 });
                 let mut changed = false;
                 match &mut frame.transform {
-                    #[allow(unused_variables)]
+                    Transform::ColorSpace(space) => {
+                        changed = color_space_dropdown(ui, 3, space);
+                    }
                     Transform::ColorFilter(filter) => {
                         let mut space = filter.pixel_format();
                         changed = color_space_dropdown(ui, 2, &mut space);
