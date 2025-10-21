@@ -497,6 +497,11 @@ impl<'a> Buffer<'a> {
             self.convert(format)
         }
     }
+    /// Convert this buffer into another format, consuming and possibly reusing this one.
+    pub fn converted_into(mut self, format: PixelFormat) -> Self {
+        self.convert_inplace(format);
+        self
+    }
     /// Copy the contents of another buffer into this one, taking ownership of the current buffer.
     pub fn copy_from(&mut self, src: Buffer<'_>) {
         self.height = src.height;
