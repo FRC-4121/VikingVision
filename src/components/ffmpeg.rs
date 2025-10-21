@@ -76,9 +76,7 @@ impl FfmpegComponent {
     }
     fn prep_command(cmd: &mut Command, buffer: Buffer<'_>, framerate: f64) {
         let pix_fmt = match buffer.format {
-            PixelFormat::Gray | PixelFormat::GrayA | PixelFormat::Luma | PixelFormat::LumaA => {
-                "gray"
-            }
+            PixelFormat::Luma | PixelFormat::LumaA => "gray",
             PixelFormat::Rgb | PixelFormat::Hsv => "rgb24",
             PixelFormat::Rgba | PixelFormat::Hsva => "rgba",
             PixelFormat::YCbCr | PixelFormat::YCbCrA => "yuv444p",
@@ -143,9 +141,7 @@ impl Component for FfmpegComponent {
             return;
         };
         let converted = match frame.format {
-            PixelFormat::Gray | PixelFormat::GrayA | PixelFormat::Luma | PixelFormat::LumaA => {
-                frame.convert(PixelFormat::Luma)
-            }
+            PixelFormat::Luma | PixelFormat::LumaA => frame.convert(PixelFormat::Luma),
             PixelFormat::Hsv => frame.convert(PixelFormat::Rgb),
             PixelFormat::Hsva => frame.convert(PixelFormat::Rgba),
             PixelFormat::YCbCrA => frame.convert(PixelFormat::YCbCr),

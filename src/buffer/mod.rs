@@ -38,9 +38,6 @@ pub enum PixelFormat {
     Luma,
     LumaA,
 
-    Gray,
-    GrayA,
-
     Rgb,
     Rgba,
 
@@ -62,8 +59,8 @@ impl PixelFormat {
     /// Number of bytes per pixel
     pub const fn pixel_size(&self) -> u8 {
         match self {
-            Self::Luma | Self::Gray => 1,
-            Self::Yuyv | Self::LumaA | Self::GrayA => 2,
+            Self::Luma => 1,
+            Self::Yuyv | Self::LumaA => 2,
             Self::Rgb | Self::Hsv | Self::YCbCr => 3,
             Self::Rgba | Self::Hsva | Self::YCbCrA => 4,
         }
@@ -71,7 +68,6 @@ impl PixelFormat {
     pub const fn drop_alpha(self) -> Option<Self> {
         match self {
             Self::LumaA => Some(Self::Luma),
-            Self::GrayA => Some(Self::Gray),
             Self::Rgba => Some(Self::Rgb),
             Self::Hsva => Some(Self::Hsv),
             Self::YCbCrA => Some(Self::YCbCr),
@@ -81,7 +77,6 @@ impl PixelFormat {
     pub const fn add_alpha(self) -> Option<Self> {
         match self {
             Self::Luma => Some(Self::LumaA),
-            Self::Gray => Some(Self::GrayA),
             Self::Rgb => Some(Self::Rgba),
             Self::Hsv => Some(Self::Hsva),
             Self::YCbCr => Some(Self::YCbCrA),
@@ -97,8 +92,8 @@ impl PixelFormat {
     /// This is red in color spaces that have colors, and white for others
     pub const fn bright_color(&self) -> &'static [u8] {
         match self {
-            Self::Luma | Self::Gray => &[255],
-            Self::LumaA | Self::GrayA => &[255, 255],
+            Self::Luma => &[255],
+            Self::LumaA => &[255, 255],
             Self::Rgb => &[255, 0, 0],
             Self::Rgba => &[255, 0, 0, 255],
             Self::Hsv => &[255, 255, 255],
@@ -111,8 +106,6 @@ impl PixelFormat {
     pub const VARIANTS: &[PixelFormat] = &[
         Self::Luma,
         Self::LumaA,
-        Self::Gray,
-        Self::GrayA,
         Self::Rgb,
         Self::Rgba,
         Self::Hsv,
@@ -382,9 +375,6 @@ impl<'a> Buffer<'a> {
                             base_impl!(@from_rgb ((|conv| $tr(compose(luma::rgb, conv))), 1 + $iadd, $oadd, 1), $to, false);
                         }
                     },
-                    Gray => {
-                        base_impl!(@to_rgb ($tr => gray::rgb, 1 + $iadd, $oadd), $to, $yuyv_out);
-                    }
                     Hsv => {
                         base_impl!(@to_rgb ($tr => hsv::rgb, 3 + $iadd, $oadd), $to, $yuyv_out);
                     }
@@ -409,7 +399,6 @@ impl<'a> Buffer<'a> {
                     Hsv => pb::<{ $i }, { (3 + $oadd) * $omul }, _, _>($tr(rgb::hsv), self, out),
                     YCbCr => pb::<{ $i }, { (3 + $oadd) * $omul }, _, _>($tr(rgb::ycc), self, out),
                     Luma => pb::<{ $i }, { (1 + $oadd) * $omul }, _, _>($tr(rgb::luma), self, out),
-                    Gray => pb::<{ $i }, { (1 + $oadd) * $omul }, _, _>($tr(rgb::gray), self, out),
                     _ => {
                         maybe!($yuyv_out => {
                             if $to == Yuyv {
@@ -484,31 +473,7 @@ impl<'a> Buffer<'a> {
                     self,
                 ),
                 (Yuyv, LumaA) => par_broadcast1(yuyv::ilumaa, self),
-                (Yuyv, GrayA) => par_broadcast1(
-                    to_inplace(compose(
-                        yuyv::ycc,
-                        double(compose(compose(ycc::rgb, rgb::gray), add_alpha)),
-                    )),
-                    self,
-                ),
                 (LumaA, Yuyv) => par_broadcast1(lumaa::iyuyv, self),
-                (LumaA, GrayA) => par_broadcast1::<2, _>(
-                    to_inplace(lift_alpha(compose(luma::rgb, rgb::gray))),
-                    self,
-                ),
-                (GrayA, LumaA) => par_broadcast1::<2, _>(
-                    to_inplace(lift_alpha(compose(gray::rgb, rgb::luma))),
-                    self,
-                ),
-                (GrayA, Yuyv) => par_broadcast1(
-                    to_inplace(compose(
-                        double(compose(drop_alpha, compose(gray::rgb, rgb::ycc))),
-                        ycc::yuyv,
-                    )),
-                    self,
-                ),
-                (Luma, Gray) => par_broadcast1(to_inplace(compose(luma::rgb, rgb::gray)), self),
-                (Gray, Luma) => par_broadcast1(to_inplace(compose(gray::rgb, rgb::luma)), self),
                 _ => unreachable!("attempted to convert {} to {}", self.format, to),
             }
         } else {

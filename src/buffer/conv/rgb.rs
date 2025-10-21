@@ -32,7 +32,3 @@ pub fn luma(from: &[u8; 3], to: &mut [u8; 1]) {
     let [r, g, b] = from.map(|c| c as i32);
     to[0] = ((r * 77 + g * 150 + b * 29).max(0) >> 8).min(255) as u8;
 }
-pub fn gray(from: &[u8; 3], to: &mut [u8; 1]) {
-    let [r, g, b] = from.map(|c| c as u16);
-    *to = [((r + g + b) / 3) as _];
-}

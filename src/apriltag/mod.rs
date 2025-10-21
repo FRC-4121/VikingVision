@@ -408,17 +408,7 @@ impl Detector {
     }
     /// Take an image and detect any april tags in it.
     pub fn detect(&mut self, mut buffer: Buffer<'_>) -> DetectionIterator {
-        match buffer.format {
-            PixelFormat::Gray | PixelFormat::Luma => {}
-            PixelFormat::GrayA
-            | PixelFormat::Rgb
-            | PixelFormat::Rgba
-            | PixelFormat::Hsv
-            | PixelFormat::Hsva => buffer.convert_inplace(PixelFormat::Luma),
-            PixelFormat::LumaA | PixelFormat::YCbCr | PixelFormat::YCbCrA | PixelFormat::Yuyv => {
-                buffer.convert_inplace(PixelFormat::Luma)
-            }
-        }
+        buffer.convert_inplace(PixelFormat::Luma);
         assert_eq!(
             buffer.width as usize * buffer.height as usize,
             buffer.data.len(),

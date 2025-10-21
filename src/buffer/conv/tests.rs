@@ -14,15 +14,12 @@ fn midteal_rgb2all() {
     let rgb = [28, 58, 58];
     let mut ycc = [0; 3];
     let mut hsv = [0; 3];
-    let mut gray = [0];
     let mut luma = [0];
     rgb::ycc(&rgb, &mut ycc);
     rgb::hsv(&rgb, &mut hsv);
-    rgb::gray(&rgb, &mut gray);
     rgb::luma(&rgb, &mut luma);
     assert_close(ycc, [46, 130, 122], "YCbCr mismatch");
     assert_close(hsv, [128, 133, 59], "HSV mismatch");
-    assert_close(gray, [48], "gray mismatch");
     assert_close(luma, [46], "luma mismatch");
     let mut rgb2 = [0; 3];
     ycc::rgb(&ycc, &mut rgb2);

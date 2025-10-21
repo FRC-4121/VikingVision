@@ -77,16 +77,6 @@ pub enum ColorFilter {
         min_a: u8,
         max_a: u8,
     },
-    Gray {
-        min_v: u8,
-        max_v: u8,
-    },
-    GrayA {
-        min_v: u8,
-        max_v: u8,
-        min_a: u8,
-        max_a: u8,
-    },
     Rgb {
         min_r: u8,
         min_g: u8,
@@ -157,8 +147,6 @@ impl ColorFilter {
         match self {
             Self::Luma { .. } => PixelFormat::Luma,
             Self::LumaA { .. } => PixelFormat::LumaA,
-            Self::Gray { .. } => PixelFormat::Gray,
-            Self::GrayA { .. } => PixelFormat::GrayA,
             Self::Rgb { .. } => PixelFormat::Rgb,
             Self::Rgba { .. } => PixelFormat::Rgba,
             Self::Hsv { .. } => PixelFormat::Hsv,
@@ -178,15 +166,6 @@ impl ColorFilter {
                 min_a,
                 max_a,
             } => Color::LumaA { l: min_l, a: min_a }..=Color::LumaA { l: max_l, a: max_a },
-
-            Self::Gray { min_v, max_v } => Color::Gray { v: min_v }..=Color::Gray { v: max_v },
-
-            Self::GrayA {
-                min_v,
-                max_v,
-                min_a,
-                max_a,
-            } => Color::GrayA { v: min_v, a: min_a }..=Color::GrayA { v: max_v, a: max_a },
 
             Self::Rgb {
                 min_r,
@@ -353,13 +332,6 @@ pub enum Color {
         l: u8,
         a: u8,
     },
-    Gray {
-        v: u8,
-    },
-    GrayA {
-        v: u8,
-        a: u8,
-    },
     Rgb {
         r: u8,
         g: u8,
@@ -406,8 +378,6 @@ impl Color {
         match self {
             Self::Luma { .. } => PixelFormat::Luma,
             Self::LumaA { .. } => PixelFormat::LumaA,
-            Self::Gray { .. } => PixelFormat::Gray,
-            Self::GrayA { .. } => PixelFormat::GrayA,
             Self::Rgb { .. } => PixelFormat::Rgb,
             Self::Rgba { .. } => PixelFormat::Rgba,
             Self::Hsv { .. } => PixelFormat::Hsv,
@@ -421,8 +391,6 @@ impl Color {
         match *self {
             Self::Luma { l } => color_bytes![l],
             Self::LumaA { l, a } => color_bytes![l, a],
-            Self::Gray { v } => color_bytes![v],
-            Self::GrayA { v, a } => color_bytes![v, a],
             Self::Rgb { r, g, b } => color_bytes![r, g, b],
             Self::Rgba { r, g, b, a } => color_bytes![r, g, b, a],
             Self::Hsv { h, s, v } => color_bytes![h, s, v],
@@ -438,8 +406,6 @@ impl Display for Color {
         match self {
             Self::Luma { l } => write!(f, "luma({l})"),
             Self::LumaA { l, a } => write!(f, "lumaa({l}, {a})"),
-            Self::Gray { v } => write!(f, "gray({v})"),
-            Self::GrayA { v, a } => write!(f, "graya({v}, {a})"),
             Self::Rgb { r, g, b } => write!(f, "rgb({r}, {g}, {b})"),
             Self::Rgba { r, g, b, a } => write!(f, "rgba({r}, {g}, {b}, {a})"),
             Self::Hsv { h, s, v } => write!(f, "hsv({h}, {s}, {v})"),
@@ -469,7 +435,7 @@ fn filter_px<const N: usize>(min: [u8; N], max: [u8; N]) -> impl Fn(&[u8; N], &m
 /// A pixel in the range will have a value of 255, and one outside the range will have a value of 0.
 pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilter) {
     use tracing::subscriber::*;
-    dst.format = PixelFormat::Gray;
+    dst.format = PixelFormat::Luma;
     dst.width = src.width;
     dst.height = src.height;
     dst.resize_data();
@@ -486,15 +452,6 @@ pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilte
             min_a,
             max_a,
         } => par_broadcast2(filter_px([min_l, min_a], [max_l, max_a]), &src, dst),
-        ColorFilter::Gray { min_v, max_v } => {
-            par_broadcast2(filter_px([min_v], [max_v]), &src, dst)
-        }
-        ColorFilter::GrayA {
-            min_v,
-            max_v,
-            min_a,
-            max_a,
-        } => par_broadcast2(filter_px([min_v, min_a], [max_v, max_a]), &src, dst),
         ColorFilter::Rgb {
             min_r,
             min_g,

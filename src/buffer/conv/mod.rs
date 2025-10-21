@@ -2,7 +2,6 @@
 //! All functions have the convention of `<input format>::<output format>``, with `i` being used as a function prefix for in-place operations.
 //! Note that any YUYV conversions need two pixels to operate on rather than just one.
 
-pub mod gray;
 pub mod hsv;
 pub mod luma;
 pub mod rgb;

@@ -337,16 +337,6 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                                     min_a: 0,
                                     max_a: 255,
                                 },
-                                PixelFormat::Gray => ColorFilter::Gray {
-                                    min_v: 0,
-                                    max_v: 255,
-                                },
-                                PixelFormat::GrayA => ColorFilter::GrayA {
-                                    min_v: 0,
-                                    max_v: 255,
-                                    min_a: 0,
-                                    max_a: 255,
-                                },
                                 PixelFormat::Rgb => ColorFilter::Rgb {
                                     min_r: 0,
                                     min_g: 0,
@@ -422,18 +412,6 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                                 max_a,
                             } => {
                                 changed |= ui.add(RangeSlider::new("L", min_l, max_l)).changed();
-                                changed |= ui.add(RangeSlider::new("A", min_a, max_a)).changed();
-                            }
-                            ColorFilter::Gray { min_v, max_v } => {
-                                changed |= ui.add(RangeSlider::new("V", min_v, max_v)).changed();
-                            }
-                            ColorFilter::GrayA {
-                                min_v,
-                                max_v,
-                                min_a,
-                                max_a,
-                            } => {
-                                changed |= ui.add(RangeSlider::new("V", min_v, max_v)).changed();
                                 changed |= ui.add(RangeSlider::new("A", min_a, max_a)).changed();
                             }
                             ColorFilter::Rgb {
