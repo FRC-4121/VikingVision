@@ -40,13 +40,6 @@ impl<T: Send + Sync> ParChunks for &mut [T] {
         self.par_chunks_exact_mut(n)
     }
 }
-impl<'a> Chunks for &'a Buffer<'_> {
-    type Chunk = &'a [u8];
-
-    fn chunks(self, n: usize) -> impl Iterator<Item = Self::Chunk> {
-        self.data.chunks_exact(n)
-    }
-}
 impl<'a, const N: usize, T> Chunks for &'a [T; N] {
     type Chunk = &'a [T];
 
@@ -69,6 +62,37 @@ impl<'a, const N: usize, T> Chunks for &'a mut [T; N] {
 impl<const N: usize, T: Send + Sync> ParChunks for &mut [T; N] {
     fn par_chunks(self, n: usize) -> impl IndexedParallelIterator<Item = Self::Chunk> {
         self.par_chunks_exact_mut(n)
+    }
+}
+impl<'a, T> Chunks for &'a Vec<T> {
+    type Chunk = &'a [T];
+
+    fn chunks(self, n: usize) -> impl Iterator<Item = Self::Chunk> {
+        self.chunks_exact(n)
+    }
+}
+impl<T: Sync> ParChunks for &Vec<T> {
+    fn par_chunks(self, n: usize) -> impl IndexedParallelIterator<Item = Self::Chunk> {
+        self.par_chunks_exact(n)
+    }
+}
+impl<'a, T> Chunks for &'a mut Vec<T> {
+    type Chunk = &'a mut [T];
+
+    fn chunks(self, n: usize) -> impl Iterator<Item = Self::Chunk> {
+        self.chunks_exact_mut(n)
+    }
+}
+impl<T: Send + Sync> ParChunks for &mut Vec<T> {
+    fn par_chunks(self, n: usize) -> impl IndexedParallelIterator<Item = Self::Chunk> {
+        self.par_chunks_exact_mut(n)
+    }
+}
+impl<'a> Chunks for &'a Buffer<'_> {
+    type Chunk = &'a [u8];
+
+    fn chunks(self, n: usize) -> impl Iterator<Item = Self::Chunk> {
+        self.data.chunks_exact(n)
     }
 }
 impl ParChunks for &Buffer<'_> {

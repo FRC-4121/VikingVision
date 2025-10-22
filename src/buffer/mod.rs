@@ -340,6 +340,10 @@ impl<'a> Buffer<'a> {
         use PixelFormat::*;
         use conv::*;
         use par_broadcast2 as pb;
+        out.width = self.width;
+        out.height = self.height;
+        let of = out.format;
+        let data = out.resize_data();
         macro_rules! maybe {
             (true => $($body:tt)*) => {
                 $($body)*
@@ -351,9 +355,9 @@ impl<'a> Buffer<'a> {
                 maybe!($yuyv_in => {
                     if $from == Yuyv {
                         match $to {
-                            YCbCr => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(iden))), self, out),
-                            Luma => pb::<(&[u8; 4], &mut [u8; { (1 + $oadd) * 2 }]), _, _, _>(compose(yuyv::luma, double($tr(iden))), self, out),
-                            Rgb => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(ycc::rgb))), self, out),
+                            YCbCr => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(iden))), self, data),
+                            Luma => pb::<(&[u8; 4], &mut [u8; { (1 + $oadd) * 2 }]), _, _, _>(compose(yuyv::luma, double($tr(iden))), self, data),
+                            Rgb => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(ycc::rgb))), self, data),
                             _ => {
                                 base_impl!(@from_rgb (|conv| compose(yuyv::ycc, double($tr(compose(ycc::rgb, conv)))), 4, $oadd, 2), $to, false);
                             }
@@ -363,12 +367,12 @@ impl<'a> Buffer<'a> {
                 });
                 match $from {
                     Luma => match $to {
-                        YCbCr => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::ycc), self, out),
-                        Rgb => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::rgb), self, out),
+                        YCbCr => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::ycc), self, data),
+                        Rgb => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::rgb), self, data),
                         _ => {
                             maybe!($yuyv_out => {
                                 if $to == Yuyv {
-                                    pb::<(&[u8; { (1 + $iadd) * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(iden)), luma::yuyv), self, out);
+                                    pb::<(&[u8; { (1 + $iadd) * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(iden)), luma::yuyv), self, data);
                                     return;
                                 }
                             });
@@ -389,60 +393,56 @@ impl<'a> Buffer<'a> {
             };
             (@to_rgb ($tr:expr => $conv:expr, $i:expr, $oadd:expr), $to:expr, $yuyv_out:tt) => {
                 if $to == Rgb {
-                    pb::<(&[u8; { $i }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr($conv), self, out)
+                    pb::<(&[u8; { $i }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr($conv), self, data)
                 } else {
                     base_impl!(@from_rgb ((|conv| $tr(compose($conv, conv))), $i, $oadd, 1), $to, $yuyv_out);
                 }
             };
             (@from_rgb ($tr:expr, $i:expr, $oadd:expr, $omul:expr), $to:expr, $yuyv_out:tt) => {
                 match $to {
-                    Hsv => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::hsv), self, out),
-                    YCbCr => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::ycc), self, out),
-                    Luma => pb::<(&[u8; { $i }], &mut [u8; { (1 + $oadd) * $omul }]), _, _, _>($tr(rgb::luma), self, out),
+                    Hsv => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::hsv), self, data),
+                    YCbCr => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::ycc), self, data),
+                    Luma => pb::<(&[u8; { $i }], &mut [u8; { (1 + $oadd) * $omul }]), _, _, _>($tr(rgb::luma), self, data),
                     _ => {
                         maybe!($yuyv_out => {
                             if $to == Yuyv {
-                                pb::<(&[u8; { $i * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(rgb::ycc)), ycc::yuyv), self, out);
+                                pb::<(&[u8; { $i * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(rgb::ycc)), ycc::yuyv), self, data);
                             }
                         });
                     }
                 }
             };
         }
-        let len = self.width as usize * self.height as usize * out.format.pixel_size() as usize;
-        out.data.to_mut().resize(len, 0);
-        out.width = self.width;
-        out.height = self.height;
-        if self.format == out.format {
-            out.data.to_mut()[..len].copy_from_slice(&self.data);
+        if self.format == of {
+            data.copy_from_slice(&self.data);
             return;
         }
         if let Some(sd) = self.format.drop_alpha() {
-            if sd == out.format {
+            if sd == of {
                 match sd.pixel_size() {
-                    1 => pb(drop_alpha::<[u8; 2]>, self, out),
-                    3 => pb(drop_alpha::<[u8; 4]>, self, out),
-                    _ => unreachable!("attempted to convert {} to {}", sd, out.format),
+                    1 => pb(drop_alpha::<[u8; 2]>, self, data),
+                    3 => pb(drop_alpha::<[u8; 4]>, self, data),
+                    _ => unreachable!("attempted to convert {sd} to {of}"),
                 }
                 return;
             }
             if let Some(od) = self.format.drop_alpha() {
                 base_impl!((lift_alpha, 1, 1), sd => od, false false);
             } else {
-                base_impl!((|conv| compose(drop_alpha, conv), 1, 0), sd => out.format, false true);
+                base_impl!((|conv| compose(drop_alpha, conv), 1, 0), sd => of, false true);
             }
-        } else if let Some(od) = out.format.drop_alpha() {
+        } else if let Some(od) = of.drop_alpha() {
             if self.format == od {
                 match od.pixel_size() {
-                    1 => pb(add_alpha::<[u8; 1]>, self, out),
-                    3 => pb(add_alpha::<[u8; 3]>, self, out),
+                    1 => pb(add_alpha::<[u8; 1]>, self, data),
+                    3 => pb(add_alpha::<[u8; 3]>, self, data),
                     _ => unreachable!("attempted to convert {} to {}", self.format, od),
                 }
                 return;
             }
             base_impl!(((|conv| compose(conv, add_alpha)), 0, 1), self.format => od, true false);
         } else {
-            base_impl!((|conv| conv, 0, 0), self.format => out.format, true true);
+            base_impl!((|conv| conv, 0, 0), self.format => of, true true);
         }
     }
     pub fn convert_inplace(&mut self, to: PixelFormat) {
