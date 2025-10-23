@@ -22,6 +22,7 @@ enum FilterKind {
 enum Transform {
     ColorSpace(PixelFormat),
     ColorFilter(FilterKind),
+    Swizzle(Vec<u8>),
     BoxBlur {
         format: PixelFormat,
         width: usize,
@@ -92,6 +93,9 @@ impl DerivedFrame {
             }
             Transform::ColorFilter(FilterKind::Anon { ref min, ref max }) => {
                 par_broadcast2(FilterPixel::new(min, max), &from, &mut self.frame)
+            }
+            Transform::Swizzle(ref s) => {
+                swizzle(from, &mut self.frame, s);
             }
             Transform::BoxBlur {
                 format,
@@ -208,6 +212,9 @@ impl DerivedFrame {
                     let _ = write!(self.title, "{last})");
                 }
             }
+            Transform::Swizzle(ref s) => {
+                let _ = write!(self.title, "Swizzle: {s:?}");
+            }
             Transform::BoxBlur {
                 format,
                 width,
@@ -286,6 +293,9 @@ pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<D
                 )
                 .with_updated_title(title),
             );
+        }
+        if ui.button("Swizzle").clicked() {
+            next.push(DerivedFrame::new(Transform::Swizzle(vec![0]), id).with_updated_title(title));
         }
         if ui.button("Box Blur").clicked() {
             next.push(
@@ -509,6 +519,43 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                                         .changed();
                                 }
                             }
+                        }
+                    }
+                    Transform::Swizzle(s) => {
+                        let mut i = 0;
+                        while i < s.len() {
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::Slider::new(&mut s[i], 0..=4)
+                                            .clamping(egui::SliderClamping::Never)
+                                            .text(format!("{i}")),
+                                    )
+                                    .changed();
+                                if ui.add_enabled(i > 0, egui::Button::new("^")).clicked() {
+                                    s.swap(i - 1, i);
+                                    changed = true;
+                                }
+                                if ui
+                                    .add_enabled(i + 1 < s.len(), egui::Button::new("v"))
+                                    .clicked()
+                                {
+                                    s.swap(i, i + 1);
+                                    changed = true;
+                                }
+                                if ui
+                                    .add_enabled(s.len() > 1, egui::Button::new("X"))
+                                    .clicked()
+                                {
+                                    s.remove(i);
+                                    changed = true;
+                                } else {
+                                    i += 1;
+                                }
+                            });
+                        }
+                        if s.len() < 200 && ui.button("New channel").clicked() {
+                            s.push(0);
                         }
                     }
                     Transform::BoxBlur {

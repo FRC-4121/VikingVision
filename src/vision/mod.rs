@@ -833,3 +833,101 @@ pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usi
         },
     );
 }
+
+/// A [`Broadcast2`] implementor that reorders the channels of an image
+#[derive(Debug, Clone, Copy)]
+pub struct Swizzle<'a> {
+    pub num_in: u8,
+    pub extract: &'a [u8],
+}
+impl<'a> Swizzle<'a> {
+    pub const fn new(num_in: u8, extract: &'a [u8]) -> Self {
+        Self { num_in, extract }
+    }
+}
+impl Broadcast2<&[u8], &mut [u8], ()> for Swizzle<'_> {
+    fn sizes(&self) -> [usize; 2] {
+        [self.num_in as _, self.extract.len()]
+    }
+    fn run(&mut self, a1: &[u8], a2: &mut [u8]) {
+        self.par_run(a1, a2);
+    }
+}
+impl ParBroadcast2<&[u8], &mut [u8], ()> for Swizzle<'_> {
+    fn par_run(&self, a1: &[u8], a2: &mut [u8]) {
+        for (from, to) in self.extract.iter().zip(a2) {
+            *to = a1.get(*from as usize).copied().unwrap_or(0);
+        }
+    }
+}
+
+/// A [`Broadcast2`] implementor that reorders the channels in an image, with the input format being YUVY 4:2:2
+#[derive(Debug, Clone, Copy)]
+pub struct YuyvSwizzle<'a> {
+    pub extract: &'a [u8],
+}
+impl<'a> YuyvSwizzle<'a> {
+    pub const fn new(extract: &'a [u8]) -> Self {
+        Self { extract }
+    }
+}
+impl Broadcast2<&[u8], &mut [u8], ()> for YuyvSwizzle<'_> {
+    fn sizes(&self) -> [usize; 2] {
+        [4, self.extract.len() * 2]
+    }
+    fn run(&mut self, a1: &[u8], a2: &mut [u8]) {
+        self.par_run(a1, a2);
+    }
+}
+impl ParBroadcast2<&[u8], &mut [u8], ()> for YuyvSwizzle<'_> {
+    fn par_run(&self, a1: &[u8], a2: &mut [u8]) {
+        let mut yuyv = [0; 4];
+        yuyv.copy_from_slice(a1);
+        let [y1, u, y2, v] = yuyv;
+        let (px1, px2) = a2.split_at_mut(self.extract.len());
+        for ((from, to1), to2) in self.extract.iter().zip(px1).zip(px2) {
+            match *from {
+                0 => {
+                    *to1 = y1;
+                    *to2 = y2;
+                }
+                1 => {
+                    *to1 = u;
+                    *to2 = u;
+                }
+                2 => {
+                    *to1 = v;
+                    *to2 = v;
+                }
+                _ => {
+                    *to1 = 0;
+                    *to2 = 0;
+                }
+            }
+        }
+    }
+}
+
+/// Reorder the channels in an image
+pub fn swizzle(src: Buffer<'_>, dst: &mut Buffer<'_>, extract: &[u8]) {
+    let Some(fmt) = extract.len().try_into().ok().and_then(PixelFormat::anon) else {
+        panic!(
+            "Swizzling needs to extract into 1..={} channels, got {}",
+            PixelFormat::MAX_ANON,
+            extract.len()
+        );
+    };
+    dst.format = fmt;
+    dst.width = src.width;
+    dst.height = src.height;
+    let data = dst.resize_data();
+    if src.format == PixelFormat::YUYV {
+        par_broadcast2(YuyvSwizzle::new(extract), &src, data);
+    } else {
+        par_broadcast2(
+            Swizzle::new(src.format.pixel_size() as _, extract),
+            &src,
+            data,
+        );
+    }
+}
