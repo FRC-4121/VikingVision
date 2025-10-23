@@ -3,6 +3,58 @@ use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
 
+fn filter_pixel(v: &[u8]) -> bool {
+    v.iter().any(|&v| v > 0)
+}
+
+/// An iterator over the pixels in a row, mapped so that all-zero pixels give false and all others give true.
+#[derive(Clone)]
+pub struct FilterRow<'a>(std::slice::Chunks<'a, u8>);
+impl Iterator for FilterRow<'_> {
+    type Item = bool;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(filter_pixel)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+impl ExactSizeIterator for FilterRow<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+impl FusedIterator for FilterRow<'_> {}
+impl DoubleEndedIterator for FilterRow<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(filter_pixel)
+    }
+}
+
+/// A 2D iterator over the pixels in an image, suitable to pass into [`BlobsIterator`].
+#[derive(Clone)]
+pub struct PixelsIterator<'a>(std::slice::Chunks<'a, u8>, usize);
+impl<'a> Iterator for PixelsIterator<'a> {
+    type Item = FilterRow<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|r| FilterRow(r.chunks(self.1)))
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+impl ExactSizeIterator for PixelsIterator<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+impl FusedIterator for PixelsIterator<'_> {}
+impl DoubleEndedIterator for PixelsIterator<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(|r| FilterRow(r.chunks(self.1)))
+    }
+}
+
 /// A contiguous blob of color in an image—a bounding rectangle and number of contained pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Blob {
@@ -353,6 +405,20 @@ impl<I: Iterator<Item: IntoIterator>> BlobsIterator<I> {
             incomplete: VecDeque::new(),
             y: 0,
         }
+    }
+}
+impl<'a> BlobsIterator<PixelsIterator<'a>> {
+    /// Create an iterator over the blobs in an image from raw image data, width, and pixel size
+    pub fn from_slice(data: &'a [u8], width: usize, pixel_size: usize) -> Self {
+        Self::new(PixelsIterator(data.chunks(width * pixel_size), pixel_size))
+    }
+    /// Create an iterator over the blobs in an image from a buffer
+    pub fn from_buffer(buffer: &'a super::Buffer<'_>) -> Self {
+        Self::from_slice(
+            &buffer.data,
+            buffer.width as usize,
+            buffer.format.pixel_size(),
+        )
     }
 }
 impl<I: Iterator<Item: IntoIterator<Item = bool>>> Iterator for BlobsIterator<I> {

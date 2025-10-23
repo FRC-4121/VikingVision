@@ -126,13 +126,7 @@ impl DerivedFrame {
                 min_fill,
             } => {
                 original.convert_into(&mut self.frame);
-                let sz = from.format.pixel_size();
-                let it = BlobsIterator::new(
-                    from.data
-                        .chunks(sz * from.width as usize)
-                        .map(|row| row.chunks(sz).map(|px| px.iter().any(|v| *v != 0))),
-                );
-                for blob in it {
+                for blob in BlobsIterator::from_buffer(&from) {
                     if blob.width() < min_width
                         || blob.height() < min_height
                         || blob.area() < min_area
