@@ -29,12 +29,12 @@ impl VikingVision {
         let monochrome: Vec<Monochrome> = ctx
             .storage
             .and_then(|s| s.get_string("monochrome"))
-            .and_then(|s| ron::from_str(&s).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let cameras = ctx
             .storage
             .and_then(|s| s.get_string("cameras"))
-            .and_then(|s| ron::from_str::<Vec<_>>(&s).ok())
+            .and_then(|s| serde_json::from_str::<Vec<_>>(&s).ok())
             .unwrap_or_default()
             .into_iter()
             .filter_map(camera::convert(&monochrome))
@@ -46,7 +46,7 @@ impl VikingVision {
         let text_buffers = ctx
             .storage
             .and_then(|s| s.get_string("text_buffers"))
-            .and_then(|s| ron::from_str(&s).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let buffer_id = ctx
             .storage
@@ -155,13 +155,13 @@ impl App for VikingVision {
         }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        if let Ok(s) = ron::to_string(&self.cameras) {
+        if let Ok(s) = serde_json::to_string(&self.cameras) {
             storage.set_string("cameras", s);
         }
-        if let Ok(s) = ron::to_string(&self.monochrome) {
+        if let Ok(s) = serde_json::to_string(&self.monochrome) {
             storage.set_string("monochrome", s);
         }
-        if let Ok(s) = ron::to_string(&self.text_buffers) {
+        if let Ok(s) = serde_json::to_string(&self.text_buffers) {
             storage.set_string("text_buffers", s);
         }
         storage.set_string("buffer_id", self.buffer_id.to_string());
