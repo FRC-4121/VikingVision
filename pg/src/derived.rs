@@ -122,11 +122,7 @@ impl DerivedFrame {
                 min_area,
                 min_fill,
             } => {
-                if original.format == PixelFormat::YUYV {
-                    original.convert_into(&mut self.frame);
-                } else {
-                    self.frame.copy_from(original.borrow());
-                }
+                original.convert_into(&mut self.frame);
                 let sz = from.format.pixel_size();
                 let it = BlobsIterator::new(
                     from.data
@@ -141,7 +137,7 @@ impl DerivedFrame {
                     {
                         continue;
                     }
-                    blob.draw(self.frame.format.bright_color(), &mut self.frame);
+                    blob.draw(&[255, 0, 0], &mut self.frame);
                 }
             }
             #[cfg(feature = "apriltag")]
@@ -152,11 +148,7 @@ impl DerivedFrame {
                 decimate,
                 ref mut changed,
             } => {
-                if original.format == PixelFormat::YUYV {
-                    original.convert_into(&mut self.frame);
-                } else {
-                    self.frame.copy_from(original.borrow());
-                }
+                original.convert_into(&mut self.frame);
                 let detector = self.detector.get_or_insert_with(|| {
                     *changed = true;
                     apriltag::Detector::new()
@@ -175,7 +167,7 @@ impl DerivedFrame {
                     self.last_families.extend(families.iter().map(|f| f.family));
                 }
                 for detection in detector.detect(from) {
-                    detection.draw(self.frame.format.bright_color(), &mut self.frame);
+                    detection.draw(&[255, 0, 0], &mut self.frame);
                 }
             }
         }
