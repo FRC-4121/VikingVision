@@ -254,9 +254,9 @@ impl<'de> Deserialize<'de> for PixelFormat {
             }
         }
         if deserializer.is_human_readable() {
-            deserializer.deserialize_u8(PFVisitor)
-        } else {
             deserializer.deserialize_str(PFVisitor)
+        } else {
+            deserializer.deserialize_u8(PFVisitor)
         }
     }
 }
