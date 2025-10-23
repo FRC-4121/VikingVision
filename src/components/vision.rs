@@ -154,7 +154,7 @@ impl Component for BlobComponent {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
-        let px = img.format.pixel_size() as usize;
+        let px = img.format.pixel_size();
         let pixels = img
             .data
             .chunks(img.width as usize * px)

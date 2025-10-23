@@ -196,7 +196,7 @@ pub trait Drawable: Data {
 }
 impl Drawable for Blob {
     fn draw(&self, color: &[u8], buffer: &mut Buffer) {
-        if buffer.format == PixelFormat::Yuyv {
+        if buffer.format == PixelFormat::YUYV {
             tracing::error!("YUYV blobs aren't supported!");
         } else {
             let data = buffer.data.to_mut();

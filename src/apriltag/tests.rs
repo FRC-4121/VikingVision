@@ -215,7 +215,7 @@ macro_rules! generate_test {
                 let img =
                     Buffer::decode_img_data(include_bytes!(concat!("data/", $path, ".jpg")))
                         .expect(concat!("failed to load image at data/", $path, ".jpg"))
-                        .converted_into(PixelFormat::Luma);
+                        .converted_into(PixelFormat::LUMA);
                 let data = include_str!(concat!("data/", $path, ".txt"));
 
                 unsafe {

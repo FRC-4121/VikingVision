@@ -180,13 +180,13 @@ mod window {
     // Box filters are done in the same way, so if this works for one, it'll work for the other.
     #[test]
     fn filter() {
-        let img = Buffer::monochrome(10, 10, PixelFormat::Rgb, &[255, 0, 128]);
+        let img = Buffer::monochrome(10, 10, PixelFormat::RGB, &[255, 0, 128]);
         let mut dst = Buffer::empty_rgb();
         percentile_filter(img, &mut dst, 3, 3, 0);
     }
     #[test]
     fn filter_single() {
-        let img = Buffer::monochrome(1, 1, PixelFormat::Rgb, &[255, 0, 128]);
+        let img = Buffer::monochrome(1, 1, PixelFormat::RGB, &[255, 0, 128]);
         let mut dst = Buffer::empty_rgb();
         percentile_filter(img, &mut dst, 15, 15, 0);
     }

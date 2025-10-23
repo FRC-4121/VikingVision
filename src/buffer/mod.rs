@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::io;
+use std::num::{NonZero, ParseIntError};
 use thiserror::Error;
 use tracing::{error, info_span};
 use zune_jpeg::{JpegDecoder, errors::DecodeErrors as JpegDecodeErrors};
@@ -30,57 +31,132 @@ impl Display for UnrecognizedFourCC {
 }
 impl Error for UnrecognizedFourCC {}
 
-/// A format for the pixels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-#[repr(u8)]
-pub enum PixelFormat {
-    Luma,
-    LumaA,
-
-    Rgb,
-    Rgba,
-
-    Hsv,
-    Hsva,
-
-    Yuyv,
-    #[serde(rename = "ycc")]
-    YCbCr,
-    #[serde(rename = "ycca")]
-    YCbCrA,
+#[derive(Debug, Clone, Error)]
+pub enum FormatParseError {
+    #[error(transparent)]
+    ParseInt(ParseIntError),
+    #[error("unrecognized format")]
+    UnrecognizedStr,
 }
-impl Display for PixelFormat {
+
+/// A transparent wrapper for a [`PixelFormat`] that formats as is used for its [`Serialize`] implementation
+#[derive(Clone, Copy)]
+pub struct DisplayAsSerialize(PixelFormat);
+impl Display for DisplayAsSerialize {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Debug::fmt(self, f)
+        if let Some(s) = self.0.name_lower() {
+            f.write_str(s)
+        } else {
+            write!(f, "?{}", self.0.0)
+        }
     }
 }
+
+/// A format for the pixels in a buffer
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PixelFormat(pub NonZero<u8>);
 impl PixelFormat {
-    /// Number of bytes per pixel
-    pub const fn pixel_size(&self) -> u8 {
-        match self {
-            Self::Luma => 1,
-            Self::Yuyv | Self::LumaA => 2,
-            Self::Rgb | Self::Hsv | Self::YCbCr => 3,
-            Self::Rgba | Self::Hsva | Self::YCbCrA => 4,
+    pub const LUMA: Self = Self(NonZero::new(255).unwrap());
+    pub const RGB: Self = Self(NonZero::new(254).unwrap());
+    pub const HSV: Self = Self(NonZero::new(253).unwrap());
+    pub const YCC: Self = Self(NonZero::new(252).unwrap());
+    pub const RGBA: Self = Self(NonZero::new(250).unwrap());
+    pub const YUYV: Self = Self(NonZero::new(240).unwrap());
+    pub const ANON_1: Self = Self::anon(1).unwrap();
+    pub const ANON_2: Self = Self::anon(2).unwrap();
+    pub const ANON_3: Self = Self::anon(3).unwrap();
+    pub const ANON_4: Self = Self::anon(4).unwrap();
+    pub const MAX_ANON: NonZero<u8> = NonZero::new(200).unwrap();
+    pub const NAMED: &[Self] = &[
+        Self::LUMA,
+        Self::RGB,
+        Self::HSV,
+        Self::YCC,
+        Self::RGBA,
+        Self::YUYV,
+    ];
+    /// Create an anonymous format with a number of channels
+    pub const fn anon(channels: u8) -> Option<Self> {
+        if channels > Self::MAX_ANON.get() {
+            None
+        } else if let Some(inner) = NonZero::new(channels) {
+            Some(PixelFormat(inner))
+        } else {
+            None
         }
     }
-    pub const fn drop_alpha(self) -> Option<Self> {
-        match self {
-            Self::LumaA => Some(Self::Luma),
-            Self::Rgba => Some(Self::Rgb),
-            Self::Hsva => Some(Self::Hsv),
-            Self::YCbCrA => Some(Self::YCbCr),
-            _ => None,
+    /// If this is a known color space, get the name in lower case, as is used for serialization
+    pub const fn name_lower(&self) -> Option<&'static str> {
+        match *self {
+            Self::LUMA => Some("luma"),
+            Self::RGB => Some("rgb"),
+            Self::HSV => Some("hsv"),
+            Self::YCC => Some("ycc"),
+            Self::RGBA => Some("rgba"),
+            Self::YUYV => Some("yuyv"),
+            Self(v) => {
+                let v = v.get();
+                if v > Self::MAX_ANON.get() {
+                    Some("<reserved>")
+                } else {
+                    None
+                }
+            }
         }
     }
-    pub const fn add_alpha(self) -> Option<Self> {
-        match self {
-            Self::Luma => Some(Self::LumaA),
-            Self::Rgb => Some(Self::Rgba),
-            Self::Hsv => Some(Self::Hsva),
-            Self::YCbCr => Some(Self::YCbCrA),
-            _ => None,
+    /// If this is a known color space, get the name in upper case, as is used for debug printing
+    pub const fn name_upper(&self) -> Option<&'static str> {
+        match *self {
+            Self::LUMA => Some("LUMA"),
+            Self::RGB => Some("RGB"),
+            Self::HSV => Some("HSV"),
+            Self::YCC => Some("YCC"),
+            Self::RGBA => Some("RGBA"),
+            Self::YUYV => Some("YUYV"),
+            Self(v) => {
+                let v = v.get();
+                if v > Self::MAX_ANON.get() {
+                    Some("<reserved>")
+                } else {
+                    None
+                }
+            }
+        }
+    }
+    /// If this a known color space, get the name as it should be pretty-printed
+    pub const fn name_pretty(&self) -> Option<&'static str> {
+        match *self {
+            Self::LUMA => Some("Luma"),
+            Self::RGB => Some("RGB"),
+            Self::HSV => Some("HSV"),
+            Self::YCC => Some("YCbCr"),
+            Self::RGBA => Some("RGBA"),
+            Self::YUYV => Some("YUYV"),
+            Self(v) => {
+                let v = v.get();
+                if v > Self::MAX_ANON.get() {
+                    Some("<reserved>")
+                } else {
+                    None
+                }
+            }
+        }
+    }
+    #[inline(always)]
+    pub const fn is_anon(&self) -> bool {
+        self.0.get() < Self::MAX_ANON.get()
+    }
+    /// Get the number of bytes per pixel
+    pub const fn pixel_size(&self) -> usize {
+        match *self {
+            Self::LUMA => 1,
+            Self::YUYV => 2,
+            Self::RGB | Self::HSV | Self::YCC => 3,
+            Self::RGBA => 4,
+            Self(v) => {
+                let v = v.get();
+                if v > Self::MAX_ANON.get() { 0 } else { v as _ }
+            }
         }
     }
     #[cfg(feature = "v4l")]
@@ -91,39 +167,130 @@ impl PixelFormat {
     ///
     /// This is red in color spaces that have colors, and white for others
     pub const fn bright_color(&self) -> &'static [u8] {
-        match self {
-            Self::Luma => &[255],
-            Self::LumaA => &[255, 255],
-            Self::Rgb => &[255, 0, 0],
-            Self::Rgba => &[255, 0, 0, 255],
-            Self::Hsv => &[255, 255, 255],
-            Self::Hsva => &[255, 255, 255, 255],
-            Self::YCbCr => &[255, 0, 255],
-            Self::YCbCrA => &[255, 0, 255, 255],
-            Self::Yuyv => &[255, 0, 255],
+        match *self {
+            Self::LUMA => &[255],
+            Self::RGB => &[255, 0, 0],
+            Self::HSV => &[255, 255, 255],
+            Self::YCC => &[255, 0, 255],
+            Self::RGBA => &[255, 0, 0, 255],
+            Self::YUYV => &[255, 0, 255],
+            Self(v) => {
+                let v = v.get();
+                if v > Self::MAX_ANON.get() {
+                    &[]
+                } else {
+                    let (head, _) = FULL_BYTES.split_at(v as _); // slicing isn't const
+                    head
+                }
+            }
         }
     }
-    pub const VARIANTS: &[PixelFormat] = &[
-        Self::Luma,
-        Self::LumaA,
-        Self::Rgb,
-        Self::Rgba,
-        Self::Hsv,
-        Self::Hsva,
-        Self::Yuyv,
-        Self::YCbCr,
-        Self::YCbCrA,
-    ];
+    /// Parse a string, in the format used for de/serialization.
+    ///
+    /// This takes a few different cases for the named formats, or allows a number of channels preceeded by a `?`, like `"?3"` for an anonymous format with three channels.
+    pub fn parse_str(s: &str) -> Result<Self, FormatParseError> {
+        if let Some(rest) = s.strip_prefix('?') {
+            rest.parse().map(Self).map_err(FormatParseError::ParseInt)
+        } else {
+            match s {
+                "luma" | "Luma" | "LUMA" => Ok(Self::LUMA),
+                "rgb" | "RGB" => Ok(Self::RGB),
+                "hsv" | "HSV" => Ok(Self::HSV),
+                "ycc" | "YCC" | "ycbcr" | "YCbCr" => Ok(Self::YCC),
+                "rgba" | "RGBA" => Ok(Self::RGBA),
+                "yuyv" | "YUYV" => Ok(Self::YUYV),
+                _ => Err(FormatParseError::UnrecognizedStr),
+            }
+        }
+    }
+}
+impl Serialize for PixelFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            serializer.collect_str(&DisplayAsSerialize(*self))
+        } else {
+            serializer.serialize_u8(self.0.get())
+        }
+    }
+}
+impl<'de> Deserialize<'de> for PixelFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct PFVisitor;
+        impl<'de> serde::de::Visitor<'de> for PFVisitor {
+            type Value = PixelFormat;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a pixel format")
+            }
+            fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                NonZero::new(v)
+                    .map(PixelFormat)
+                    .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Unsigned(v as _), &self))
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                v.try_into()
+                    .ok()
+                    .and_then(NonZero::new)
+                    .map(PixelFormat)
+                    .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Unsigned(v as _), &self))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                PixelFormat::parse_str(v)
+                    .map_err(|_| E::invalid_value(serde::de::Unexpected::Str(v), &self))
+            }
+        }
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_u8(PFVisitor)
+        } else {
+            deserializer.deserialize_str(PFVisitor)
+        }
+    }
+}
+
+static FULL_BYTES: [u8; PixelFormat::MAX_ANON.get() as usize] =
+    [255; PixelFormat::MAX_ANON.get() as usize];
+
+impl Debug for PixelFormat {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if let Some(s) = self.name_upper() {
+            f.write_str(s)
+        } else {
+            write!(f, "PixelFormat({})", self.0)
+        }
+    }
+}
+impl Display for PixelFormat {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if let Some(s) = self.name_pretty() {
+            f.write_str(s)
+        } else {
+            write!(f, "{}-channel", self.0)
+        }
+    }
 }
 #[cfg(feature = "v4l")]
 impl TryFrom<v4l::FourCC> for PixelFormat {
     type Error = UnrecognizedFourCC;
     fn try_from(value: v4l::FourCC) -> Result<Self, Self::Error> {
         match &value.repr {
-            b"YUYV" => Ok(Self::Yuyv),
-            b"RGB8" => Ok(Self::Rgb),
-            b"RGBA" => Ok(Self::Rgba),
-            b"MJPG" => Ok(Self::Rgb), // we decode JPEG to RGB
+            b"YUYV" => Ok(Self::YUYV),
+            b"RGB8" => Ok(Self::RGB),
+            b"RGBA" => Ok(Self::RGBA),
+            b"MJPG" => Ok(Self::RGB), // we decode JPEG to RGB
             &repr => Err(UnrecognizedFourCC(repr)),
         }
     }
@@ -132,11 +299,10 @@ impl TryFrom<ColorSpace> for PixelFormat {
     type Error = ColorSpace;
     fn try_from(value: ColorSpace) -> Result<Self, Self::Error> {
         match value {
-            ColorSpace::RGB => Ok(PixelFormat::Rgb),
-            ColorSpace::RGBA => Ok(PixelFormat::Rgba),
-            ColorSpace::Luma => Ok(PixelFormat::Luma),
-            ColorSpace::LumaA => Ok(PixelFormat::LumaA),
-            ColorSpace::HSV => Ok(PixelFormat::Hsv),
+            ColorSpace::RGB => Ok(PixelFormat::RGB),
+            ColorSpace::RGBA => Ok(PixelFormat::RGBA),
+            ColorSpace::Luma => Ok(PixelFormat::LUMA),
+            ColorSpace::HSV => Ok(PixelFormat::HSV),
             v => Err(v),
         }
     }
@@ -208,7 +374,7 @@ impl<'a> Buffer<'a> {
     }
     /// Convenience alias for `Buffer::empty(Rgb)`.
     pub const fn empty_rgb() -> Self {
-        Self::empty(PixelFormat::Rgb)
+        Self::empty(PixelFormat::RGB)
     }
     /// Create a buffer of the given size filled with zeroes.
     pub fn zeroed(width: u32, height: u32, format: PixelFormat) -> Self {
@@ -216,12 +382,12 @@ impl<'a> Buffer<'a> {
             width,
             height,
             format,
-            data: vec![0; width as usize * height as usize * format.pixel_size() as usize].into(),
+            data: vec![0; width as usize * height as usize * format.pixel_size()].into(),
         }
     }
     /// Create a buffer of a single repeated color. `color` must equal `format.pixel_size()`.
     pub fn monochrome(width: u32, height: u32, format: PixelFormat, color: &[u8]) -> Self {
-        assert_eq!(format.pixel_size() as usize, color.len());
+        assert_eq!(format.pixel_size(), color.len());
         Self {
             width,
             height,
@@ -276,7 +442,7 @@ impl<'a> Buffer<'a> {
         Ok(Self {
             width: width as _,
             height: height as _,
-            format: PixelFormat::Rgb,
+            format: PixelFormat::RGB,
             data: Cow::Owned(data),
         })
     }
@@ -337,150 +503,37 @@ impl<'a> Buffer<'a> {
     }
 
     pub fn convert_into(&self, out: &mut Buffer<'_>) {
-        use PixelFormat::*;
-        use conv::*;
-        use par_broadcast2 as pb;
         out.width = self.width;
         out.height = self.height;
         let of = out.format;
         let data = out.resize_data();
-        macro_rules! maybe {
-            (true => $($body:tt)*) => {
-                $($body)*
-            };
-            (false => $($body:tt)*) => {};
-        }
-        macro_rules! base_impl {
-            (($tr:expr, $iadd:expr, $oadd:expr), $from:expr => $to:expr, $yuyv_in:tt $yuyv_out:tt) => {
-                maybe!($yuyv_in => {
-                    if $from == Yuyv {
-                        match $to {
-                            YCbCr => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(iden))), self, data),
-                            Luma => pb::<(&[u8; 4], &mut [u8; { (1 + $oadd) * 2 }]), _, _, _>(compose(yuyv::luma, double($tr(iden))), self, data),
-                            Rgb => pb::<(&[u8; 4], &mut [u8; { (3 + $oadd) * 2 }]), _, _, _>(compose(yuyv::ycc, double($tr(ycc::rgb))), self, data),
-                            _ => {
-                                base_impl!(@from_rgb (|conv| compose(yuyv::ycc, double($tr(compose(ycc::rgb, conv)))), 4, $oadd, 2), $to, false);
-                            }
-                        }
-                        return;
-                    }
-                });
-                match $from {
-                    Luma => match $to {
-                        YCbCr => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::ycc), self, data),
-                        Rgb => pb::<(&[u8; { 1 + $iadd }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr(luma::rgb), self, data),
-                        _ => {
-                            maybe!($yuyv_out => {
-                                if $to == Yuyv {
-                                    pb::<(&[u8; { (1 + $iadd) * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(iden)), luma::yuyv), self, data);
-                                    return;
-                                }
-                            });
-                            base_impl!(@from_rgb ((|conv| $tr(compose(luma::rgb, conv))), 1 + $iadd, $oadd, 1), $to, false);
-                        }
-                    },
-                    Hsv => {
-                        base_impl!(@to_rgb ($tr => hsv::rgb, 3 + $iadd, $oadd), $to, $yuyv_out);
-                    }
-                    YCbCr => {
-                        base_impl!(@to_rgb ($tr => ycc::rgb, 3 + $iadd, $oadd), $to, $yuyv_out);
-                    }
-                    Rgb => {
-                        base_impl!(@to_rgb ($tr => iden3, 3 + $iadd, $oadd), $to, $yuyv_out);
-                    }
-                    _ => unreachable!("attempted to convert {} to {}", $from, $to),
-                }
-            };
-            (@to_rgb ($tr:expr => $conv:expr, $i:expr, $oadd:expr), $to:expr, $yuyv_out:tt) => {
-                if $to == Rgb {
-                    pb::<(&[u8; { $i }], &mut [u8; { 3 + $oadd }]), _, _, _>($tr($conv), self, data)
-                } else {
-                    base_impl!(@from_rgb ((|conv| $tr(compose($conv, conv))), $i, $oadd, 1), $to, $yuyv_out);
-                }
-            };
-            (@from_rgb ($tr:expr, $i:expr, $oadd:expr, $omul:expr), $to:expr, $yuyv_out:tt) => {
-                match $to {
-                    Hsv => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::hsv), self, data),
-                    YCbCr => pb::<(&[u8; { $i }], &mut [u8; { (3 + $oadd) * $omul }]), _, _, _>($tr(rgb::ycc), self, data),
-                    Luma => pb::<(&[u8; { $i }], &mut [u8; { (1 + $oadd) * $omul }]), _, _, _>($tr(rgb::luma), self, data),
-                    _ => {
-                        maybe!($yuyv_out => {
-                            if $to == Yuyv {
-                                pb::<(&[u8; { $i * 2 }], &mut [u8; 4]), _, _, _>(compose(double($tr(rgb::ycc)), ycc::yuyv), self, data);
-                            }
-                        });
-                    }
-                }
-            };
-        }
         if self.format == of {
             data.copy_from_slice(&self.data);
             return;
         }
-        if let Some(sd) = self.format.drop_alpha() {
-            if sd == of {
-                match sd.pixel_size() {
-                    1 => pb(drop_alpha::<[u8; 2]>, self, data),
-                    3 => pb(drop_alpha::<[u8; 4]>, self, data),
-                    _ => unreachable!("attempted to convert {sd} to {of}"),
-                }
-                return;
-            }
-            if let Some(od) = self.format.drop_alpha() {
-                base_impl!((lift_alpha, 1, 1), sd => od, false false);
-            } else {
-                base_impl!((|conv| compose(drop_alpha, conv), 1, 0), sd => of, false true);
-            }
-        } else if let Some(od) = of.drop_alpha() {
-            if self.format == od {
-                match od.pixel_size() {
-                    1 => pb(add_alpha::<[u8; 1]>, self, data),
-                    3 => pb(add_alpha::<[u8; 3]>, self, data),
-                    _ => unreachable!("attempted to convert {} to {}", self.format, od),
-                }
-                return;
-            }
-            base_impl!(((|conv| compose(conv, add_alpha)), 0, 1), self.format => od, true false);
-        } else {
-            base_impl!((|conv| conv, 0, 0), self.format => of, true true);
-        }
+        par_broadcast2(conv::ConvertBroadcast::new(self.format, of), self, data);
     }
     pub fn convert_inplace(&mut self, to: PixelFormat) {
-        use PixelFormat::*;
         use conv::*;
         if self.format == to {
             return;
         }
         if self.format.pixel_size() == to.pixel_size() {
-            match (std::mem::replace(&mut self.format, to), to) {
-                (Rgb, Hsv) => par_broadcast1(to_inplace(rgb::hsv), self),
-                (Rgb, YCbCr) => par_broadcast1(to_inplace(rgb::ycc), self),
-                (Hsv, Rgb) => par_broadcast1(to_inplace(hsv::rgb), self),
-                (Hsv, YCbCr) => par_broadcast1(to_inplace(compose(hsv::rgb, rgb::ycc)), self),
-                (YCbCr, Rgb) => par_broadcast1(to_inplace(ycc::rgb), self),
-                (YCbCr, Hsv) => par_broadcast1(to_inplace(compose(ycc::rgb, rgb::hsv)), self),
-                (Rgba, Hsva) => {
-                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(rgb::hsv)), self)
+            let old = std::mem::replace(&mut self.format, to);
+            if old.is_anon() || to.is_anon() {
+                return;
+            }
+            match (old, to) {
+                (PixelFormat::RGB, PixelFormat::HSV) => par_broadcast1(to_inplace(rgb2hsv), self),
+                (PixelFormat::RGB, PixelFormat::YCC) => par_broadcast1(to_inplace(rgb2ycc), self),
+                (PixelFormat::HSV, PixelFormat::RGB) => par_broadcast1(to_inplace(hsv2rgb), self),
+                (PixelFormat::HSV, PixelFormat::YCC) => {
+                    par_broadcast1(to_inplace(compose(hsv2rgb, rgb2ycc)), self)
                 }
-                (Rgba, YCbCrA) => {
-                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(rgb::ycc)), self)
+                (PixelFormat::YCC, PixelFormat::RGB) => par_broadcast1(to_inplace(ycc2rgb), self),
+                (PixelFormat::YCC, PixelFormat::HSV) => {
+                    par_broadcast1(to_inplace(compose(ycc2rgb, rgb2hsv)), self)
                 }
-                (Hsva, Rgba) => {
-                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(hsv::rgb)), self)
-                }
-                (Hsva, YCbCrA) => par_broadcast1::<(&mut [u8; 4],), _, _>(
-                    to_inplace(lift_alpha(compose(hsv::rgb, rgb::ycc))),
-                    self,
-                ),
-                (YCbCrA, Rgba) => {
-                    par_broadcast1::<(&mut [u8; 4],), _, _>(to_inplace(lift_alpha(ycc::rgb)), self)
-                }
-                (YCbCrA, Hsva) => par_broadcast1::<(&mut [u8; 4],), _, _>(
-                    to_inplace(lift_alpha(compose(ycc::rgb, rgb::hsv))),
-                    self,
-                ),
-                (Yuyv, LumaA) => par_broadcast1(yuyv::ilumaa, self),
-                (LumaA, Yuyv) => par_broadcast1(lumaa::iyuyv, self),
                 _ => unreachable!("attempted to convert {} to {}", self.format, to),
             }
         } else {
@@ -541,7 +594,7 @@ impl<'a> Buffer<'a> {
     }
     /// Resize the internal data to match the size, shape, and pixel format, returning the mutable buffer.
     pub fn resize_data(&mut self) -> &mut Vec<u8> {
-        let len = self.width as usize * self.height as usize * self.format.pixel_size() as usize;
+        let len = self.width as usize * self.height as usize * self.format.pixel_size();
         let res = polonius::<_, _, ForLt!(&mut Vec<u8>)>(&mut self.data, |data| {
             if len == 0 {
                 if let Cow::Owned(vec) = data {
@@ -583,7 +636,7 @@ impl<'a> Buffer<'a> {
     ///
     /// Note that for YUVY images, it returns the pair of pixels that share the data.
     pub fn pixel(&self, mut x: u32, y: u32) -> Option<&[u8]> {
-        if self.format == PixelFormat::Yuyv {
+        if self.format == PixelFormat::YUYV {
             x &= !1;
             if x + 1 >= self.width {
                 return None;
@@ -593,8 +646,8 @@ impl<'a> Buffer<'a> {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;
-        let px_len = self.format.pixel_size() as usize;
-        if self.format == PixelFormat::Yuyv {
+        let px_len = self.format.pixel_size();
+        if self.format == PixelFormat::YUYV {
             let start = px_idx * px_len;
             self.data.get(start..(start + 4))
         } else {
@@ -605,7 +658,7 @@ impl<'a> Buffer<'a> {
     ///
     /// Note that for YUVY images, it returns the pair of pixels that share the data.
     pub fn pixel_mut(&mut self, mut x: u32, y: u32) -> Option<&mut [u8]> {
-        if self.format == PixelFormat::Yuyv {
+        if self.format == PixelFormat::YUYV {
             x &= !1;
             if x + 1 >= self.width {
                 return None;
@@ -615,9 +668,9 @@ impl<'a> Buffer<'a> {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;
-        let px_len = self.format.pixel_size() as usize;
+        let px_len = self.format.pixel_size();
         let data = self.data.to_mut();
-        if self.format == PixelFormat::Yuyv {
+        if self.format == PixelFormat::YUYV {
             let start = px_idx * px_len;
             data.get_mut(start..(start + 4))
         } else {
@@ -628,7 +681,7 @@ impl<'a> Buffer<'a> {
     ///
     /// This is similar to `self.pixel_mut(x, y)?.copy_from_slice(color)`, but it handles YUYV buffers properly.
     pub fn set_pixel(&mut self, x: u32, y: u32, color: &[u8]) -> bool {
-        let is_yuyv = self.format == PixelFormat::Yuyv;
+        let is_yuyv = self.format == PixelFormat::YUYV;
         let Some(px) = self.pixel_mut(x, y) else {
             return false;
         };

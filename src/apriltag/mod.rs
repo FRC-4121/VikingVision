@@ -408,7 +408,7 @@ impl Detector {
     }
     /// Take an image and detect any april tags in it.
     pub fn detect(&mut self, mut buffer: Buffer<'_>) -> DetectionIterator {
-        buffer.convert_inplace(PixelFormat::Luma);
+        buffer.convert_inplace(PixelFormat::LUMA);
         assert_eq!(
             buffer.width as usize * buffer.height as usize,
             buffer.data.len(),

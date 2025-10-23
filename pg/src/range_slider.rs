@@ -11,18 +11,18 @@ use std::ops::RangeInclusive;
 /// # });
 /// ```
 #[must_use = "You should put this widget in a ui with `ui.add(widget);`"]
-pub struct RangeSlider<'a> {
-    label: &'static str,
+pub struct RangeSlider<'a, 's> {
+    label: &'s str,
     min_value: &'a mut u8,
     max_value: &'a mut u8,
     range: RangeInclusive<u8>,
 }
 
-impl<'a> RangeSlider<'a> {
+impl<'a, 's> RangeSlider<'a, 's> {
     /// Creates a new range slider.
     ///
     /// Both values will be clamped to ensure min <= max.
-    pub fn new(label: &'static str, min_value: &'a mut u8, max_value: &'a mut u8) -> Self {
+    pub fn new(label: &'s str, min_value: &'a mut u8, max_value: &'a mut u8) -> Self {
         Self {
             label,
             min_value,
@@ -68,7 +68,7 @@ impl<'a> RangeSlider<'a> {
     }
 }
 
-impl Widget for RangeSlider<'_> {
+impl Widget for RangeSlider<'_, '_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let mut resp = ui.horizontal(|ui| {
             // Ensure min <= max

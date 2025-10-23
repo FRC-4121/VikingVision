@@ -36,7 +36,7 @@ impl TryFrom<ColorShim> for Color {
     fn try_from(value: ColorShim) -> Result<Self, Self::Error> {
         match value {
             ColorShim::Bytes { format, bytes } => {
-                let fsize = format.pixel_size() as usize;
+                let fsize = format.pixel_size();
                 let bsize = bytes.len();
                 if fsize != bsize {
                     return Err(format!(
@@ -114,7 +114,7 @@ impl FrameCamera {
             if self.buffer.width == width && self.buffer.height == height {
                 return Ok(());
             }
-            let new_len = width as usize * height as usize * format.pixel_size() as usize;
+            let new_len = width as usize * height as usize * format.pixel_size();
             if new_len < self.buffer.data.len() {
                 match &mut self.buffer.data {
                     Cow::Borrowed(slice) => *slice = &slice[..new_len],
@@ -124,7 +124,7 @@ impl FrameCamera {
                 let vec = self.buffer.data.to_mut();
                 let len_diff = new_len - vec.len();
                 vec.reserve(len_diff);
-                let px_diff = len_diff / format.pixel_size() as usize;
+                let px_diff = len_diff / format.pixel_size();
                 for _ in 0..px_diff {
                     vec.extend_from_slice(bytes);
                 }
