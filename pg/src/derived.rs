@@ -89,10 +89,13 @@ impl DerivedFrame {
                 from.convert_into(&mut self.frame);
             }
             Transform::ColorFilter(FilterKind::Space(filter)) => {
-                filter_into(from, &mut self.frame, filter)
+                filter_into(from, &mut self.frame, filter);
             }
             Transform::ColorFilter(FilterKind::Anon { ref min, ref max }) => {
-                par_broadcast2(FilterPixel::new(min, max), &from, &mut self.frame)
+                self.frame.width = from.width;
+                self.frame.height = from.height;
+                self.frame.format = PixelFormat::LUMA;
+                par_broadcast2(FilterPixel::new(min, max), &from, self.frame.resize_data());
             }
             Transform::Swizzle(ref s) => {
                 swizzle(from, &mut self.frame, s);

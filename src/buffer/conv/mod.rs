@@ -10,27 +10,13 @@ use crate::buffer::PixelFormat;
 #[cfg(test)]
 mod tests;
 
-/// Sequence two in-place operations.
-#[inline(always)]
-pub fn sequence<const N: usize>(
-    f1: impl Fn(&mut [u8; N]) + Send + Sync,
-    f2: impl Fn(&mut [u8; N]) + Send + Sync,
-) -> impl Fn(&mut [u8; N]) + Send + Sync {
-    move |buf| {
-        f1(buf);
-        f2(buf);
-    }
-}
 /// Make a conversion operate in place
 #[inline(always)]
 pub fn to_inplace<const N: usize>(f: impl Fn([u8; N]) -> [u8; N]) -> impl Fn(&mut [u8; N]) {
     move |buf| *buf = f(*buf)
 }
 #[inline(always)]
-pub fn compose<A, B, C>(
-    f1: impl Fn(A) -> B + Send + Sync,
-    f2: impl Fn(B) -> C + Send + Sync,
-) -> impl Fn(A) -> C + Send + Sync {
+pub fn compose<A, B, C>(f1: impl Fn(A) -> B, f2: impl Fn(B) -> C) -> impl Fn(A) -> C {
     move |x| f2(f1(x))
 }
 
@@ -123,6 +109,7 @@ impl ParBroadcast2<&[u8], &mut [u8], ()> for ConvertBroadcast {
     fn par_run(&self, a1: &[u8], a2: &mut [u8]) {
         if self.src == self.dst {
             a2.copy_from_slice(a1);
+            return;
         }
         if self.src.is_anon() || self.dst.is_anon() {
             match a1.len().cmp(&a2.len()) {

@@ -79,6 +79,7 @@ impl FfmpegComponent {
             PixelFormat::LUMA | PixelFormat::ANON_1 => "gray",
             PixelFormat::YCC => "yuv444p",
             PixelFormat::YUYV => "yuyv422",
+            PixelFormat::RGBA => "rgba",
             _ => "rgb24",
         };
         cmd.args(["-f", "rawvideo", "-pix_fmt", pix_fmt, "-s"]);
@@ -145,6 +146,7 @@ impl Component for FfmpegComponent {
             | PixelFormat::YCC
             | PixelFormat::ANON_1
             | PixelFormat::ANON_3
+            | PixelFormat::RGBA
             | PixelFormat::YUYV => frame.borrow(),
             PixelFormat::HSV => frame.convert(PixelFormat::RGB),
             _ => frame.convert(PixelFormat::ANON_3),
@@ -201,7 +203,7 @@ impl Component for FfmpegComponent {
             .unwrap_or_else(PoisonError::into_inner);
         let opt = lock.entry(id).or_insert_with(|| {
             let mut cmd = Command::new(&*self.ffmpeg);
-            Self::prep_command(&mut cmd, frame.borrow(), self.framerate);
+            Self::prep_command(&mut cmd, converted.borrow(), self.framerate);
             Self::format_args(&mut cmd, &self.args, id, name);
             cmd
                 .stdin(Stdio::piped())

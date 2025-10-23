@@ -35,6 +35,8 @@ impl Error for UnrecognizedFourCC {}
 pub enum FormatParseError {
     #[error(transparent)]
     ParseInt(ParseIntError),
+    #[error("Expected a number of channels in 1..200, found {0}")]
+    OutOfRange(u8),
     #[error("unrecognized format")]
     UnrecognizedStr,
 }
@@ -144,7 +146,7 @@ impl PixelFormat {
     }
     #[inline(always)]
     pub const fn is_anon(&self) -> bool {
-        self.0.get() < Self::MAX_ANON.get()
+        self.0.get() <= Self::MAX_ANON.get()
     }
     /// Get the number of bytes per pixel
     pub const fn pixel_size(&self) -> usize {
@@ -190,7 +192,9 @@ impl PixelFormat {
     /// This takes a few different cases for the named formats, or allows a number of channels preceeded by a `?`, like `"?3"` for an anonymous format with three channels.
     pub fn parse_str(s: &str) -> Result<Self, FormatParseError> {
         if let Some(rest) = s.strip_prefix('?') {
-            rest.parse().map(Self).map_err(FormatParseError::ParseInt)
+            rest.parse()
+                .map_err(FormatParseError::ParseInt)
+                .and_then(|v| Self::anon(v).ok_or(FormatParseError::OutOfRange(v)))
         } else {
             match s {
                 "luma" | "Luma" | "LUMA" => Ok(Self::LUMA),
