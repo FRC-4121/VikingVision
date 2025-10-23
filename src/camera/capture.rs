@@ -381,7 +381,7 @@ impl CameraImpl for CaptureCamera {
             let mut decoder = JpegDecoder::new_with_options(frame, DecoderOptions::new_fast());
             px_buf.width = width;
             px_buf.height = height;
-            px_buf.format = PixelFormat::Rgb;
+            px_buf.format = PixelFormat::RGB;
             let px_data = px_buf.resize_data();
             if let Err(err) = decoder.decode_into(&mut *px_data) {
                 error!(%err, "failed to decode JPEG data");

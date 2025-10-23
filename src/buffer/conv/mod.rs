@@ -1,202 +1,302 @@
 //! All of these conversion functions take an input and output array and can be used directly with [`broadcast2`](crate::broadcast::broadcast2) and [`par_broadcast2`](crate::broadcast::par_broadcast2).
-//! All functions have the convention of `<input format>::<output format>``, with `i` being used as a function prefix for in-place operations.
+//! All functions have the convention of `<input format>2<output format>`, with `i` being used as a function prefix for in-place operations.
 //! Note that any YUYV conversions need two pixels to operate on rather than just one.
 
-pub mod gray;
-pub mod hsv;
-pub mod luma;
-pub mod rgb;
-pub mod ycc;
-pub mod yuyv;
+use std::cmp::Ordering;
+
+use crate::broadcast::{Broadcast2, ParBroadcast2};
+use crate::buffer::PixelFormat;
 
 #[cfg(test)]
 mod tests;
 
-/// Sequence two in-place operations.
-#[inline(always)]
-pub fn sequence<const N: usize>(
-    f1: impl Fn(&mut [u8; N]) + Send + Sync,
-    f2: impl Fn(&mut [u8; N]) + Send + Sync,
-) -> impl Fn(&mut [u8; N]) + Send + Sync {
-    move |buf| {
-        f1(buf);
-        f2(buf);
-    }
-}
 /// Make a conversion operate in place
 #[inline(always)]
-pub fn to_inplace<const N: usize>(f: impl Fn(&[u8; N], &mut [u8; N])) -> impl Fn(&mut [u8; N]) {
-    move |buf| {
-        let from = *buf;
-        f(&from, buf);
-    }
+pub fn to_inplace<const N: usize>(f: impl Fn([u8; N]) -> [u8; N]) -> impl Fn(&mut [u8; N]) {
+    move |buf| *buf = f(*buf)
 }
-/// Compose two conversions
 #[inline(always)]
-pub fn compose<const N1: usize, const N2: usize, const N3: usize>(
-    f1: impl Fn(&[u8; N1], &mut [u8; N2]) + Send + Sync,
-    f2: impl Fn(&[u8; N2], &mut [u8; N3]) + Send + Sync,
-) -> impl Fn(&[u8; N1], &mut [u8; N3]) + Send + Sync {
-    move |from, to| {
-        let mut buf = [0u8; N2];
-        f1(from, &mut buf);
-        f2(&buf, to);
-    }
-}
-/// Add an alpha of 255 to a conversion that didn't have it
-#[inline(always)]
-pub fn add_alpha<P: HasAlpha + AsRef<[u8]> + AsMut<[u8]>>(from: &P, to: &mut P::Alpha) {
-    let (px, a) = to.split_mut();
-    px.as_mut().copy_from_slice(from.as_ref());
-    *a = 255;
-}
-/// Drop the alpha of a color
-#[inline(always)]
-pub fn drop_alpha<P: AlphaPixel>(from: &P, to: &mut P::Alphaless) {
-    to.as_mut().copy_from_slice(from.split().0.as_ref());
-}
-/// Identity conversion
-#[inline(always)]
-pub fn iden<const N: usize>(from: &[u8; N], to: &mut [u8; N]) {
-    to.copy_from_slice(from);
-}
-/// Identity conversion
-#[inline(always)]
-pub fn iden3(from: &[u8; 3], to: &mut [u8; 3]) {
-    to.copy_from_slice(from);
-}
-/// Lift an operation from colors without alpha to one that preserves alpha
-#[inline(always)]
-pub fn lift_alpha<P1: AlphaPixel, P2: AlphaPixel>(
-    op: impl Fn(&P1::Alphaless, &mut P2::Alphaless) + Send + Sync,
-) -> impl Fn(&P1, &mut P2) + Send + Sync {
-    move |from, to| {
-        let (px1, a1) = from.split();
-        let (px2, a2) = to.split_mut();
-        op(px1, px2);
-        *a2 = *a1;
-    }
-}
-/// Double an operation to work on two
-#[inline(always)]
-pub fn double<P1: DoublePixel, P2: DoublePixel>(
-    op: impl Fn(&P1::Single, &mut P2::Single),
-) -> impl Fn(&P1, &mut P2) {
-    move |from, to| {
-        let [f1, f2] = from.split();
-        let [t1, t2] = to.split_mut();
-        op(f1, t1);
-        op(f2, t2);
-    }
+pub fn compose<A, B, C>(f1: impl Fn(A) -> B, f2: impl Fn(B) -> C) -> impl Fn(A) -> C {
+    move |x| f2(f1(x))
 }
 
-/// Lift an in-place operation from colors without alpha to one that preserves alpha
-#[inline(always)]
-pub fn ignore_alpha<P: AlphaPixel>(
-    op: impl Fn(&mut P::Alphaless) + Send + Sync,
-) -> impl Fn(&mut P) + Send + Sync {
-    move |buf| {
-        op(buf.split_mut().0);
+pub fn hsv2rgb(from: [u8; 3]) -> [u8; 3] {
+    let [h, s, v] = from.map(|c| c as u16);
+    if s == 0 {
+        return [v as _; 3];
     }
+    let region = h / 43;
+    let c = (v * s) >> 8;
+    let x = (c * (43 - (h % 85).abs_diff(43))) / 43;
+    let m = v - c;
+    let c = (c + m).clamp(0, 255) as u8;
+    let x = (x + m).clamp(0, 255) as u8;
+    let m = m as u8;
+    match region {
+        0 => [c, x, m],
+        1 => [x, c, m],
+        2 => [m, c, x],
+        3 => [m, x, c],
+        4 => [x, m, c],
+        _ => [c, m, x],
+    }
+}
+pub fn rgb2hsv(from: [u8; 3]) -> [u8; 3] {
+    let [r, g, b] = from.map(|c| c as i16);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let v = max as u8;
+    if delta == 0 {
+        [0, 0, v]
+    } else {
+        let s = ((255 * delta) / max) as u8;
+        #[allow(clippy::identity_op)]
+        let h16 = if max == r {
+            0 + 43 * (g - b) / delta
+        } else if max == g {
+            85 + 43 * (b - r) / delta
+        } else {
+            171 + 43 * (r - g) / delta
+        };
+        let h = (h16 & 255) as u8;
+        [h, s, v]
+    }
+}
+pub fn rgb2ycc(from: [u8; 3]) -> [u8; 3] {
+    let [r, g, b] = from.map(|c| c as i32);
+    let y = ((r * 77 + g * 150 + b * 29) / 256).clamp(0, 255) as u8;
+    let cb = ((-43 * r - 85 * g + 128 * b) / 256 + 128).clamp(0, 255) as u8;
+    let cr = ((128 * r - 107 * g - 21 * b) / 256 + 128).clamp(0, 255) as u8;
+    [y, cb, cr]
+}
+pub fn rgb2luma(from: [u8; 3]) -> u8 {
+    let [r, g, b] = from.map(|c| c as u16);
+    ((r * 77 + g * 150 + b * 29) >> 8).min(255) as u8
+}
+pub fn ycc2rgb(from: [u8; 3]) -> [u8; 3] {
+    let [y, cb, cr] = from.map(|c| c as i32);
+    let r = ((256 * y + 359 * (cr - 128)) / 256).clamp(0, 255) as u8;
+    let g = ((256 * y - (88 * (cb - 128) + 183 * (cr - 128))) / 256).clamp(0, 255) as u8;
+    let b = ((256 * y + 454 * (cb - 128)) / 256).clamp(0, 255) as u8;
+    [r, g, b]
 }
 
-pub trait AlphaPixel: AsRef<[u8]> + AsMut<[u8]> {
-    type Alphaless: AsRef<[u8]> + AsMut<[u8]>;
-
-    fn split(&self) -> (&Self::Alphaless, &u8);
-    fn split_mut(&mut self) -> (&mut Self::Alphaless, &mut u8);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConvertBroadcast {
+    pub src: PixelFormat,
+    pub dst: PixelFormat,
 }
-impl AlphaPixel for [u8; 2] {
-    type Alphaless = [u8; 1];
-
-    fn split(&self) -> (&[u8; 1], &u8) {
-        let (head, tail) = self.split_first_chunk().unwrap();
-        (head, &tail[0])
-    }
-    fn split_mut(&mut self) -> (&mut [u8; 1], &mut u8) {
-        let (head, tail) = self.split_first_chunk_mut().unwrap();
-        (head, &mut tail[0])
+impl ConvertBroadcast {
+    pub const fn new(src: PixelFormat, dst: PixelFormat) -> Self {
+        Self { src, dst }
     }
 }
-impl AlphaPixel for [u8; 4] {
-    type Alphaless = [u8; 3];
-
-    fn split(&self) -> (&[u8; 3], &u8) {
-        let (head, tail) = self.split_first_chunk().unwrap();
-        (head, &tail[0])
+impl Broadcast2<&[u8], &mut [u8], ()> for ConvertBroadcast {
+    fn sizes(&self) -> [usize; 2] {
+        match (self.src, self.dst) {
+            (PixelFormat::YUYV, PixelFormat::YUYV) => [4, 4],
+            (PixelFormat::YUYV, dst) => [4, dst.pixel_size() * 2],
+            (src, PixelFormat::YUYV) => [src.pixel_size() * 2, 4],
+            (src, dst) => [src.pixel_size(), dst.pixel_size()],
+        }
     }
-    fn split_mut(&mut self) -> (&mut [u8; 3], &mut u8) {
-        let (head, tail) = self.split_first_chunk_mut().unwrap();
-        (head, &mut tail[0])
-    }
-}
-pub trait DoublePixel: AsRef<[u8]> + AsMut<[u8]> {
-    type Single: AsRef<[u8]> + AsMut<[u8]>;
-
-    fn split(&self) -> [&Self::Single; 2];
-    fn split_mut(&mut self) -> [&mut Self::Single; 2];
-}
-impl DoublePixel for [u8; 2] {
-    type Single = [u8; 1];
-
-    fn split(&self) -> [&Self::Single; 2] {
-        let (head, tail) = self.split_at(1);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
-    }
-    fn split_mut(&mut self) -> [&mut Self::Single; 2] {
-        let (head, tail) = self.split_at_mut(1);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
+    fn run(&mut self, a1: &[u8], a2: &mut [u8]) {
+        self.par_run(a1, a2);
     }
 }
-impl DoublePixel for [u8; 4] {
-    type Single = [u8; 2];
-
-    fn split(&self) -> [&Self::Single; 2] {
-        let (head, tail) = self.split_at(2);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
-    }
-    fn split_mut(&mut self) -> [&mut Self::Single; 2] {
-        let (head, tail) = self.split_at_mut(2);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
-    }
-}
-impl DoublePixel for [u8; 6] {
-    type Single = [u8; 3];
-
-    fn split(&self) -> [&Self::Single; 2] {
-        let (head, tail) = self.split_at(3);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
-    }
-    fn split_mut(&mut self) -> [&mut Self::Single; 2] {
-        let (head, tail) = self.split_at_mut(3);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
-    }
-}
-impl DoublePixel for [u8; 8] {
-    type Single = [u8; 4];
-
-    fn split(&self) -> [&Self::Single; 2] {
-        let (head, tail) = self.split_at(4);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
-    }
-    fn split_mut(&mut self) -> [&mut Self::Single; 2] {
-        let (head, tail) = self.split_at_mut(4);
-        [head.try_into().unwrap(), tail.try_into().unwrap()]
-    }
-}
-pub trait HasAlpha {
-    type Alpha: AlphaPixel<Alphaless = Self>;
-}
-impl HasAlpha for [u8; 1] {
-    type Alpha = [u8; 2];
-}
-impl HasAlpha for [u8; 3] {
-    type Alpha = [u8; 4];
-}
-
-pub mod lumaa {
-    pub fn iyuyv(buf: &mut [u8; 4]) {
-        buf[1] = 128;
-        buf[3] = 128;
+impl ParBroadcast2<&[u8], &mut [u8], ()> for ConvertBroadcast {
+    fn par_run(&self, a1: &[u8], a2: &mut [u8]) {
+        if self.src == self.dst {
+            a2.copy_from_slice(a1);
+            return;
+        }
+        if self.src.is_anon() || self.dst.is_anon() {
+            match a1.len().cmp(&a2.len()) {
+                Ordering::Less => {
+                    let (head, tail) = a2.split_at_mut(a1.len());
+                    head.copy_from_slice(a1);
+                    tail.fill(0);
+                }
+                Ordering::Greater => {
+                    a2.copy_from_slice(&a1[..a2.len()]);
+                }
+                Ordering::Equal => a2.copy_from_slice(a1),
+            }
+            return;
+        }
+        match self.src {
+            PixelFormat::LUMA => {
+                let y = a1[0];
+                match self.dst {
+                    PixelFormat::RGB => {
+                        a2.fill(y);
+                    }
+                    PixelFormat::HSV => {
+                        a2.copy_from_slice(&rgb2hsv([y; 3]));
+                    }
+                    PixelFormat::YCC => {
+                        if let Some((first, rest)) = a2.split_first_mut() {
+                            *first = y;
+                            rest.fill(128);
+                        }
+                    }
+                    PixelFormat::RGBA => {
+                        a2[..3].fill(y);
+                        a2[3] = 255;
+                    }
+                    PixelFormat::YUYV => {
+                        let y1 = y;
+                        let y2 = a1[1];
+                        a2.copy_from_slice(&[y1, 128, y2, 128]);
+                    }
+                    _ => {}
+                }
+            }
+            PixelFormat::RGB => {
+                let mut rgb = [0; 3];
+                rgb.copy_from_slice(&a1[..3]);
+                match self.dst {
+                    PixelFormat::LUMA => {
+                        a2[0] = rgb2luma(rgb);
+                    }
+                    PixelFormat::HSV => {
+                        a2.copy_from_slice(&rgb2hsv(rgb));
+                    }
+                    PixelFormat::YCC => {
+                        a2.copy_from_slice(&rgb2ycc(rgb));
+                    }
+                    PixelFormat::RGBA => {
+                        a2[..3].copy_from_slice(&rgb);
+                        a2[3] = 255;
+                    }
+                    PixelFormat::YUYV => {
+                        let [y1, b1, r1] = rgb2ycc(rgb);
+                        rgb.copy_from_slice(&a1[3..6]);
+                        let [y2, b2, r2] = rgb2ycc(rgb);
+                        let r = r1.midpoint(r2);
+                        let b = b1.midpoint(b2);
+                        a2.copy_from_slice(&[y1, b, y2, r]);
+                    }
+                    _ => {}
+                }
+            }
+            PixelFormat::HSV => {
+                let mut hsv = [0; 3];
+                hsv.copy_from_slice(&a1[..3]);
+                let rgb = hsv2rgb(hsv);
+                match self.dst {
+                    PixelFormat::LUMA => {
+                        a2[0] = rgb2luma(rgb);
+                    }
+                    PixelFormat::RGB => {
+                        a2.copy_from_slice(&rgb);
+                    }
+                    PixelFormat::YCC => {
+                        a2.copy_from_slice(&rgb2ycc(rgb));
+                    }
+                    PixelFormat::RGBA => {
+                        a2[..3].copy_from_slice(&rgb);
+                        a2[3] = 255;
+                    }
+                    PixelFormat::YUYV => {
+                        let [y1, b1, r1] = rgb2ycc(rgb);
+                        hsv.copy_from_slice(&a1[3..6]);
+                        let rgb = hsv2rgb(hsv);
+                        let [y2, b2, r2] = rgb2ycc(rgb);
+                        let r = r1.midpoint(r2);
+                        let b = b1.midpoint(b2);
+                        a2.copy_from_slice(&[y1, b, y2, r]);
+                    }
+                    _ => {}
+                }
+            }
+            PixelFormat::YCC => {
+                let mut ycc = [0; 3];
+                ycc.copy_from_slice(&a1[..3]);
+                match self.dst {
+                    PixelFormat::LUMA => {
+                        a2[0] = rgb2luma(ycc2rgb(ycc));
+                    }
+                    PixelFormat::RGB => {
+                        a2.copy_from_slice(&ycc2rgb(ycc));
+                    }
+                    PixelFormat::HSV => {
+                        a2.copy_from_slice(&rgb2hsv(ycc2rgb(ycc)));
+                    }
+                    PixelFormat::RGBA => {
+                        let rgb = ycc2rgb(ycc);
+                        a2[..3].copy_from_slice(&rgb);
+                        a2[3] = 255;
+                    }
+                    PixelFormat::YUYV => {
+                        let [y1, b1, r1] = ycc;
+                        ycc.copy_from_slice(&a1[3..6]);
+                        let [y2, b2, r2] = ycc;
+                        let r = r1.midpoint(r2);
+                        let b = b1.midpoint(b2);
+                        a2.copy_from_slice(&[y1, b, y2, r]);
+                    }
+                    _ => {}
+                }
+            }
+            PixelFormat::RGBA => {
+                let mut rgb = [0; 3];
+                rgb.copy_from_slice(&a1[..3]);
+                match self.dst {
+                    PixelFormat::LUMA => {
+                        a2[0] = rgb2luma(rgb);
+                    }
+                    PixelFormat::RGB => {
+                        a2.copy_from_slice(&rgb);
+                    }
+                    PixelFormat::HSV => {
+                        a2.copy_from_slice(&rgb2hsv(rgb));
+                    }
+                    PixelFormat::YCC => {
+                        a2.copy_from_slice(&rgb2ycc(rgb));
+                    }
+                    PixelFormat::YUYV => {
+                        let [y1, b1, r1] = rgb2ycc(rgb);
+                        rgb.copy_from_slice(&a1[4..7]);
+                        let [y2, b2, r2] = rgb2ycc(rgb);
+                        let r = r1.midpoint(r2);
+                        let b = b1.midpoint(b2);
+                        a2.copy_from_slice(&[y1, b, y2, r]);
+                    }
+                    _ => {}
+                }
+            }
+            PixelFormat::YUYV => {
+                let mut yuyv = [0; 4];
+                yuyv.copy_from_slice(a1);
+                let [y1, u, y2, v] = yuyv;
+                match self.dst {
+                    PixelFormat::LUMA => {
+                        a2.copy_from_slice(&[y1, y2]);
+                    }
+                    PixelFormat::YCC => {
+                        a2.copy_from_slice(&[y1, u, v, y2, u, v]);
+                    }
+                    PixelFormat::RGB => {
+                        let [r1, g1, b1] = ycc2rgb([y1, u, v]);
+                        let [r2, g2, b2] = ycc2rgb([y2, u, v]);
+                        a2.copy_from_slice(&[r1, g1, b1, r2, g2, b2]);
+                    }
+                    PixelFormat::RGBA => {
+                        let [r1, g1, b1] = ycc2rgb([y1, u, v]);
+                        let [r2, g2, b2] = ycc2rgb([y2, u, v]);
+                        a2.copy_from_slice(&[r1, g1, b1, 255, r2, g2, b2, 255]);
+                    }
+                    PixelFormat::HSV => {
+                        let [h1, s1, v1] = rgb2hsv(ycc2rgb([y1, u, v]));
+                        let [h2, s2, v2] = rgb2hsv(ycc2rgb([y2, u, v]));
+                        a2.copy_from_slice(&[h1, s1, v1, h2, s2, v2]);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
 }

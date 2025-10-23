@@ -76,13 +76,11 @@ impl FfmpegComponent {
     }
     fn prep_command(cmd: &mut Command, buffer: Buffer<'_>, framerate: f64) {
         let pix_fmt = match buffer.format {
-            PixelFormat::Gray | PixelFormat::GrayA | PixelFormat::Luma | PixelFormat::LumaA => {
-                "gray"
-            }
-            PixelFormat::Rgb | PixelFormat::Hsv => "rgb24",
-            PixelFormat::Rgba | PixelFormat::Hsva => "rgba",
-            PixelFormat::YCbCr | PixelFormat::YCbCrA => "yuv444p",
-            PixelFormat::Yuyv => "yuyv422",
+            PixelFormat::LUMA | PixelFormat::ANON_1 => "gray",
+            PixelFormat::YCC => "yuv444p",
+            PixelFormat::YUYV => "yuyv422",
+            PixelFormat::RGBA => "rgba",
+            _ => "rgb24",
         };
         cmd.args(["-f", "rawvideo", "-pix_fmt", pix_fmt, "-s"]);
         cmd.arg(format!("{}x{}", buffer.width, buffer.height));
@@ -143,13 +141,15 @@ impl Component for FfmpegComponent {
             return;
         };
         let converted = match frame.format {
-            PixelFormat::Gray | PixelFormat::GrayA | PixelFormat::Luma | PixelFormat::LumaA => {
-                frame.convert(PixelFormat::Luma)
-            }
-            PixelFormat::Hsv => frame.convert(PixelFormat::Rgb),
-            PixelFormat::Hsva => frame.convert(PixelFormat::Rgba),
-            PixelFormat::YCbCrA => frame.convert(PixelFormat::YCbCr),
-            _ => frame.borrow(),
+            PixelFormat::LUMA
+            | PixelFormat::RGB
+            | PixelFormat::YCC
+            | PixelFormat::ANON_1
+            | PixelFormat::ANON_3
+            | PixelFormat::RGBA
+            | PixelFormat::YUYV => frame.borrow(),
+            PixelFormat::HSV => frame.convert(PixelFormat::RGB),
+            _ => frame.convert(PixelFormat::ANON_3),
         };
         let id = context.context.request::<PipelineId>();
         let name = context.context.request::<PipelineName>().map(|n| n.0);
@@ -203,7 +203,7 @@ impl Component for FfmpegComponent {
             .unwrap_or_else(PoisonError::into_inner);
         let opt = lock.entry(id).or_insert_with(|| {
             let mut cmd = Command::new(&*self.ffmpeg);
-            Self::prep_command(&mut cmd, frame.borrow(), self.framerate);
+            Self::prep_command(&mut cmd, converted.borrow(), self.framerate);
             Self::format_args(&mut cmd, &self.args, id, name);
             cmd
                 .stdin(Stdio::piped())

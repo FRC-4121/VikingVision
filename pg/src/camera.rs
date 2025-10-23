@@ -405,7 +405,7 @@ fn spawn_from_mono(mono: &Monochrome) -> Option<DaemonHandle<Context>> {
             max_fps: Some(60.0),
         },
         source: viking_vision::camera::frame::ImageSource::Color(Color {
-            format: viking_vision::buffer::PixelFormat::Rgb,
+            format: viking_vision::buffer::PixelFormat::RGB,
             bytes: mono.color.to_vec(),
         }),
     }
@@ -626,7 +626,7 @@ impl Worker<Context> for CameraWorker {
                 }
                 if let Some(mono) = camera.downcast_mut::<FrameCamera>() {
                     if let ImageSource::Color(Color {
-                        format: PixelFormat::Rgb,
+                        format: PixelFormat::RGB,
                         ref mut bytes,
                     }) = mono.config.source
                     {
@@ -634,7 +634,7 @@ impl Worker<Context> for CameraWorker {
                         if opts.recolor {
                             opts.recolor = false;
                             bytes.copy_from_slice(&opts.color);
-                            par_broadcast1(|c| *c = opts.color, &mut mono.buffer);
+                            par_broadcast1(|c: &mut [u8; 3]| *c = opts.color, &mut mono.buffer);
                         } else {
                             opts.color.copy_from_slice(bytes);
                         }

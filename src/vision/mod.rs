@@ -1,4 +1,4 @@
-use crate::broadcast::par_broadcast2;
+use crate::broadcast::{Broadcast2, ParBroadcast2, par_broadcast2};
 use crate::buffer::{Buffer, PixelFormat};
 use crate::pipeline::prelude::Data;
 use rayon::prelude::*;
@@ -71,22 +71,6 @@ pub enum ColorFilter {
         min_l: u8,
         max_l: u8,
     },
-    LumaA {
-        min_l: u8,
-        max_l: u8,
-        min_a: u8,
-        max_a: u8,
-    },
-    Gray {
-        min_v: u8,
-        max_v: u8,
-    },
-    GrayA {
-        min_v: u8,
-        max_v: u8,
-        min_a: u8,
-        max_a: u8,
-    },
     Rgb {
         min_r: u8,
         min_g: u8,
@@ -95,16 +79,6 @@ pub enum ColorFilter {
         max_g: u8,
         max_b: u8,
     },
-    Rgba {
-        min_r: u8,
-        min_g: u8,
-        min_b: u8,
-        max_r: u8,
-        max_g: u8,
-        max_b: u8,
-        min_a: u8,
-        max_a: u8,
-    },
     Hsv {
         min_h: u8,
         max_h: u8,
@@ -112,16 +86,6 @@ pub enum ColorFilter {
         max_s: u8,
         min_v: u8,
         max_v: u8,
-    },
-    Hsva {
-        min_h: u8,
-        max_h: u8,
-        min_s: u8,
-        max_s: u8,
-        min_v: u8,
-        max_v: u8,
-        min_a: u8,
-        max_a: u8,
     },
     Yuyv {
         min_y: u8,
@@ -140,53 +104,20 @@ pub enum ColorFilter {
         min_r: u8,
         max_r: u8,
     },
-    #[serde(rename = "ycca")]
-    YCbCrA {
-        min_y: u8,
-        max_y: u8,
-        min_b: u8,
-        max_b: u8,
-        min_r: u8,
-        max_r: u8,
-        min_a: u8,
-        max_a: u8,
-    },
 }
 impl ColorFilter {
     pub fn pixel_format(&self) -> PixelFormat {
         match self {
-            Self::Luma { .. } => PixelFormat::Luma,
-            Self::LumaA { .. } => PixelFormat::LumaA,
-            Self::Gray { .. } => PixelFormat::Gray,
-            Self::GrayA { .. } => PixelFormat::GrayA,
-            Self::Rgb { .. } => PixelFormat::Rgb,
-            Self::Rgba { .. } => PixelFormat::Rgba,
-            Self::Hsv { .. } => PixelFormat::Hsv,
-            Self::Hsva { .. } => PixelFormat::Hsva,
-            Self::YCbCr { .. } => PixelFormat::YCbCr,
-            Self::YCbCrA { .. } => PixelFormat::YCbCrA,
-            Self::Yuyv { .. } => PixelFormat::Yuyv,
+            Self::Luma { .. } => PixelFormat::LUMA,
+            Self::Rgb { .. } => PixelFormat::RGB,
+            Self::Hsv { .. } => PixelFormat::HSV,
+            Self::YCbCr { .. } => PixelFormat::YCC,
+            Self::Yuyv { .. } => PixelFormat::YUYV,
         }
     }
     pub fn to_range(self) -> RangeInclusive<Color> {
         match self {
             Self::Luma { min_l, max_l } => Color::Luma { l: min_l }..=Color::Luma { l: max_l },
-
-            Self::LumaA {
-                min_l,
-                max_l,
-                min_a,
-                max_a,
-            } => Color::LumaA { l: min_l, a: min_a }..=Color::LumaA { l: max_l, a: max_a },
-
-            Self::Gray { min_v, max_v } => Color::Gray { v: min_v }..=Color::Gray { v: max_v },
-
-            Self::GrayA {
-                min_v,
-                max_v,
-                min_a,
-                max_a,
-            } => Color::GrayA { v: min_v, a: min_a }..=Color::GrayA { v: max_v, a: max_a },
 
             Self::Rgb {
                 min_r,
@@ -207,29 +138,6 @@ impl ColorFilter {
                 }
             }
 
-            Self::Rgba {
-                min_r,
-                min_g,
-                min_b,
-                max_r,
-                max_g,
-                max_b,
-                min_a,
-                max_a,
-            } => {
-                Color::Rgba {
-                    r: min_r,
-                    g: min_g,
-                    b: min_b,
-                    a: min_a,
-                }..=Color::Rgba {
-                    r: max_r,
-                    g: max_g,
-                    b: max_b,
-                    a: max_a,
-                }
-            }
-
             Self::Hsv {
                 min_h,
                 max_h,
@@ -246,29 +154,6 @@ impl ColorFilter {
                     h: max_h,
                     s: max_s,
                     v: max_v,
-                }
-            }
-
-            Self::Hsva {
-                min_h,
-                max_h,
-                min_s,
-                max_s,
-                min_v,
-                max_v,
-                min_a,
-                max_a,
-            } => {
-                Color::Hsva {
-                    h: min_h,
-                    s: min_s,
-                    v: min_v,
-                    a: min_a,
-                }..=Color::Hsva {
-                    h: max_h,
-                    s: max_s,
-                    v: max_v,
-                    a: max_a,
                 }
             }
 
@@ -309,29 +194,6 @@ impl ColorFilter {
                     r: max_r,
                 }
             }
-
-            Self::YCbCrA {
-                min_y,
-                max_y,
-                min_b,
-                max_b,
-                min_r,
-                max_r,
-                min_a,
-                max_a,
-            } => {
-                Color::YCbCrA {
-                    y: min_y,
-                    b: min_b,
-                    r: min_r,
-                    a: min_a,
-                }..=Color::YCbCrA {
-                    y: max_y,
-                    b: max_b,
-                    r: max_r,
-                    a: max_a,
-                }
-            }
         }
     }
 }
@@ -349,38 +211,15 @@ pub enum Color {
     Luma {
         l: u8,
     },
-    LumaA {
-        l: u8,
-        a: u8,
-    },
-    Gray {
-        v: u8,
-    },
-    GrayA {
-        v: u8,
-        a: u8,
-    },
     Rgb {
         r: u8,
         g: u8,
         b: u8,
     },
-    Rgba {
-        r: u8,
-        g: u8,
-        b: u8,
-        a: u8,
-    },
     Hsv {
         h: u8,
         s: u8,
         v: u8,
-    },
-    Hsva {
-        h: u8,
-        s: u8,
-        v: u8,
-        a: u8,
     },
     Yuyv {
         y: u8,
@@ -393,43 +232,24 @@ pub enum Color {
         b: u8,
         r: u8,
     },
-    #[serde(rename = "ycca")]
-    YCbCrA {
-        y: u8,
-        b: u8,
-        r: u8,
-        a: u8,
-    },
 }
 impl Color {
     pub fn pixel_format(&self) -> PixelFormat {
         match self {
-            Self::Luma { .. } => PixelFormat::Luma,
-            Self::LumaA { .. } => PixelFormat::LumaA,
-            Self::Gray { .. } => PixelFormat::Gray,
-            Self::GrayA { .. } => PixelFormat::GrayA,
-            Self::Rgb { .. } => PixelFormat::Rgb,
-            Self::Rgba { .. } => PixelFormat::Rgba,
-            Self::Hsv { .. } => PixelFormat::Hsv,
-            Self::Hsva { .. } => PixelFormat::Hsva,
-            Self::YCbCr { .. } => PixelFormat::YCbCr,
-            Self::YCbCrA { .. } => PixelFormat::YCbCrA,
-            Self::Yuyv { .. } => PixelFormat::Yuyv,
+            Self::Luma { .. } => PixelFormat::LUMA,
+            Self::Rgb { .. } => PixelFormat::RGB,
+            Self::Hsv { .. } => PixelFormat::HSV,
+            Self::YCbCr { .. } => PixelFormat::YCC,
+            Self::Yuyv { .. } => PixelFormat::YUYV,
         }
     }
     pub fn bytes(&self) -> ColorBytes {
         match *self {
             Self::Luma { l } => color_bytes![l],
-            Self::LumaA { l, a } => color_bytes![l, a],
-            Self::Gray { v } => color_bytes![v],
-            Self::GrayA { v, a } => color_bytes![v, a],
             Self::Rgb { r, g, b } => color_bytes![r, g, b],
-            Self::Rgba { r, g, b, a } => color_bytes![r, g, b, a],
             Self::Hsv { h, s, v } => color_bytes![h, s, v],
-            Self::Hsva { h, s, v, a } => color_bytes![h, s, v, a],
             Self::Yuyv { y, u, v } => color_bytes![y, u, v],
             Self::YCbCr { y, b, r } => color_bytes![y, b, r],
-            Self::YCbCrA { y, b, r, a } => color_bytes![y, b, r, a],
         }
     }
 }
@@ -437,151 +257,66 @@ impl Display for Color {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Luma { l } => write!(f, "luma({l})"),
-            Self::LumaA { l, a } => write!(f, "lumaa({l}, {a})"),
-            Self::Gray { v } => write!(f, "gray({v})"),
-            Self::GrayA { v, a } => write!(f, "graya({v}, {a})"),
             Self::Rgb { r, g, b } => write!(f, "rgb({r}, {g}, {b})"),
-            Self::Rgba { r, g, b, a } => write!(f, "rgba({r}, {g}, {b}, {a})"),
             Self::Hsv { h, s, v } => write!(f, "hsv({h}, {s}, {v})"),
-            Self::Hsva { h, s, v, a } => write!(f, "hsva({h}, {s}, {v}, {a})"),
             Self::Yuyv { y, u, v } => write!(f, "yuv({y}, {u}, {v})"),
             Self::YCbCr { y, b, r } => write!(f, "ycc({y}, {b}, {r})"),
-            Self::YCbCrA { y, b, r, a } => write!(f, "ycca({y}, {b}, {r}, {a})"),
         }
     }
 }
 
-#[inline(always)]
-fn filter_px<const N: usize>(min: [u8; N], max: [u8; N]) -> impl Fn(&[u8; N], &mut [u8; 1]) {
-    move |from, to| {
-        let matches = min
+/// A [`Broadcast2`] implementor that outputs into a black/white image based on a minimum and maximum channel range
+#[derive(Debug, Clone, Copy)]
+pub struct FilterPixel<'a> {
+    pub min: &'a [u8],
+    pub max: &'a [u8],
+}
+impl<'a> FilterPixel<'a> {
+    #[inline(always)]
+    pub const fn new(min: &'a [u8], max: &'a [u8]) -> Self {
+        Self { min, max }
+    }
+}
+impl Broadcast2<&[u8], &mut [u8], ()> for FilterPixel<'_> {
+    fn sizes(&self) -> [usize; 2] {
+        [self.min.len().min(self.max.len()), 1]
+    }
+    fn run(&mut self, a1: &[u8], a2: &mut [u8]) {
+        self.par_run(a1, a2);
+    }
+}
+impl ParBroadcast2<&[u8], &mut [u8], ()> for FilterPixel<'_> {
+    fn par_run(&self, a1: &[u8], a2: &mut [u8]) {
+        let matches = self
+            .min
             .iter()
-            .zip(&max)
-            .zip(from)
+            .zip(self.max)
+            .zip(a1)
             .all(|((min, max), val)| (min..=max).contains(&val));
-        *to = if matches { [255] } else { [0] };
+        a2[0] = if matches { 255 } else { 0 };
     }
 }
 
 /// Filter an image by color.
 ///
-/// The destination image will have the same dimensions as the source, with a [`Gray`](PixelFormat::Gray) format.
+/// The destination image will have the same dimensions as the source, with a [`LUMA`](PixelFormat::LUMA) format.
 /// A pixel in the range will have a value of 255, and one outside the range will have a value of 0.
-pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilter) {
-    use tracing::subscriber::*;
-    dst.format = PixelFormat::Gray;
+pub fn color_filter(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilter) {
+    dst.format = PixelFormat::LUMA;
     dst.width = src.width;
     dst.height = src.height;
-    dst.resize_data();
-    with_default(NoSubscriber::new(), || {
-        src.convert_inplace(filter.pixel_format())
-    });
-    match filter {
-        ColorFilter::Luma { min_l, max_l } => {
-            par_broadcast2(filter_px([min_l], [max_l]), &src, dst)
-        }
-        ColorFilter::LumaA {
-            min_l,
-            max_l,
-            min_a,
-            max_a,
-        } => par_broadcast2(filter_px([min_l, min_a], [max_l, max_a]), &src, dst),
-        ColorFilter::Gray { min_v, max_v } => {
-            par_broadcast2(filter_px([min_v], [max_v]), &src, dst)
-        }
-        ColorFilter::GrayA {
-            min_v,
-            max_v,
-            min_a,
-            max_a,
-        } => par_broadcast2(filter_px([min_v, min_a], [max_v, max_a]), &src, dst),
-        ColorFilter::Rgb {
-            min_r,
-            min_g,
-            min_b,
-            max_r,
-            max_g,
-            max_b,
-        } => par_broadcast2(
-            filter_px([min_r, min_g, min_b], [max_r, max_g, max_b]),
-            &src,
-            dst,
-        ),
-        ColorFilter::Rgba {
-            min_r,
-            min_g,
-            min_b,
-            max_r,
-            max_g,
-            max_b,
-            min_a,
-            max_a,
-        } => par_broadcast2(
-            filter_px([min_r, min_g, min_b, min_a], [max_r, max_g, max_b, max_a]),
-            &src,
-            dst,
-        ),
-        ColorFilter::Hsv {
-            min_h,
-            min_s,
-            min_v,
-            max_h,
-            max_s,
-            max_v,
-        } => par_broadcast2(
-            filter_px([min_h, min_s, min_v], [max_h, max_s, max_v]),
-            &src,
-            dst,
-        ),
-        ColorFilter::Hsva {
-            min_h,
-            min_s,
-            min_v,
-            max_h,
-            max_s,
-            max_v,
-            min_a,
-            max_a,
-        } => par_broadcast2(
-            filter_px([min_h, min_s, min_v, min_a], [max_h, max_s, max_v, max_a]),
-            &src,
-            dst,
-        ),
-        ColorFilter::YCbCr {
-            min_y,
-            min_b,
-            min_r,
-            max_y,
-            max_b,
-            max_r,
-        } => par_broadcast2(
-            filter_px([min_y, min_b, min_r], [max_y, max_b, max_r]),
-            &src,
-            dst,
-        ),
-        ColorFilter::YCbCrA {
-            min_y,
-            min_b,
-            min_r,
-            max_y,
-            max_b,
-            max_r,
-            min_a,
-            max_a,
-        } => par_broadcast2(
-            filter_px([min_y, min_b, min_r, min_a], [max_y, max_b, max_r, max_a]),
-            &src,
-            dst,
-        ),
-        ColorFilter::Yuyv {
-            min_y,
-            max_y,
-            min_u,
-            max_u,
-            min_v,
-            max_v,
-        } => par_broadcast2(
-            |&[y1, u, y2, v], [a, b]| {
+    src.convert_inplace(filter.pixel_format());
+    if let ColorFilter::Yuyv {
+        min_y,
+        max_y,
+        min_u,
+        max_u,
+        min_v,
+        max_v,
+    } = filter
+    {
+        par_broadcast2(
+            |&[y1, u, y2, v]: &[u8; 4], [a, b]: &mut [u8; 2]| {
                 if u < min_u || u > max_u || v < min_v || v > max_v {
                     *a = 0;
                     *b = 0;
@@ -593,17 +328,15 @@ pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilte
             },
             &src,
             dst,
-        ),
+        )
+    } else {
+        let (min, max) = filter.to_range().into_inner();
+        par_broadcast2(
+            FilterPixel::new(&min.bytes(), &max.bytes()),
+            &src,
+            dst.resize_data(),
+        );
     }
-}
-
-/// Filter an image by color, returning a new image.
-///
-/// This is the same as [`filter_into`], but it returns a new buffer.
-pub fn filter(src: Buffer<'_>, filter: ColorFilter) -> Buffer<'static> {
-    let mut dst = Buffer::empty_rgb();
-    filter_into(src, &mut dst, filter);
-    dst
 }
 
 /// A contiguous blob of color in an image—a bounding rectangle and number of contained pixels.
@@ -993,7 +726,7 @@ pub fn percentile_filter(
 ) {
     assert_ne!(
         src.format,
-        PixelFormat::Yuyv,
+        PixelFormat::YUYV,
         "Percentile filtering isn't implemented for YUYV images"
     );
     assert!(width & 1 == 1, "Window width must be an odd number");
@@ -1009,7 +742,7 @@ pub fn percentile_filter(
     if width == 1 && height == 1 {
         data.copy_from_slice(&src.data);
     }
-    let pxlen = src.format.pixel_size() as usize;
+    let pxlen = src.format.pixel_size();
     let buf_len = width * height;
     let buf_width = src.width as usize;
     let buf_height = src.height as usize;
@@ -1049,7 +782,7 @@ pub fn percentile_filter(
 pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usize) {
     assert_ne!(
         src.format,
-        PixelFormat::Yuyv,
+        PixelFormat::YUYV,
         "Box blurring isn't implemented for YUYV images"
     );
     assert!(width & 1 == 1, "Window width must be an odd number");
@@ -1064,7 +797,7 @@ pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usi
     if src.width == 0 || src.height == 0 {
         return;
     }
-    let pxlen = src.format.pixel_size() as usize;
+    let pxlen = src.format.pixel_size();
     let buf_len = width * height;
     let buf_width = src.width as usize;
     let buf_height = src.height as usize;
@@ -1090,4 +823,102 @@ pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usi
             }
         },
     );
+}
+
+/// A [`Broadcast2`] implementor that reorders the channels of an image
+#[derive(Debug, Clone, Copy)]
+pub struct Swizzle<'a> {
+    pub num_in: u8,
+    pub extract: &'a [u8],
+}
+impl<'a> Swizzle<'a> {
+    pub const fn new(num_in: u8, extract: &'a [u8]) -> Self {
+        Self { num_in, extract }
+    }
+}
+impl Broadcast2<&[u8], &mut [u8], ()> for Swizzle<'_> {
+    fn sizes(&self) -> [usize; 2] {
+        [self.num_in as _, self.extract.len()]
+    }
+    fn run(&mut self, a1: &[u8], a2: &mut [u8]) {
+        self.par_run(a1, a2);
+    }
+}
+impl ParBroadcast2<&[u8], &mut [u8], ()> for Swizzle<'_> {
+    fn par_run(&self, a1: &[u8], a2: &mut [u8]) {
+        for (from, to) in self.extract.iter().zip(a2) {
+            *to = a1.get(*from as usize).copied().unwrap_or(0);
+        }
+    }
+}
+
+/// A [`Broadcast2`] implementor that reorders the channels in an image, with the input format being YUYV 4:2:2
+#[derive(Debug, Clone, Copy)]
+pub struct YuyvSwizzle<'a> {
+    pub extract: &'a [u8],
+}
+impl<'a> YuyvSwizzle<'a> {
+    pub const fn new(extract: &'a [u8]) -> Self {
+        Self { extract }
+    }
+}
+impl Broadcast2<&[u8], &mut [u8], ()> for YuyvSwizzle<'_> {
+    fn sizes(&self) -> [usize; 2] {
+        [4, self.extract.len() * 2]
+    }
+    fn run(&mut self, a1: &[u8], a2: &mut [u8]) {
+        self.par_run(a1, a2);
+    }
+}
+impl ParBroadcast2<&[u8], &mut [u8], ()> for YuyvSwizzle<'_> {
+    fn par_run(&self, a1: &[u8], a2: &mut [u8]) {
+        let mut yuyv = [0; 4];
+        yuyv.copy_from_slice(a1);
+        let [y1, u, y2, v] = yuyv;
+        let (px1, px2) = a2.split_at_mut(self.extract.len());
+        for ((from, to1), to2) in self.extract.iter().zip(px1).zip(px2) {
+            match *from {
+                0 => {
+                    *to1 = y1;
+                    *to2 = y2;
+                }
+                1 => {
+                    *to1 = u;
+                    *to2 = u;
+                }
+                2 => {
+                    *to1 = v;
+                    *to2 = v;
+                }
+                _ => {
+                    *to1 = 0;
+                    *to2 = 0;
+                }
+            }
+        }
+    }
+}
+
+/// Reorder the channels in an image
+pub fn swizzle(src: Buffer<'_>, dst: &mut Buffer<'_>, extract: &[u8]) {
+    let Some(fmt) = extract.len().try_into().ok().and_then(PixelFormat::anon) else {
+        panic!(
+            "Swizzling needs to extract into 1..={} channels, got {}",
+            PixelFormat::MAX_ANON,
+            extract.len()
+        );
+    };
+    dst.format = fmt;
+    dst.width = src.width;
+    dst.height = src.height;
+    let data = dst.resize_data();
+    if src.format == PixelFormat::YUYV {
+        par_broadcast2(YuyvSwizzle::new(extract), &src, data);
+    } else {
+        par_broadcast2(
+            Swizzle::new(src.format.pixel_size() as _, extract),
+            &src,
+            data,
+        );
+    }
 }
