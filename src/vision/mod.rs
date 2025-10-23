@@ -265,7 +265,7 @@ impl Display for Color {
     }
 }
 
-/// A [`Broadcast2`] implementor that outputs into a black/white image based
+/// A [`Broadcast2`] implementor that outputs into a black/white image based on a minimum and maximum channel range
 #[derive(Debug, Clone, Copy)]
 pub struct FilterPixel<'a> {
     pub min: &'a [u8],
@@ -299,9 +299,9 @@ impl ParBroadcast2<&[u8], &mut [u8], ()> for FilterPixel<'_> {
 
 /// Filter an image by color.
 ///
-/// The destination image will have the same dimensions as the source, with a [`Gray`](PixelFormat::Gray) format.
+/// The destination image will have the same dimensions as the source, with a [`LUMA`](PixelFormat::LUMA) format.
 /// A pixel in the range will have a value of 255, and one outside the range will have a value of 0.
-pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilter) {
+pub fn color_filter(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilter) {
     dst.format = PixelFormat::LUMA;
     dst.width = src.width;
     dst.height = src.height;
@@ -337,15 +337,6 @@ pub fn filter_into(mut src: Buffer<'_>, dst: &mut Buffer<'_>, filter: ColorFilte
             dst.resize_data(),
         );
     }
-}
-
-/// Filter an image by color, returning a new image.
-///
-/// This is the same as [`filter_into`], but it returns a new buffer.
-pub fn filter(src: Buffer<'_>, filter: ColorFilter) -> Buffer<'static> {
-    let mut dst = Buffer::empty_rgb();
-    filter_into(src, &mut dst, filter);
-    dst
 }
 
 /// A contiguous blob of color in an image—a bounding rectangle and number of contained pixels.
@@ -861,7 +852,7 @@ impl ParBroadcast2<&[u8], &mut [u8], ()> for Swizzle<'_> {
     }
 }
 
-/// A [`Broadcast2`] implementor that reorders the channels in an image, with the input format being YUVY 4:2:2
+/// A [`Broadcast2`] implementor that reorders the channels in an image, with the input format being YUYV 4:2:2
 #[derive(Debug, Clone, Copy)]
 pub struct YuyvSwizzle<'a> {
     pub extract: &'a [u8],

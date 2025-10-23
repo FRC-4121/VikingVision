@@ -1,5 +1,5 @@
 //! All of these conversion functions take an input and output array and can be used directly with [`broadcast2`](crate::broadcast::broadcast2) and [`par_broadcast2`](crate::broadcast::par_broadcast2).
-//! All functions have the convention of `<input format>2<output format>``, with `i` being used as a function prefix for in-place operations.
+//! All functions have the convention of `<input format>2<output format>`, with `i` being used as a function prefix for in-place operations.
 //! Note that any YUYV conversions need two pixels to operate on rather than just one.
 
 use std::cmp::Ordering;

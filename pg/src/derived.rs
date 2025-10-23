@@ -89,7 +89,7 @@ impl DerivedFrame {
                 from.convert_into(&mut self.frame);
             }
             Transform::ColorFilter(FilterKind::Space(filter)) => {
-                filter_into(from, &mut self.frame, filter);
+                color_filter(from, &mut self.frame, filter);
             }
             Transform::ColorFilter(FilterKind::Anon { ref min, ref max }) => {
                 self.frame.width = from.width;

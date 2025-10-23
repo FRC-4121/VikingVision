@@ -69,7 +69,8 @@ impl Component for ColorFilterComponent {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
-        let filtered = filter(img.borrow(), self.filter);
+        let mut filtered = Buffer::empty(PixelFormat::LUMA);
+        color_filter(img.borrow(), &mut filtered, self.filter);
         context.submit("", filtered);
     }
 }

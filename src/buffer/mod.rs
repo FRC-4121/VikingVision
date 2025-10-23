@@ -638,7 +638,7 @@ impl<'a> Buffer<'a> {
     }
     /// Get the slice of data for a single pixel.
     ///
-    /// Note that for YUVY images, it returns the pair of pixels that share the data.
+    /// Note that for YUYV images, it returns the pair of pixels that share the data.
     pub fn pixel(&self, mut x: u32, y: u32) -> Option<&[u8]> {
         if self.format == PixelFormat::YUYV {
             x &= !1;
@@ -660,7 +660,7 @@ impl<'a> Buffer<'a> {
     }
     /// Get the mutable slice of data for a single pixel.
     ///
-    /// Note that for YUVY images, it returns the pair of pixels that share the data.
+    /// Note that for YUYV images, it returns the pair of pixels that share the data.
     pub fn pixel_mut(&mut self, mut x: u32, y: u32) -> Option<&mut [u8]> {
         if self.format == PixelFormat::YUYV {
             x &= !1;
