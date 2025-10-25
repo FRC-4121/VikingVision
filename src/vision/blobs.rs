@@ -204,13 +204,18 @@ fn queue_front(remaining: usize, new_min: u32, incomplete: &mut VecDeque<BlobWit
             false
         } else {
             let idx = search(&front[1..], new_min);
-            if idx < front.len() - 1 {
-                front[..idx].rotate_left(1);
-                idx > 0
+            if idx + 1 < front.len() {
+                idx > 1 && {
+                    front[..idx].rotate_left(1);
+                    true
+                }
             } else {
                 let slice = &mut back[..(remaining - front.len())];
                 let idx = search(slice, new_min);
                 if idx == 0 {
+                    if front.len() < 2 {
+                        return false;
+                    }
                     front.rotate_left(1);
                 } else {
                     std::mem::swap(&mut slice[0], &mut front[0]);
