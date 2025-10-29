@@ -155,12 +155,7 @@ impl Component for BlobComponent {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
-        let px = img.format.pixel_size();
-        let pixels = img
-            .data
-            .chunks(img.width as usize * px)
-            .map(|r| r.chunks(px).map(|c| c.iter().any(|p| *p > 0)));
-        let blobs = BlobsIterator::new(pixels);
+        let blobs = BlobsIterator::from_buffer(&img);
         let collect = context.listening("");
         let stream = context.listening("elem");
         let mut vec = Vec::new();

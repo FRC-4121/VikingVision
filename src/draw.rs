@@ -229,16 +229,18 @@ impl Drawable for Blob {
                 let row_start = width * y as usize;
                 let start = row_start + start;
                 let end = row_start + end;
-                let Some(px) = data.get_mut((start * w)..((start + 1) * w)) else {
+                let start2 = (start + 1) * w;
+                let end2 = (end - 1) * w;
+                let Some(px) = data.get_mut((start * w)..start2) else {
                     return;
                 };
                 px.copy_from_slice(color);
-                let Some(px) = data.get_mut(((end - 1) * w)..(end * w)) else {
+                let Some(px) = data.get_mut(end2..(end * w)) else {
                     return;
                 };
                 px.copy_from_slice(color);
-                if fill > 0.0 {
-                    let row = &mut data[((start + 1) * w)..((end - 1) * w)];
+                if start2 < end2 && fill > 0.0 {
+                    let row = &mut data[start2..end2];
                     for chunk in row.chunks_exact_mut(w) {
                         if fill == 1.0 {
                             chunk.copy_from_slice(color);

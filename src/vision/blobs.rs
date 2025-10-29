@@ -3,6 +3,58 @@ use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
 
+fn filter_pixel(v: &[u8]) -> bool {
+    v.iter().any(|&v| v > 0)
+}
+
+/// An iterator over the pixels in a row, mapped so that all-zero pixels give false and all others give true.
+#[derive(Clone)]
+pub struct FilterRow<'a>(std::slice::Chunks<'a, u8>);
+impl Iterator for FilterRow<'_> {
+    type Item = bool;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(filter_pixel)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+impl ExactSizeIterator for FilterRow<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+impl FusedIterator for FilterRow<'_> {}
+impl DoubleEndedIterator for FilterRow<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(filter_pixel)
+    }
+}
+
+/// A 2D iterator over the pixels in an image, suitable to pass into [`BlobsIterator`].
+#[derive(Clone)]
+pub struct PixelsIterator<'a>(std::slice::Chunks<'a, u8>, usize);
+impl<'a> Iterator for PixelsIterator<'a> {
+    type Item = FilterRow<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|r| FilterRow(r.chunks(self.1)))
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+impl ExactSizeIterator for PixelsIterator<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+impl FusedIterator for PixelsIterator<'_> {}
+impl DoubleEndedIterator for PixelsIterator<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(|r| FilterRow(r.chunks(self.1)))
+    }
+}
+
 /// A contiguous blob of color in an image—a bounding rectangle and number of contained pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Blob {
@@ -86,16 +138,15 @@ impl BlobWithBottom {
     }
     /// Try to absorb this new span into the current blob
     fn eat(&mut self, min: u32, max: u32, y: u32, do_absorb: bool) -> EatState {
-        let mut seen_curr = false;
-        for _ in 0..self.ranges.len() {
-            let (rmin, rmax, curr) = self.ranges[0];
-            if curr {
-                seen_curr = true;
+        let mul = !do_absorb as usize;
+        for i in 0..self.ranges.len() {
+            let (rmin, rmax, new) = self.ranges[i * mul]; // get the ith element if we aren't absorbing, or 0 if we are
+            if new {
+                break;
             }
             if rmax < min {
-                if curr {
-                    self.ranges.rotate_left(1);
-                } else {
+                // this range is entirely before the range we want to absorb
+                if do_absorb {
                     self.ranges.remove(0);
                 }
                 continue;
@@ -109,25 +160,25 @@ impl BlobWithBottom {
             }
             return EatState::Absorbed;
         }
-        if seen_curr {
-            if do_absorb {
-                self.ranges.retain_mut(|(_, _, v)| std::mem::take(v));
+        match self.ranges.first() {
+            None => EatState::Return,
+            Some((_, _, false)) => EatState::QueueFront,
+            Some((_, _, true)) => {
+                assert!(do_absorb);
+                for r in &mut self.ranges {
+                    r.2 = false;
+                }
+                EatState::QueueBack
             }
-            return EatState::QueueBack;
-        }
-        if self.ranges.iter().any(|x| x.2) {
-            if do_absorb {
-                self.ranges.retain_mut(|(_, _, v)| std::mem::take(v));
-            }
-            EatState::QueueBack
-        } else {
-            EatState::Return
         }
     }
 }
 
+/// Search for the position to insert a blob
+///
+/// This uses a linear search for small slices and a binary search for bigger ones. The threshold is currently 16 elements
 fn search(slice: &[BlobWithBottom], min: u32) -> usize {
-    if slice.len() > 4 {
+    if slice.len() > 16 {
         slice
             .binary_search_by_key(&min, |b| b.ranges[0].0)
             .unwrap_err()
@@ -144,26 +195,39 @@ fn queue_front(remaining: usize, new_min: u32, incomplete: &mut VecDeque<BlobWit
     if remaining > 1 {
         let (front, back) = incomplete.as_mut_slices();
         if let Some(slice) = front.get_mut(..remaining) {
-            let idx = search(&slice[1..], new_min);
-            if idx > 0 {
+            // the draining queue is entirely in the first slice
+            let idx = search(&slice[1..], new_min); // skip the first element
+            idx > 1 && {
+                // if we aren't already sorted, rotate those elements
+                // idx returned an inclusive index in the slice without the first element, which is the same as an exclusive index in the slide with the first
                 slice[..idx].rotate_left(1);
-                return true;
+                true
             }
-            false
         } else {
             let idx = search(&front[1..], new_min);
-            if idx < front.len() - 1 {
-                front[..idx].rotate_left(1);
-                idx > 0
+            if idx + 1 < front.len() {
+                idx > 1 && {
+                    front[..idx].rotate_left(1);
+                    true
+                }
             } else {
                 let slice = &mut back[..(remaining - front.len())];
                 let idx = search(slice, new_min);
                 if idx == 0 {
+                    if front.len() < 2 {
+                        return false;
+                    }
+                    // the element belongs before the start of the second slice, but after all of the elements in the first, i.e. it should be the last in the first slice
                     front.rotate_left(1);
                 } else {
+                    // move the element from the first slice to the second, rotate the new first element of the front slice, and then rotate the back slice
                     std::mem::swap(&mut slice[0], &mut front[0]);
                     front.rotate_left(1);
-                    slice[..idx].rotate_left(1);
+                    if idx == slice.len() {
+                        slice.rotate_left(1);
+                    } else {
+                        slice[..=idx].rotate_left(1);
+                    }
                 }
                 true
             }
@@ -247,14 +311,15 @@ impl BlobsInRowState {
                                         match b2.eat(min, max, self.y, false) {
                                             EatState::Absorbed => {
                                                 blob.blob.absorb(b2.blob);
-                                                let point = blob.ranges.partition_point(|x| x.2);
+                                                let point = blob.ranges.partition_point(|x| !x.2);
+                                                let mut idx = point;
                                                 blob.ranges.insert_many(
                                                     point,
-                                                    b2.ranges.drain_filter(|x| !x.2),
+                                                    b2.ranges
+                                                        .drain_filter(|x| !x.2)
+                                                        .inspect(|_| idx += 1),
                                                 );
-                                                let idx = blob.ranges.len();
-                                                blob.ranges
-                                                    .extend(b2.ranges.into_iter().filter(|x| x.2));
+                                                blob.ranges.append(&mut b2.ranges);
                                                 blob.ranges[idx..].sort_unstable_by_key(|r| r.0);
                                                 self.remaining -= 1;
                                             }
@@ -270,9 +335,7 @@ impl BlobsInRowState {
                                                     break;
                                                 }
                                             }
-                                            EatState::QueueBack | EatState::Return => {
-                                                unreachable!()
-                                            }
+                                            st => panic!("unexpected blob: {b2:?}, state: {st:?}"),
                                         }
                                     }
                                     incomplete.push_front(blob);
@@ -353,6 +416,20 @@ impl<I: Iterator<Item: IntoIterator>> BlobsIterator<I> {
             incomplete: VecDeque::new(),
             y: 0,
         }
+    }
+}
+impl<'a> BlobsIterator<PixelsIterator<'a>> {
+    /// Create an iterator over the blobs in an image from raw image data, width, and pixel size
+    pub fn from_slice(data: &'a [u8], width: usize, pixel_size: usize) -> Self {
+        Self::new(PixelsIterator(data.chunks(width * pixel_size), pixel_size))
+    }
+    /// Create an iterator over the blobs in an image from a buffer
+    pub fn from_buffer(buffer: &'a super::Buffer<'_>) -> Self {
+        Self::from_slice(
+            &buffer.data,
+            buffer.width as usize,
+            buffer.format.pixel_size(),
+        )
     }
 }
 impl<I: Iterator<Item: IntoIterator<Item = bool>>> Iterator for BlobsIterator<I> {
