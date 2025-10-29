@@ -223,7 +223,11 @@ fn queue_front(remaining: usize, new_min: u32, incomplete: &mut VecDeque<BlobWit
                     // move the element from the first slice to the second, rotate the new first element of the front slice, and then rotate the back slice
                     std::mem::swap(&mut slice[0], &mut front[0]);
                     front.rotate_left(1);
-                    slice[..=idx].rotate_left(1);
+                    if idx == slice.len() {
+                        slice.rotate_left(1);
+                    } else {
+                        slice[..=idx].rotate_left(1);
+                    }
                 }
                 true
             }
