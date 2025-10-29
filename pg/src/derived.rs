@@ -12,6 +12,11 @@ use viking_vision::vision::*;
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[inline(always)]
+fn default_color() -> [u8; 3] {
+    [0, 0, 255]
+}
+
 #[derive(Serialize, Deserialize)]
 enum FilterKind {
     Space(ColorFilter),
@@ -39,6 +44,7 @@ enum Transform {
         min_height: u32,
         min_area: u64,
         min_fill: f64,
+        color: [u8; 3],
     },
     #[cfg(feature = "apriltag")]
     Apriltag {
@@ -46,7 +52,9 @@ enum Transform {
         max_threads: u8,
         sigma: f32,
         decimate: f32,
+        #[serde(skip)]
         changed: bool,
+        color: [u8; 3],
     },
 }
 
@@ -124,6 +132,7 @@ impl DerivedFrame {
                 min_height,
                 min_area,
                 min_fill,
+                color,
             } => {
                 original.convert_into(&mut self.frame);
                 for blob in BlobsIterator::from_buffer(&from) {
@@ -134,7 +143,7 @@ impl DerivedFrame {
                     {
                         continue;
                     }
-                    blob.draw(&[255, 0, 0], &mut self.frame);
+                    blob.draw(&color, &mut self.frame);
                 }
             }
             #[cfg(feature = "apriltag")]
@@ -144,6 +153,7 @@ impl DerivedFrame {
                 sigma,
                 decimate,
                 ref mut changed,
+                color,
             } => {
                 original.convert_into(&mut self.frame);
                 let detector = self.detector.get_or_insert_with(|| {
@@ -164,7 +174,7 @@ impl DerivedFrame {
                     self.last_families.extend(families.iter().map(|f| f.family));
                 }
                 for detection in detector.detect(from) {
-                    detection.draw(&[255, 0, 0], &mut self.frame);
+                    detection.draw(&color, &mut self.frame);
                 }
             }
         }
@@ -321,6 +331,7 @@ pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<D
                         min_height: 50,
                         min_area: 0,
                         min_fill: 0.0,
+                        color: default_color(),
                     },
                     id,
                 )
@@ -337,6 +348,7 @@ pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<D
                         sigma: 2.0,
                         decimate: 0.0,
                         changed: false,
+                        color: default_color(),
                     },
                     id,
                 )
@@ -625,6 +637,7 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         min_height,
                         min_area,
                         min_fill,
+                        color,
                     } => {
                         changed |= ui
                             .add(
@@ -650,6 +663,10 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         changed |= ui
                             .add(egui::Slider::new(min_fill, 0.0..=1.0).text("Min Fill"))
                             .changed();
+                        ui.horizontal(|ui| {
+                            ui.color_edit_button_srgb(color);
+                            ui.label("Draw Color");
+                        });
                     }
                     #[cfg(feature = "apriltag")]
                     Transform::Apriltag {
@@ -659,6 +676,7 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         sigma,
                         decimate,
                         changed: at_changed,
+                        color,
                     } => {
                         let threads =
                             std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
@@ -677,6 +695,10 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         changed |= ui
                             .add(egui::Slider::new(decimate, 0.0..=10.0).text("Decimate"))
                             .changed();
+                        ui.horizontal(|ui| {
+                            ui.color_edit_button_srgb(color);
+                            ui.label("Draw Color");
+                        });
                         *at_changed = changed;
                     }
                 }
