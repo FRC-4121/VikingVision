@@ -1,4 +1,25 @@
 use super::*;
+use std::time::{Duration, Instant};
+
+#[track_caller]
+fn assert_timeout<R: Send + 'static, F: FnOnce() -> R + Send + 'static>(
+    timeout: Duration,
+    f: F,
+) -> R {
+    let end = Instant::now() + timeout;
+    let handle = std::thread::spawn(f);
+    loop {
+        if handle.is_finished() {
+            return handle
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+        }
+        if Instant::now() > end {
+            panic!("Test took more than {timeout:?} to finish");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
 
 mod blob {
     use super::*;
@@ -171,6 +192,61 @@ mod blob {
                 },
             ]
         )
+    }
+
+    static FERRIS: &[u8] = include_bytes!("data/ferris.png");
+
+    #[test]
+    fn ferris_1() {
+        let img = Buffer::decode_png_data(FERRIS).unwrap();
+        let mut buf = Buffer::empty_rgb();
+        swizzle(img.borrow(), &mut buf, &[2]); // blue channel, just the eyes
+        let blobs = assert_timeout(Duration::from_millis(100), move || {
+            BlobsIterator::from_buffer(&buf)
+                .filter(|b| b.width() >= 10 && b.height() >= 10)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            blobs,
+            [
+                Blob {
+                    min_x: 256,
+                    max_x: 283,
+                    min_y: 150,
+                    max_y: 183,
+                    pixels: 542
+                },
+                Blob {
+                    min_x: 177,
+                    max_x: 202,
+                    min_y: 150,
+                    max_y: 185,
+                    pixels: 568
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn ferris_2() {
+        let img = Buffer::decode_png_data(FERRIS).unwrap();
+        let mut buf = Buffer::empty_rgb();
+        swizzle(img.borrow(), &mut buf, &[3]); // alpha channel, all of ferris
+        let blobs = assert_timeout(Duration::from_millis(100), move || {
+            BlobsIterator::from_buffer(&buf)
+                .filter(|b| b.width() >= 100 && b.height() >= 100)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            blobs,
+            [Blob {
+                min_x: 14,
+                max_x: 446,
+                min_y: 13,
+                max_y: 295,
+                pixels: 64969
+            }]
+        );
     }
 }
 mod window {
