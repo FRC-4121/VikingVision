@@ -197,7 +197,7 @@ fn queue_front(remaining: usize, new_min: u32, incomplete: &mut VecDeque<BlobWit
         if let Some(slice) = front.get_mut(..remaining) {
             // the draining queue is entirely in the first slice
             let idx = search(&slice[1..], new_min); // skip the first element
-            idx > 0 && {
+            idx > 1 && {
                 // if we aren't already sorted, rotate those elements
                 // idx returned an inclusive index in the slice without the first element, which is the same as an exclusive index in the slide with the first
                 slice[..idx].rotate_left(1);
