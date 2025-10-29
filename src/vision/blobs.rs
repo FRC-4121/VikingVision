@@ -311,7 +311,7 @@ impl BlobsInRowState {
                                         match b2.eat(min, max, self.y, false) {
                                             EatState::Absorbed => {
                                                 blob.blob.absorb(b2.blob);
-                                                let point = blob.ranges.partition_point(|x| x.2);
+                                                let point = blob.ranges.partition_point(|x| !x.2);
                                                 let mut idx = point;
                                                 blob.ranges.insert_many(
                                                     point,
@@ -319,7 +319,7 @@ impl BlobsInRowState {
                                                         .drain_filter(|x| !x.2)
                                                         .inspect(|_| idx += 1),
                                                 );
-                                                blob.ranges.extend(b2.ranges);
+                                                blob.ranges.append(&mut b2.ranges);
                                                 blob.ranges[idx..].sort_unstable_by_key(|r| r.0);
                                                 self.remaining -= 1;
                                             }

@@ -244,7 +244,7 @@ mod blob {
                 max_x: 446,
                 min_y: 13,
                 max_y: 295,
-                pixels: 64969
+                pixels: 63627
             }]
         );
     }
