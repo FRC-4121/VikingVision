@@ -138,16 +138,15 @@ impl BlobWithBottom {
     }
     /// Try to absorb this new span into the current blob
     fn eat(&mut self, min: u32, max: u32, y: u32, do_absorb: bool) -> EatState {
-        let mut seen_curr = false;
-        for _ in 0..self.ranges.len() {
-            let (rmin, rmax, curr) = self.ranges[0];
-            if curr {
-                seen_curr = true;
+        let mul = !do_absorb as usize;
+        for i in 0..self.ranges.len() {
+            let (rmin, rmax, new) = self.ranges[i * mul]; // get the ith element if we aren't absorbing, or 0 if we are
+            if new {
+                break;
             }
             if rmax < min {
-                if curr {
-                    self.ranges.rotate_left(1);
-                } else {
+                // this range is entirely before the range we want to absorb
+                if do_absorb {
                     self.ranges.remove(0);
                 }
                 continue;
@@ -161,25 +160,25 @@ impl BlobWithBottom {
             }
             return EatState::Absorbed;
         }
-        if seen_curr {
-            if do_absorb {
-                self.ranges.retain_mut(|(_, _, v)| std::mem::take(v));
+        match self.ranges.first() {
+            None => EatState::Return,
+            Some((_, _, false)) => EatState::QueueFront,
+            Some((_, _, true)) => {
+                assert!(do_absorb);
+                for r in &mut self.ranges {
+                    r.2 = false;
+                }
+                EatState::QueueBack
             }
-            return EatState::QueueBack;
-        }
-        if self.ranges.iter().any(|x| x.2) {
-            if do_absorb {
-                self.ranges.retain_mut(|(_, _, v)| std::mem::take(v));
-            }
-            EatState::QueueBack
-        } else {
-            EatState::Return
         }
     }
 }
 
+/// Search for the position to insert a blob
+///
+/// This uses a linear search for small slices and a binary search for bigger ones. The threshold is currently 16 elements
 fn search(slice: &[BlobWithBottom], min: u32) -> usize {
-    if slice.len() > 4 {
+    if slice.len() > 16 {
         slice
             .binary_search_by_key(&min, |b| b.ranges[0].0)
             .unwrap_err()
@@ -196,12 +195,14 @@ fn queue_front(remaining: usize, new_min: u32, incomplete: &mut VecDeque<BlobWit
     if remaining > 1 {
         let (front, back) = incomplete.as_mut_slices();
         if let Some(slice) = front.get_mut(..remaining) {
-            let idx = search(&slice[1..], new_min);
-            if idx > 0 {
+            // the draining queue is entirely in the first slice
+            let idx = search(&slice[1..], new_min); // skip the first element
+            idx > 0 && {
+                // if we aren't already sorted, rotate those elements
+                // idx returned an inclusive index in the slice without the first element, which is the same as an exclusive index in the slide with the first
                 slice[..idx].rotate_left(1);
-                return true;
+                true
             }
-            false
         } else {
             let idx = search(&front[1..], new_min);
             if idx + 1 < front.len() {
@@ -216,11 +217,13 @@ fn queue_front(remaining: usize, new_min: u32, incomplete: &mut VecDeque<BlobWit
                     if front.len() < 2 {
                         return false;
                     }
+                    // the element belongs before the start of the second slice, but after all of the elements in the first, i.e. it should be the last in the first slice
                     front.rotate_left(1);
                 } else {
+                    // move the element from the first slice to the second, rotate the new first element of the front slice, and then rotate the back slice
                     std::mem::swap(&mut slice[0], &mut front[0]);
                     front.rotate_left(1);
-                    slice[..idx].rotate_left(1);
+                    slice[..=idx].rotate_left(1);
                 }
                 true
             }
@@ -305,13 +308,14 @@ impl BlobsInRowState {
                                             EatState::Absorbed => {
                                                 blob.blob.absorb(b2.blob);
                                                 let point = blob.ranges.partition_point(|x| x.2);
+                                                let mut idx = point;
                                                 blob.ranges.insert_many(
                                                     point,
-                                                    b2.ranges.drain_filter(|x| !x.2),
+                                                    b2.ranges
+                                                        .drain_filter(|x| !x.2)
+                                                        .inspect(|_| idx += 1),
                                                 );
-                                                let idx = blob.ranges.len();
-                                                blob.ranges
-                                                    .extend(b2.ranges.into_iter().filter(|x| x.2));
+                                                blob.ranges.extend(b2.ranges);
                                                 blob.ranges[idx..].sort_unstable_by_key(|r| r.0);
                                                 self.remaining -= 1;
                                             }
@@ -327,9 +331,7 @@ impl BlobsInRowState {
                                                     break;
                                                 }
                                             }
-                                            EatState::QueueBack | EatState::Return => {
-                                                unreachable!()
-                                            }
+                                            st => panic!("unexpected blob: {b2:?}, state: {st:?}"),
                                         }
                                     }
                                     incomplete.push_front(blob);
