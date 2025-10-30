@@ -9,18 +9,108 @@ use std::ops::Deref;
 use std::sync::LazyLock;
 use supply::prelude::*;
 
-#[derive(Debug)]
-pub(crate) struct InputTree {
+#[derive(Debug, Clone)]
+pub struct InputTree {
     pub vals: SmallVec<[Arc<dyn Data>; 2]>,
     pub next: Vec<Option<InputTree>>,
-    pub remaining_inputs: u32,
-    pub remaining_finish: u32,
+    pub(crate) remaining_inputs: u32,
+    pub(crate) remaining_finish: u32,
     pub iter: u32,
-    pub prev_done: bool,
+    pub(crate) prev_done: bool,
+}
+impl Data for InputTree {}
+impl InputTree {
+    /// Iterate over the values in a certain input index in this tree.
+    pub fn iter(&self, idx: InputIndex) -> InputIterator<'_> {
+        let mut vec = Vec::with_capacity(idx.0 as usize + 1);
+        vec.push((self, 0));
+        InputIterator { vec, target: idx }
+    }
+    /// Iterate over the values in a certain input index, along with the corresponding [`RunId`] for those values.
+    ///
+    /// Since the IDs are stored as a prefix tree, the run ID of this component must be passed in order to get correct IDs.
+    pub fn indexed_iter(&self, idx: InputIndex, relative: RunId) -> IndexedInputIterator<'_> {
+        let mut vec = Vec::with_capacity(idx.0 as usize + 1);
+        vec.push((self, 0));
+        IndexedInputIterator {
+            vec,
+            target: idx,
+            index: relative.0,
+        }
+    }
+}
+
+/// Pop a value from the stack and increment the previous index
+fn pop<'a>(vec: &mut Vec<(&'a InputTree, usize)>) -> Option<&'a InputTree> {
+    let v = vec.pop().map(|(t, _)| t);
+    if let Some((_, back)) = vec.last_mut() {
+        *back += 1;
+    }
+    v
+}
+
+/// The iterator returned from [`InputTree::iter`]
+#[derive(Debug, Clone)]
+pub struct InputIterator<'a> {
+    vec: Vec<(&'a InputTree, usize)>,
+    target: InputIndex,
+}
+impl<'a> Iterator for InputIterator<'a> {
+    type Item = &'a Arc<dyn Data>;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.vec.len() == self.target.0 as usize + 1 {
+                let tree = pop(&mut self.vec).unwrap();
+                if let Some(input) = tree.vals.get(self.target.1 as usize) {
+                    return Some(input);
+                }
+            }
+            let (tree, idx) = self.vec.last_mut()?;
+            match tree.next.get(*idx) {
+                None => drop(pop(&mut self.vec)),
+                Some(None) => *idx += 1,
+                Some(Some(tree)) => self.vec.push((tree, 0)),
+            }
+        }
+    }
+}
+
+/// The iterator returned from [`InputTree::indexed_iter`]
+#[derive(Debug, Clone)]
+pub struct IndexedInputIterator<'a> {
+    vec: Vec<(&'a InputTree, usize)>,
+    target: InputIndex,
+    index: SmallVec<[u32; 2]>,
+}
+impl<'a> Iterator for IndexedInputIterator<'a> {
+    type Item = (&'a Arc<dyn Data>, RunId);
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.vec.len() == self.target.0 as usize + 1 {
+                let tree = pop(&mut self.vec).unwrap();
+                self.index.pop();
+                if let Some(input) = tree.vals.get(self.target.1 as usize) {
+                    return Some((input, RunId(self.index.clone())));
+                }
+            }
+            let (tree, idx) = self.vec.last_mut()?;
+            match tree.next.get(*idx) {
+                None => {
+                    pop(&mut self.vec);
+                    self.index.pop();
+                }
+                Some(None) => *idx += 1,
+                Some(Some(tree)) => {
+                    self.index.push(tree.iter);
+                    self.vec.push((tree, 0));
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct InputIndex(pub u32, pub u32);
+pub struct InputIndex(pub u32, pub u32);
 
 #[derive(Debug, Default)]
 pub(crate) struct MutableData {
