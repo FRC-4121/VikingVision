@@ -1,3 +1,4 @@
+use super::runner::BroadcastMode;
 use super::{prelude::*, *};
 use litemap::LiteMap;
 use smallvec::SmallVec;
@@ -257,6 +258,7 @@ enum InputKind {
     Multiple {
         single: Vec<(SmolStr, GraphComponentChannel)>,
         multi: Option<MultiData>,
+        broadcast: BroadcastMode,
     },
 }
 
@@ -435,6 +437,23 @@ impl PipelineGraph {
                     .map(|v| (v, GraphComponentChannel::PLACEHOLDER))
                     .collect(),
                 multi: None,
+                broadcast: BroadcastMode::Broadcast,
+            },
+            Inputs::MinTree(i) => InputKind::Multiple {
+                single: i
+                    .into_iter()
+                    .map(|v| (v, GraphComponentChannel::PLACEHOLDER))
+                    .collect(),
+                multi: None,
+                broadcast: BroadcastMode::MinTree(0),
+            },
+            Inputs::FullTree(i) => InputKind::Multiple {
+                single: i
+                    .into_iter()
+                    .map(|v| (v, GraphComponentChannel::PLACEHOLDER))
+                    .collect(),
+                multi: None,
+                broadcast: BroadcastMode::FullTree,
             },
         };
         let new_data = ComponentData {
@@ -506,7 +525,7 @@ impl PipelineGraph {
                     }
                     v.push(ComponentChannel(s_id, s_chan))
                 }
-                InputKind::Multiple { single, multi } => 'search: {
+                InputKind::Multiple { single, multi, .. } => 'search: {
                     if let Some(MultiData { chan, inputs, .. }) = multi {
                         if *chan == d_chan {
                             inputs.push(ComponentChannel(s_id, s_chan));
@@ -593,7 +612,7 @@ impl PipelineGraph {
         let comp = &mut self.components[id.index()];
         let inputs = match &mut comp.inputs {
             InputKind::Single(v) => std::mem::take(v),
-            InputKind::Multiple { single, multi } => {
+            InputKind::Multiple { single, multi, .. } => {
                 let mut buf = SmallVec::<[_; 1]>::new();
                 let mut v = single
                     .extract_if(.., |(_, c)| {
@@ -644,7 +663,7 @@ impl PipelineGraph {
                 InputKind::Single(v) => {
                     count = v.drain_filter(|c| c.0 == id).count();
                 }
-                InputKind::Multiple { single, multi } => {
+                InputKind::Multiple { single, multi, .. } => {
                     if let Some(MultiData { chan, inputs, .. }) = multi {
                         if *chan == ch.1 {
                             count = inputs.extract_if(.., |c| c.0 == id).count();
@@ -784,6 +803,7 @@ impl PipelineGraph {
                             InputKind::Multiple {
                                 single,
                                 multi: Some(MultiData { chan, .. }),
+                                broadcast,
                             } => {
                                 if single.is_empty() {
                                     runner::InputMode::Single {
@@ -795,10 +815,13 @@ impl PipelineGraph {
                                         lookup: HashMap::new(),
                                         tree_shape: SmallVec::new(),
                                         mutable: Mutex::default(),
+                                        broadcast: *broadcast,
                                     }
                                 }
                             }
-                            InputKind::Multiple { single, .. } => {
+                            InputKind::Multiple {
+                                single, broadcast, ..
+                            } => {
                                 if let [(name, _)] = &**single {
                                     runner::InputMode::Single {
                                         name: Some(name.clone()),
@@ -809,6 +832,7 @@ impl PipelineGraph {
                                         lookup: HashMap::new(),
                                         tree_shape: SmallVec::new(),
                                         mutable: Mutex::default(),
+                                        broadcast: *broadcast,
                                     }
                                 }
                             }
@@ -816,7 +840,7 @@ impl PipelineGraph {
                     });
                     auxiliary.push((
                         match input {
-                            InputKind::Multiple { single, multi } => {
+                            InputKind::Multiple { single, multi, .. } => {
                                 (false, single, multi.map(|m| (m.chan, m.inputs)))
                             }
                             InputKind::Single(v) => (

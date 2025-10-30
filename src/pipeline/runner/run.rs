@@ -119,6 +119,13 @@ pub(crate) struct MutableData {
     pub first: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum BroadcastMode {
+    Broadcast,
+    MinTree(u32),
+    FullTree,
+}
+
 #[derive(Debug)]
 pub(crate) enum InputMode {
     Single {
@@ -129,6 +136,7 @@ pub(crate) enum InputMode {
         lookup: HashMap<SmolStr, InputIndex>,
         tree_shape: SmallVec<[u32; 2]>,
         mutable: Mutex<MutableData>,
+        broadcast: BroadcastMode,
     },
 }
 pub(super) struct PlaceholderData;

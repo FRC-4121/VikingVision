@@ -234,6 +234,82 @@ pub mod lazy_maps {
             f.debug_map().entries(self.iter()).finish()
         }
     }
+
+    /// The iterator returned from [`InputIndexMap::iter`]
+    #[derive(Clone)]
+    pub struct InputIndexMapIter<'r>(Iter<'r, SmolStr, InputIndex>, u32);
+    impl<'r> Iterator for InputIndexMapIter<'r> {
+        type Item = (&'r SmolStr, InputIndex);
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0
+                .next()
+                .map(|(k, InputIndex(r, c))| (k, InputIndex(r - self.1, *c)))
+        }
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            self.0.size_hint()
+        }
+    }
+    impl<'r> ExactSizeIterator for InputIndexMapIter<'r> {
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+    }
+    impl<'r> std::iter::FusedIterator for InputIndexMapIter<'r> {}
+
+    /// A map of input channels to [`InputIndex`]es that can be used on an input tree.
+    ///
+    /// This doesn't allocate, and borrows from the runner.
+    #[derive(Clone, Copy)]
+    pub struct InputIndexMap<'r>(pub(super) &'r HashMap<SmolStr, InputIndex>, pub(super) u32);
+    impl<'r> InputIndexMap<'r> {
+        pub fn iter(&self) -> InputIndexMapIter<'r> {
+            InputIndexMapIter(self.0.iter(), self.1)
+        }
+        pub fn keys(&self) -> Keys<'r, SmolStr, InputIndex> {
+            self.0.keys()
+        }
+        pub fn contains_key<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> bool
+        where
+            SmolStr: Borrow<Q>,
+        {
+            self.0.contains_key(chan)
+        }
+        pub fn get<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> Option<InputIndex>
+        where
+            SmolStr: Borrow<Q>,
+        {
+            self.0
+                .get(chan)
+                .map(|InputIndex(t, c)| InputIndex(t - self.1, *c))
+        }
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+        pub fn is_empty(&self) -> bool {
+            self.len() == 0
+        }
+    }
+    impl<'r> IntoIterator for InputIndexMap<'r> {
+        type IntoIter = InputIndexMapIter<'r>;
+        type Item = (&'r SmolStr, InputIndex);
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
+        }
+    }
+    impl<'r> IntoIterator for &InputIndexMap<'r> {
+        type IntoIter = InputIndexMapIter<'r>;
+        type Item = (&'r SmolStr, InputIndex);
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
+        }
+    }
+    impl Debug for InputIndexMap<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            f.debug_map().entries(self.iter()).finish()
+        }
+    }
 }
 
 /// Core context used to get input and submit output from a component body.
@@ -314,6 +390,26 @@ impl<'r> ComponentContextInner<'r> {
     /// Get a map of the listeners for this component
     pub fn listeners(&self) -> lazy_maps::ListenerMap<'r> {
         lazy_maps::ListenerMap(&self.component.dependents)
+    }
+
+    pub fn input_indices(&self) -> Option<lazy_maps::InputIndexMap<'r>> {
+        match &self.component.input_mode {
+            InputMode::Single { .. } => None,
+            InputMode::Multiple {
+                broadcast: BroadcastMode::Broadcast,
+                ..
+            } => None,
+            InputMode::Multiple {
+                lookup,
+                broadcast: BroadcastMode::MinTree(prune),
+                ..
+            } => Some(lazy_maps::InputIndexMap(lookup, *prune)),
+            InputMode::Multiple {
+                lookup,
+                broadcast: BroadcastMode::FullTree,
+                ..
+            } => Some(lazy_maps::InputIndexMap(lookup, 0)),
+        }
     }
 
     /// Retrieve the input data from either a named channel or the primary one.
@@ -406,6 +502,7 @@ impl<'r> ComponentContextInner<'r> {
                     lookup,
                     tree_shape,
                     mutable,
+                    ..
                 } = &self.component.input_mode
                 else {
                     unreachable!()
