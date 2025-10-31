@@ -38,6 +38,74 @@ impl InputTree {
             index: relative.0,
         }
     }
+    /// Get the first input at the given index.
+    ///
+    /// Comparisons are done by the run ID.
+    pub fn first(&self, idx: InputIndex) -> Option<&Arc<dyn Data>> {
+        match idx {
+            InputIndex(0, c) => self
+                .vals
+                .get(c as usize)
+                .filter(|v| !Arc::ptr_eq(v, &PLACEHOLDER_DATA)),
+            InputIndex(t, c) => {
+                let mut lower_bound = None;
+                loop {
+                    let mut min = None;
+                    for i in &self.next {
+                        let Some(tree) = i else { continue };
+                        if lower_bound.is_some_and(|b| b > tree.iter) {
+                            continue;
+                        }
+                        if let Some(min) = &mut min {
+                            *min = tree;
+                        } else {
+                            min = Some(tree);
+                        }
+                    }
+                    let min = min?;
+                    if let Some(found) = min.first(InputIndex(t - 1, c)) {
+                        return Some(found);
+                    } else {
+                        lower_bound = Some(min.iter);
+                    }
+                }
+            }
+        }
+    }
+    /// Get the last input at the given index.
+    ///
+    /// Comparisons are done by the run ID.
+    pub fn last(&self, idx: InputIndex) -> Option<&Arc<dyn Data>> {
+        match idx {
+            InputIndex(0, c) => self
+                .vals
+                .get(c as usize)
+                .filter(|v| !Arc::ptr_eq(v, &PLACEHOLDER_DATA)),
+            InputIndex(t, c) => {
+                let mut upper_bound = None;
+                loop {
+                    let mut max = None;
+                    for i in &self.next {
+                        let Some(tree) = i else { continue };
+                        if upper_bound.is_some_and(|b| b < tree.iter) {
+                            continue;
+                        }
+                        if let Some(max) = &mut max {
+                            *max = tree;
+                        } else {
+                            max = Some(tree);
+                        }
+                    }
+                    let max = max?;
+                    if let Some(found) = max.last(InputIndex(t - 1, c)) {
+                        return Some(found);
+                    } else {
+                        upper_bound = Some(max.iter);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Pop a value from the stack and increment the previous index

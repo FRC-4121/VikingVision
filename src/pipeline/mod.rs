@@ -405,8 +405,8 @@ pub mod prelude {
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
     pub use super::graph::{GraphComponentId, PipelineGraph};
     pub use super::runner::{
-        ComponentArgs, ComponentContext, PipelineRunner, ProviderRef, ProviderTrait, RunParams,
-        RunnerComponentId,
+        ComponentArgs, ComponentContext, InputIndex, InputTree, PipelineRunner, ProviderRef,
+        ProviderTrait, RunParams, RunnerComponentId,
     };
     pub use super::{ComponentId, PipelineProvider};
     pub use crate::utils::LogErr;

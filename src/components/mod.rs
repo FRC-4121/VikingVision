@@ -2,6 +2,7 @@ use crate::pipeline::graph::GraphComponentId;
 use smol_str::SmolStr;
 
 pub mod apriltag;
+pub mod collect;
 pub mod draw;
 pub mod ffmpeg;
 pub mod group;
