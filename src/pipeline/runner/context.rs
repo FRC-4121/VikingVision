@@ -341,7 +341,7 @@ impl Debug for ComponentContextInner<'_> {
 impl Drop for ComponentContextInner<'_> {
     fn drop(&mut self) {
         if !self.finished() {
-            self.finish(None);
+            tracing::warn!("component dropped without finishing");
         }
     }
 }
@@ -618,6 +618,7 @@ impl<'r> ComponentContextInner<'r> {
                 InputMode::Multiple {
                     tree_shape,
                     mutable,
+                    broadcast,
                     ..
                 } => {
                     let mut lock = mutable.lock().unwrap();
@@ -771,7 +772,7 @@ impl<'r> ComponentContextInner<'r> {
                         &mut lock.inputs,
                         data.clone(),
                         SmallVec::new(),
-                        true,
+                        matches!(broadcast, BroadcastMode::Broadcast),
                         self,
                         scope,
                         next_comp,
@@ -818,7 +819,7 @@ impl<'r> ComponentContextInner<'r> {
     ///
     /// This happens automatically when the context is dropped,
     /// but can be called explicitly for more precise control.
-    pub fn finish<'s>(&mut self, signal: Option<&rayon::Scope<'s>>)
+    pub fn finish<'s>(&mut self, scope: &rayon::Scope<'s>)
     where
         'r: 's,
     {
@@ -827,9 +828,7 @@ impl<'r> ComponentContextInner<'r> {
             tracing::warn!("finish() was called twice for a component");
             return;
         }
-        if let Some(scope) = signal {
-            self.submit_impl("$finish", UNIT_ARC.clone(), scope);
-        }
+        self.submit_impl("$finish", UNIT_ARC.clone(), scope);
         let mut propagate = false;
         match (&self.component.input_mode, &self.input) {
             (InputMode::Single { refs, .. }, InputKind::Single(_)) => {
@@ -921,11 +920,9 @@ impl<'r> ComponentContextInner<'r> {
         'r: 's,
     {
         self.tracing_span().in_scope(|| {
-            self.component.component.run(ComponentContext {
-                inner: self,
-                scope,
-                signal: true,
-            })
+            self.component
+                .component
+                .run(ComponentContext { inner: self, scope })
         });
     }
 }
@@ -941,11 +938,10 @@ impl<'r> ComponentContextInner<'r> {
 pub struct ComponentContext<'a, 's, 'r: 's> {
     pub inner: ComponentContextInner<'r>,
     pub scope: &'a rayon::Scope<'s>,
-    pub signal: bool,
 }
 impl<'s, 'r: 's> Drop for ComponentContext<'_, 's, 'r> {
     fn drop(&mut self) {
-        self.finish_signal(self.signal);
+        self.finish();
     }
 }
 impl<'r> Deref for ComponentContext<'_, '_, 'r> {
@@ -962,9 +958,9 @@ impl DerefMut for ComponentContext<'_, '_, '_> {
 
 impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
     /// Get the inner context, scope, and signal flag without calling the [`Drop`] implementation
-    pub fn explode(self) -> (ComponentContextInner<'r>, &'a rayon::Scope<'s>, bool) {
+    pub fn explode(self) -> (ComponentContextInner<'r>, &'a rayon::Scope<'s>) {
         let this = ManuallyDrop::new(self);
-        unsafe { (std::ptr::read(&this.inner), this.scope, this.signal) }
+        unsafe { (std::ptr::read(&this.inner), this.scope) }
     }
     /// Publish a result on a given channel.
     #[inline(always)]
@@ -978,28 +974,16 @@ impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
         self.inner.submit_if_listening(channel, create, self.scope);
     }
 
-    /// Finish this component and send a finish signal.
+    /// Finish this component.
     #[inline(always)]
     pub fn finish(&mut self) {
-        self.inner.finish(Some(self.scope));
-    }
-
-    /// Finish this component and maybe send a finish singal.
-    #[inline(always)]
-    pub fn finish_signal(&mut self, signal: bool) {
-        self.inner.finish(signal.then_some(self.scope));
+        self.inner.finish(self.scope);
     }
 
     /// Defer an operation to run later on the thread pool.
     pub fn defer(self, op: impl FnOnce(ComponentContext<'_, 's, 'r>) + Send + Sync + 'r) {
-        let (inner, scope, signal) = self.explode();
-        scope.spawn(move |scope| {
-            op(ComponentContext {
-                inner,
-                scope,
-                signal,
-            })
-        });
+        let (inner, scope) = self.explode();
+        scope.spawn(move |scope| op(ComponentContext { inner, scope }));
     }
 }
 
