@@ -883,6 +883,18 @@ impl PipelineGraph {
         for i in 0..auxiliary.len() {
             let (_, branch, out) =
                 unsafe { &mut *std::ptr::from_mut(auxiliary.get_unchecked_mut(i)) }; // we need to detach the lifetime here, we check safety later
+            // we needed to track the full branching up to this component for validation, but now we trim for dependent components
+            match components[i].input_mode {
+                runner::InputMode::Multiple {
+                    broadcast: BroadcastMode::FullTree,
+                    ..
+                } => branch.clear(),
+                runner::InputMode::Multiple {
+                    broadcast: BroadcastMode::MinTree(to),
+                    ..
+                } => branch.truncate(to as _),
+                _ => {}
+            }
             for (chan, deps) in out {
                 let flag = deps[0].0.flag();
                 if flag {
@@ -907,6 +919,13 @@ impl PipelineGraph {
                     }
                     if let Some(rem) = branch.get(b2.len()..) {
                         b2.extend_from_slice(rem);
+                    } else if let runner::InputMode::Multiple {
+                        broadcast: BroadcastMode::MinTree(idx),
+                        ..
+                    } = &mut components[i].input_mode
+                    {
+                        // track the minimum branching amount for the tree
+                        *idx = branch.len() as _;
                     }
                 }
                 if flag {
