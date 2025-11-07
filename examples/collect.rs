@@ -1,11 +1,11 @@
 use std::sync::Arc;
-// use viking_vision::components::prelude::*;
+use viking_vision::components::prelude::*;
 use viking_vision::pipeline::prelude::*;
 
 mod common;
 use common::*;
 
-use mocks::*;
+// use mocks::*;
 // mock components that don't take trees
 #[allow(dead_code)]
 mod mocks {
@@ -70,7 +70,7 @@ fn main() -> anyhow::Result<()> {
     graph.add_dependency((broadcast2, "elem"), (collect1, "elem"))?;
     graph.add_dependency(broadcast2, (collect1, "ref"))?;
     graph.add_dependency((broadcast2, "elem"), (collect2, "elem"))?;
-    graph.add_dependency((broadcast1, "elem"), (collect2, "ref"))?;
+    graph.add_dependency(broadcast1, (collect2, "ref"))?;
     graph.add_dependency((broadcast2, "elem"), (last, "elem"))?;
     graph.add_dependency(broadcast2, (last, "ref"))?;
     graph.add_dependency(collect1, print)?;
