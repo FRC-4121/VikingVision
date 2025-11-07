@@ -889,8 +889,13 @@ impl<'r> ComponentContextInner<'r> {
             }
         }
         if propagate {
-            self.runner
-                .propagate(self.component, &self.run_id.0, &tracing::Span::current());
+            self.runner.propagate(
+                self.component,
+                &self.run_id.0,
+                &tracing::Span::current(),
+                &self.context,
+                &self.callback,
+            );
         }
         self.input = InputKind::Empty;
         if let Some(callback) = self.callback.take() {
@@ -1000,7 +1005,14 @@ impl PipelineRunner {
         )
     }
     /// Clean up the state for a finished component
-    fn propagate(&self, component: &ComponentData, run_id: &[u32], parent: &tracing::Span) {
+    fn propagate<'r>(
+        &'r self,
+        component: &'r ComponentData,
+        run_id: &[u32],
+        parent: &tracing::Span,
+        context: &Context<'r>,
+        callback: &Option<Callback<'r>>,
+    ) {
         let _guard =
             tracing::info_span!(parent: parent, "propagate", name = &*component.name, id = %self.component_id(component)).entered();
         let mut buf = Vec::new();
@@ -1023,20 +1035,22 @@ impl PipelineRunner {
                         );
                     }
                     for (k, _) in buf.drain(..) {
-                        self.propagate(next, &k, parent);
+                        self.propagate(next, &k, parent, context, callback);
                     }
                 }
                 InputMode::Multiple { mutable, .. } => {
                     #[allow(clippy::too_many_arguments)]
-                    fn cleanup(
+                    fn cleanup<'r>(
                         remaining: &mut u32,
                         inputs: &mut Vec<Option<InputTree>>,
                         idx: usize,
                         target: usize,
                         run_id: &[u32],
-                        runner: &PipelineRunner,
-                        component: &ComponentData,
+                        runner: &'r PipelineRunner,
+                        component: &'r ComponentData,
                         parent: &tracing::Span,
+                        context: &Context<'r>,
+                        callback: &Option<Callback<'r>>,
                     ) -> bool {
                         let i = run_id.get(idx).copied();
                         let mut all = true;
@@ -1046,7 +1060,7 @@ impl PipelineRunner {
                                 if i.is_some_and(|i| i != tree.iter) {
                                     continue;
                                 }
-                                if !cleanup(
+                                let popped = cleanup(
                                     &mut tree.remaining_finish,
                                     &mut tree.next,
                                     idx + 1,
@@ -1055,7 +1069,11 @@ impl PipelineRunner {
                                     runner,
                                     component,
                                     parent,
-                                ) || tree.remaining_finish > 0
+                                    context,
+                                    callback,
+                                );
+                                if !popped
+                                    || tree.remaining_finish > 0
                                     || tree.next.iter().any(Option::is_some)
                                 {
                                     all = false;
@@ -1084,7 +1102,15 @@ impl PipelineRunner {
                                 let mut run_id = run_id.to_vec();
                                 for opt in &mut tree.next {
                                     let Some(input) = opt else { continue };
-                                    let rem = dft(input, &mut run_id, runner, component, parent);
+                                    let rem = dft(
+                                        input,
+                                        &mut run_id,
+                                        runner,
+                                        component,
+                                        parent,
+                                        context,
+                                        callback,
+                                    );
                                     if rem {
                                         *opt = None;
                                         any = true;
@@ -1101,12 +1127,14 @@ impl PipelineRunner {
                         while inputs.pop_if(|x| x.is_none()).is_some() {}
                         all
                     }
-                    fn dft(
+                    fn dft<'r>(
                         input: &mut InputTree,
                         run_id: &mut Vec<u32>,
-                        runner: &PipelineRunner,
-                        component: &ComponentData,
+                        runner: &'r PipelineRunner,
+                        component: &'r ComponentData,
                         parent: &tracing::Span,
+                        context: &Context<'r>,
+                        callback: &Option<Callback<'r>>,
                     ) -> bool {
                         if input.remaining_finish > 0 {
                             return false;
@@ -1116,7 +1144,8 @@ impl PipelineRunner {
                         let mut any = false;
                         for opt in &mut input.next {
                             let Some(next) = opt else { continue };
-                            let rem = dft(next, run_id, runner, component, parent);
+                            let rem =
+                                dft(next, run_id, runner, component, parent, context, callback);
                             if rem {
                                 *opt = None;
                                 any = true;
@@ -1125,7 +1154,7 @@ impl PipelineRunner {
                             }
                         }
                         if !any {
-                            runner.propagate(component, run_id, parent);
+                            runner.propagate(component, run_id, parent, context, callback);
                         }
                         run_id.pop();
                         all
@@ -1141,6 +1170,8 @@ impl PipelineRunner {
                         self,
                         next,
                         parent,
+                        context,
+                        callback,
                     );
                 }
             }
