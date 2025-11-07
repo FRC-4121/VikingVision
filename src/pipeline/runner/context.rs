@@ -1082,6 +1082,18 @@ impl PipelineRunner {
                                 *opt = None;
                             }
                         } else {
+                            if *remaining == 0 {
+                                tracing::error!(
+                                    parent: parent,
+                                    idx,
+                                    target,
+                                    ?run_id,
+                                    remaining,
+                                    name = &*component.name,
+                                    "subtract with overflow"
+                                );
+                                return false;
+                            }
                             *remaining -= 1;
                             if *remaining > 0 {
                                 return false;
