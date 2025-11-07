@@ -1,4 +1,3 @@
-use super::runner::BroadcastMode;
 use super::{prelude::*, *};
 use litemap::LiteMap;
 use smallvec::SmallVec;
@@ -244,6 +243,22 @@ static DEFAULT_COMPONENT: LazyLock<Arc<dyn Component>> = LazyLock::new(|| {
     Arc::new(Placeholder)
 });
 const DEFAULT_NAME: SmolStr = smol_str::SmolStr::new_static("<placeholder>");
+
+#[derive(Debug, Clone, Copy)]
+enum BroadcastMode {
+    Broadcast,
+    MinTree(u32),
+    FullTree,
+}
+impl BroadcastMode {
+    fn into_opt(self) -> Option<u32> {
+        match self {
+            Self::Broadcast => None,
+            Self::MinTree(to) => Some(to),
+            Self::FullTree => Some(0),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct MultiData {
@@ -815,7 +830,7 @@ impl PipelineGraph {
                                         lookup: HashMap::new(),
                                         tree_shape: SmallVec::new(),
                                         mutable: Mutex::default(),
-                                        broadcast: *broadcast,
+                                        broadcast: broadcast.into_opt(),
                                     }
                                 }
                             }
@@ -832,7 +847,7 @@ impl PipelineGraph {
                                         lookup: HashMap::new(),
                                         tree_shape: SmallVec::new(),
                                         mutable: Mutex::default(),
-                                        broadcast: *broadcast,
+                                        broadcast: broadcast.into_opt(),
                                     }
                                 }
                             }
@@ -884,16 +899,12 @@ impl PipelineGraph {
             let (_, branch, out) =
                 unsafe { &mut *std::ptr::from_mut(auxiliary.get_unchecked_mut(i)) }; // we need to detach the lifetime here, we check safety later
             // we needed to track the full branching up to this component for validation, but now we trim for dependent components
-            match components[i].input_mode {
-                runner::InputMode::Multiple {
-                    broadcast: BroadcastMode::FullTree,
-                    ..
-                } => branch.clear(),
-                runner::InputMode::Multiple {
-                    broadcast: BroadcastMode::MinTree(to),
-                    ..
-                } => branch.truncate(to as _),
-                _ => {}
+            if let runner::InputMode::Multiple {
+                broadcast: Some(to),
+                ..
+            } = components[i].input_mode
+            {
+                branch.truncate(to as _);
             }
             for (chan, deps) in out {
                 let flag = deps[0].0.flag();
@@ -920,7 +931,7 @@ impl PipelineGraph {
                     if let Some(rem) = branch.get(b2.len()..) {
                         b2.extend_from_slice(rem);
                     } else if let runner::InputMode::Multiple {
-                        broadcast: BroadcastMode::MinTree(idx),
+                        broadcast: Some(idx),
                         ..
                     } = &mut components[i].input_mode
                     {
