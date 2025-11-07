@@ -37,6 +37,7 @@ impl From<GraphComponentId> for ComponentIdentifier {
 pub mod prelude {
     #[cfg(feature = "apriltag")]
     pub use super::apriltag::{AprilTagComponent, DetectPoseComponent};
+    pub use super::collect::{CollectVec, SelectLast};
     pub use super::draw::DrawComponent;
     pub use super::ffmpeg::FfmpegComponent;
     pub use super::group::GroupComponent;

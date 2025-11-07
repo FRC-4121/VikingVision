@@ -4,9 +4,16 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::marker::PhantomData;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct CollectVec<T> {
     pub _marker: PhantomData<T>,
+}
+impl<T> CollectVec<T> {
+    pub const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
 }
 impl<T: Data + Clone> Component for CollectVec<T> {
     fn inputs(&self) -> Inputs {
@@ -44,7 +51,7 @@ impl<T: Data + Clone> Component for CollectVec<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 pub struct SelectLast;
 impl Component for SelectLast {
     fn inputs(&self) -> Inputs {
