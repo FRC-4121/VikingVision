@@ -928,15 +928,20 @@ impl PipelineGraph {
                                 .collect(),
                         });
                     }
-                    if let Some(rem) = branch.get(b2.len()..) {
+                    let min = if let Some(rem) = branch.get(b2.len()..) {
+                        let old = b2.len();
                         b2.extend_from_slice(rem);
-                    } else if let runner::InputMode::Multiple {
-                        broadcast: Some(idx),
+                        old
+                    } else {
+                        branch.len()
+                    };
+                    if let runner::InputMode::Multiple {
+                        broadcast: Some(to),
                         ..
-                    } = &mut components[i].input_mode
+                    } = &mut components[idx].input_mode
                     {
                         // track the minimum branching amount for the tree
-                        *idx = branch.len() as _;
+                        *to = min as _;
                     }
                 }
                 if flag {
