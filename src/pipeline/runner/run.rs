@@ -69,7 +69,7 @@ impl InputTree {
                     let mut min = None::<&InputTree>;
                     for i in &self.next {
                         let Some(tree) = i else { continue };
-                        if lower_bound.is_some_and(|b| b > tree.branch_id) {
+                        if lower_bound.is_some_and(|b| b >= tree.branch_id) {
                             continue;
                         }
                         if let Some(min) = &mut min {
@@ -105,7 +105,7 @@ impl InputTree {
                     let mut max = None::<&InputTree>;
                     for i in &self.next {
                         let Some(tree) = i else { continue };
-                        if upper_bound.is_some_and(|b| b < tree.branch_id) {
+                        if upper_bound.is_some_and(|b| b <= tree.branch_id) {
                             continue;
                         }
                         if let Some(max) = &mut max {
