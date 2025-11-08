@@ -35,23 +35,6 @@ mod mocks {
             context.submit("", ());
         }
     }
-
-    pub struct SelectLast;
-    impl Component for SelectLast {
-        fn inputs(&self) -> Inputs {
-            Inputs::named(["ref", "elem"])
-        }
-        fn output_kind(&self, name: &str) -> OutputKind {
-            if name.is_empty() {
-                OutputKind::Single
-            } else {
-                OutputKind::None
-            }
-        }
-        fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
-            context.submit("", ());
-        }
-    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -63,17 +46,15 @@ fn main() -> anyhow::Result<()> {
     let broadcast2 =
         graph.add_named_component(Arc::new(BroadcastVec::<i32>::new()), "broadcast2")?;
 
-    let (collect1, collect2, last);
+    let (collect1, collect2);
     if mock {
         use mocks::*;
         collect1 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect1")?;
         collect2 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect2")?;
-        last = graph.add_named_component(Arc::new(SelectLast), "last")?;
     } else {
         use viking_vision::components::prelude::*;
         collect1 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect1")?;
         collect2 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect2")?;
-        last = graph.add_named_component(Arc::new(SelectLast), "last")?;
     };
     let print = graph.add_named_component(Arc::new(Print), "print")?;
     graph.add_dependency((broadcast1, "elem"), broadcast2)?;
@@ -81,17 +62,11 @@ fn main() -> anyhow::Result<()> {
     graph.add_dependency(broadcast2, (collect1, "ref"))?;
     graph.add_dependency((broadcast2, "elem"), (collect2, "elem"))?;
     graph.add_dependency(broadcast1, (collect2, "ref"))?;
-    graph.add_dependency((broadcast2, "elem"), (last, "elem"))?;
-    graph.add_dependency(broadcast2, (last, "ref"))?;
     graph.add_dependency(collect1, print)?;
     graph.add_dependency((collect1, "sorted"), print)?;
     graph.add_dependency(collect2, print)?;
     graph.add_dependency((collect2, "sorted"), print)?;
-    graph.add_dependency(last, print)?;
-    tracing::debug!("graph: {graph:#?}");
     let (resolver, runner) = graph.compile()?;
-    tracing::debug!("remapping: {resolver:#?}");
-    tracing::debug!("runner, before: {runner:#?}");
     let broadcast = resolver
         .get(broadcast1)
         .ok_or_else(|| anyhow::anyhow!("couldn't find the remapped broadcast component"))?;
