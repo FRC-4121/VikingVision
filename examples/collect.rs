@@ -10,17 +10,17 @@ use common::*;
 mod mocks {
     use std::marker::PhantomData;
     use viking_vision::pipeline::prelude::*;
-    pub struct CollectVec<T> {
+    pub struct CollectVecComponent<T> {
         _marker: PhantomData<T>,
     }
-    impl<T> CollectVec<T> {
+    impl<T> CollectVecComponent<T> {
         pub const fn new() -> Self {
             Self {
                 _marker: PhantomData,
             }
         }
     }
-    impl<T: Data + Clone> Component for CollectVec<T> {
+    impl<T: Data + Clone> Component for CollectVecComponent<T> {
         fn inputs(&self) -> Inputs {
             Inputs::named(["ref", "elem"])
         }
@@ -49,12 +49,16 @@ fn main() -> anyhow::Result<()> {
     let (collect1, collect2);
     if mock {
         use mocks::*;
-        collect1 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect1")?;
-        collect2 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect2")?;
+        collect1 =
+            graph.add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect1")?;
+        collect2 =
+            graph.add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect2")?;
     } else {
         use viking_vision::components::prelude::*;
-        collect1 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect1")?;
-        collect2 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect2")?;
+        collect1 =
+            graph.add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect1")?;
+        collect2 =
+            graph.add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect2")?;
     };
     let print1s = graph.add_named_component(Arc::new(Print), "print-1-sorted")?;
     let print2s = graph.add_named_component(Arc::new(Print), "print-2-sorted")?;
