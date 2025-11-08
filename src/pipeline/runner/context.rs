@@ -1043,6 +1043,13 @@ impl PipelineRunner {
                 InputMode::Multiple {
                     mutable, broadcast, ..
                 } => {
+                    fn tree_complete(tree: &InputTree) -> bool {
+                        tree.remaining_finish == 0
+                            && tree
+                                .next
+                                .iter()
+                                .all(|opt| opt.as_ref().is_none_or(tree_complete))
+                    }
                     #[allow(clippy::too_many_arguments)]
                     fn cleanup<'s, 'r: 's>(
                         remaining: &mut u32,
@@ -1093,18 +1100,24 @@ impl PipelineRunner {
                                     match idx.cmp(&(to as usize)) {
                                         std::cmp::Ordering::Less => *opt = None,
                                         std::cmp::Ordering::Equal => {
-                                            let ctx = ComponentContextInner {
-                                                runner,
-                                                component,
-                                                input: InputKind::Single(Arc::new(
-                                                    opt.take().unwrap(),
-                                                )),
-                                                callback: callback.clone(),
-                                                context: context.clone(),
-                                                branch_count: Mutex::new(LiteMap::new()),
-                                                run_id: RunId(run_id[..(to as usize + 1)].into()),
-                                            };
-                                            ctx.run(scope);
+                                            if tree_complete(tree) {
+                                                let ctx = ComponentContextInner {
+                                                    runner,
+                                                    component,
+                                                    input: InputKind::Single(Arc::new(
+                                                        opt.take().unwrap(),
+                                                    )),
+                                                    callback: callback.clone(),
+                                                    context: context.clone(),
+                                                    branch_count: Mutex::new(LiteMap::new()),
+                                                    run_id: RunId(
+                                                        run_id[..(to as usize + 1)].into(),
+                                                    ),
+                                                };
+                                                ctx.run(scope);
+                                            } else {
+                                                all = false;
+                                            }
                                         }
                                         std::cmp::Ordering::Greater => {}
                                     }
@@ -1113,9 +1126,6 @@ impl PipelineRunner {
                                 }
                             }
                         } else {
-                            if *remaining == 0 {
-                                tracing::error!(parent: parent, "saturating sub at 0");
-                            }
                             *remaining = remaining.saturating_sub(1);
                             if *remaining > 0 {
                                 return false;
@@ -1165,20 +1175,24 @@ impl PipelineRunner {
                                         match idx.cmp(&(to as usize)) {
                                             std::cmp::Ordering::Less => *opt = None,
                                             std::cmp::Ordering::Equal => {
-                                                let ctx = ComponentContextInner {
-                                                    runner,
-                                                    component,
-                                                    input: InputKind::Single(Arc::new(
-                                                        opt.take().unwrap(),
-                                                    )),
-                                                    callback: callback.clone(),
-                                                    context: context.clone(),
-                                                    branch_count: Mutex::new(LiteMap::new()),
-                                                    run_id: RunId(
-                                                        run_id[..(to as usize + 1)].into(),
-                                                    ),
-                                                };
-                                                ctx.run(scope);
+                                                if tree_complete(tree) {
+                                                    let ctx = ComponentContextInner {
+                                                        runner,
+                                                        component,
+                                                        input: InputKind::Single(Arc::new(
+                                                            opt.take().unwrap(),
+                                                        )),
+                                                        callback: callback.clone(),
+                                                        context: context.clone(),
+                                                        branch_count: Mutex::new(LiteMap::new()),
+                                                        run_id: RunId(
+                                                            run_id[..(to as usize + 1)].into(),
+                                                        ),
+                                                    };
+                                                    ctx.run(scope);
+                                                } else {
+                                                    all = false;
+                                                }
                                             }
                                             std::cmp::Ordering::Greater => {}
                                         }
@@ -1230,7 +1244,6 @@ impl PipelineRunner {
                     }
                     let mut lock = mutable.lock().unwrap();
                     let mut remaining = u32::MAX;
-                    let old = lock.inputs.clone();
                     cleanup(
                         &mut remaining,
                         &mut lock.inputs,
@@ -1245,11 +1258,6 @@ impl PipelineRunner {
                         callback,
                         scope,
                     );
-                    if old != lock.inputs {
-                        tracing::debug!("inputs changed: {:#?}", (old, &lock.inputs));
-                    } else {
-                        tracing::warn!("no change? {old:#?}")
-                    }
                 }
             }
         }
