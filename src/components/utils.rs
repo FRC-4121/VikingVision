@@ -403,3 +403,36 @@ impl ComponentFactory for FpsFactory {
         Box::new(FpsComponent::with_max_duration(self.duration))
     }
 }
+
+pub struct BroadcastVec<T> {
+    _marker: PhantomData<T>,
+}
+impl<T> BroadcastVec<T> {
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+impl<T: Data + Clone> Component for BroadcastVec<T> {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: &str) -> OutputKind {
+        match name {
+            "" => OutputKind::Single,
+            "elem" => OutputKind::Multiple,
+            _ => OutputKind::None,
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        let Ok(val) = context.get_as::<Vec<T>>(None).and_log_err() else {
+            return;
+        };
+        context.submit("", val.clone());
+        for elem in &*val {
+            context.submit("elem", Arc::new(elem.clone()));
+        }
+    }
+}

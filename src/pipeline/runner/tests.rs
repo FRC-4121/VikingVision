@@ -44,6 +44,29 @@ impl<T: Clone + Send + Sync + 'static> Component for Cmp<T> {
     }
 }
 
+struct Echo<T> {
+    send: Sender<Option<T>>,
+    transform: fn(Arc<dyn Data>) -> T,
+}
+impl<T> Echo<T> {
+    fn new(send: Sender<Option<T>>, transform: fn(Arc<dyn Data>) -> T) -> Arc<Self> {
+        Arc::new(Self { send, transform })
+    }
+}
+impl<T: Send + Sync + 'static> Component for Echo<T> {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, _name: &str) -> OutputKind {
+        OutputKind::None
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        if let Some(data) = context.get(None) {
+            let _ = self.send.send(Some((self.transform)(data)));
+        }
+    }
+}
+
 fn assert_terminates<T: Debug>(recv: Receiver<Option<T>>) -> Vec<T> {
     let mut resp = Vec::new();
     let end = Instant::now() + Duration::from_secs(1);
@@ -168,4 +191,146 @@ fn graph_mutation() {
     });
     assert_eq!(resp, &[Msg2::Send, Msg2::Recv]);
     runner.assert_clean().unwrap();
+}
+
+#[test]
+fn branching() {
+    #[derive(Debug)]
+    enum Message {
+        Unsorted1(Vec<i32>),
+        Sorted1(Vec<i32>),
+        Unsorted2(Vec<i32>),
+        Sorted2(Vec<i32>),
+    }
+    use crate::components::{collect::CollectVecComponent, utils::BroadcastVec};
+    let _guard = tracing_subscriber::fmt()
+        .with_test_writer()
+        .finish()
+        .set_default();
+    let mut graph = PipelineGraph::new();
+    let (tx, rx) = channel();
+    let broadcast1 = graph
+        .add_named_component(Arc::new(BroadcastVec::<Vec<i32>>::new()), "broadcast1")
+        .unwrap();
+    let broadcast2 = graph
+        .add_named_component(Arc::new(BroadcastVec::<i32>::new()), "broadcast2")
+        .unwrap();
+
+    let collect1 = graph
+        .add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect1")
+        .unwrap();
+    let collect2 = graph
+        .add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect2")
+        .unwrap();
+    let print1s = graph
+        .add_named_component(
+            Echo::new(tx.clone(), |x| {
+                Message::Sorted1(x.downcast().cloned().unwrap())
+            }),
+            "print-1-sorted",
+        )
+        .unwrap();
+    let print2s = graph
+        .add_named_component(
+            Echo::new(tx.clone(), |x| {
+                Message::Sorted2(x.downcast().cloned().unwrap())
+            }),
+            "print-2-sorted",
+        )
+        .unwrap();
+    let print1u = graph
+        .add_named_component(
+            Echo::new(tx.clone(), |x| {
+                Message::Unsorted1(x.downcast().cloned().unwrap())
+            }),
+            "print-1-unsorted",
+        )
+        .unwrap();
+    let print2u = graph
+        .add_named_component(
+            Echo::new(tx.clone(), |x| {
+                Message::Unsorted2(x.downcast().cloned().unwrap())
+            }),
+            "print-2-unsorted",
+        )
+        .unwrap();
+    graph
+        .add_dependency((broadcast1, "elem"), broadcast2)
+        .unwrap();
+    graph
+        .add_dependency((broadcast2, "elem"), (collect1, "elem"))
+        .unwrap();
+    graph.add_dependency(broadcast2, (collect1, "ref")).unwrap();
+    graph
+        .add_dependency((broadcast2, "elem"), (collect2, "elem"))
+        .unwrap();
+    graph.add_dependency(broadcast1, (collect2, "ref")).unwrap();
+    graph.add_dependency(collect1, print1u).unwrap();
+    graph.add_dependency((collect1, "sorted"), print1s).unwrap();
+    graph.add_dependency(collect2, print2u).unwrap();
+    graph.add_dependency((collect2, "sorted"), print2s).unwrap();
+    println!("{graph:#?}");
+    let (resolver, runner) = graph.compile().unwrap();
+    let broadcast = resolver.get(broadcast1).unwrap();
+    let resp = rayon::scope(|scope| {
+        runner
+            .run(
+                (
+                    broadcast,
+                    vec![vec![1i32, 2, 3], vec![4, 5, 6], vec![7, 8, 9]],
+                )
+                    .into_run_params(&runner)
+                    .unwrap()
+                    .with_callback(|_| tx.send(None).unwrap()),
+                scope,
+            )
+            .unwrap();
+        assert_terminates(rx)
+    });
+    println!("got response: {resp:?}");
+    assert_eq!(resp.len(), 8);
+    assert_eq!(
+        resp.iter()
+            .filter_map(|msg| if let Message::Sorted2(v) = msg {
+                Some(v)
+            } else {
+                None
+            })
+            .collect::<Vec<_>>(),
+        vec![&vec![1, 2, 3, 4, 5, 6, 7, 8, 9]],
+    );
+    let unsorted2 = resp
+        .iter()
+        .filter_map(|msg| {
+            if let Message::Unsorted2(v) = msg {
+                Some(v)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let [us2] = &*unsorted2 else {
+        panic!("expected a single element in unsorted2, got {unsorted2:?}");
+    };
+    let mut us2 = us2.to_vec();
+    us2.sort();
+    assert_eq!(us2, &[1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(
+        resp.iter()
+            .filter(|msg| matches!(msg, Message::Sorted1(_)))
+            .count(),
+        3
+    );
+    assert_eq!(
+        resp.iter()
+            .filter(|msg| matches!(msg, Message::Unsorted1(_)))
+            .count(),
+        3
+    );
+    for elem in &resp {
+        let (Message::Sorted1(v) | Message::Unsorted1(v)) = elem else {
+            continue;
+        };
+        assert_eq!(v.len(), 3);
+    }
 }
