@@ -56,16 +56,19 @@ fn main() -> anyhow::Result<()> {
         collect1 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect1")?;
         collect2 = graph.add_named_component(Arc::new(CollectVec::<i32>::new()), "collect2")?;
     };
-    let print = graph.add_named_component(Arc::new(Print), "print")?;
+    let print1s = graph.add_named_component(Arc::new(Print), "print-1-sorted")?;
+    let print2s = graph.add_named_component(Arc::new(Print), "print-2-sorted")?;
+    let print1u = graph.add_named_component(Arc::new(Print), "print-1-unsorted")?;
+    let print2u = graph.add_named_component(Arc::new(Print), "print-2-unsorted")?;
     graph.add_dependency((broadcast1, "elem"), broadcast2)?;
     graph.add_dependency((broadcast2, "elem"), (collect1, "elem"))?;
     graph.add_dependency(broadcast2, (collect1, "ref"))?;
     graph.add_dependency((broadcast2, "elem"), (collect2, "elem"))?;
     graph.add_dependency(broadcast1, (collect2, "ref"))?;
-    graph.add_dependency(collect1, print)?;
-    graph.add_dependency((collect1, "sorted"), print)?;
-    graph.add_dependency(collect2, print)?;
-    graph.add_dependency((collect2, "sorted"), print)?;
+    graph.add_dependency(collect1, print1u)?;
+    graph.add_dependency((collect1, "sorted"), print1s)?;
+    graph.add_dependency(collect2, print2u)?;
+    graph.add_dependency((collect2, "sorted"), print2s)?;
     let (resolver, runner) = graph.compile()?;
     let broadcast = resolver
         .get(broadcast1)
