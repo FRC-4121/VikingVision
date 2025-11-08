@@ -648,7 +648,7 @@ impl<'r> ComponentContextInner<'r> {
                                 open = Some(n);
                                 continue;
                             };
-                            if tree.iter == idx {
+                            if tree.branch_id == idx {
                                 let done = prev_done && tree.remaining_inputs == 0;
                                 if is_last {
                                     tree.vals[index] = data;
@@ -694,10 +694,9 @@ impl<'r> ComponentContextInner<'r> {
                         let new = InputTree {
                             vals,
                             next: Vec::new(),
-                            iter: idx,
+                            branch_id: idx,
                             remaining_inputs: remaining,
                             remaining_finish: shape.first().map_or(0, |v| v - sum),
-                            prev_done,
                         };
                         let (inserted, new_inputs) = if let Some(n) = open {
                             let r = &mut inputs[n];
@@ -753,9 +752,8 @@ impl<'r> ComponentContextInner<'r> {
                             if tree.remaining_inputs > 0 {
                                 continue;
                             }
-                            tree.prev_done = true;
                             path.push(n as _);
-                            run_id.0.push(tree.iter);
+                            run_id.0.push(tree.branch_id);
                             maybe_run(next, &mut tree.next, path, this, scope, component, run_id);
                             path.pop();
                             run_id.0.pop();
@@ -1070,7 +1068,7 @@ impl PipelineRunner {
                         if idx < target {
                             for opt in &mut *inputs {
                                 let Some(tree) = opt else { continue };
-                                if i.is_some_and(|i| i != tree.iter) {
+                                if i.is_some_and(|i| i != tree.branch_id) {
                                     continue;
                                 }
                                 let popped = cleanup(
@@ -1137,7 +1135,7 @@ impl PipelineRunner {
                             }
                             for opt in &mut *inputs {
                                 let Some(tree) = opt else { continue };
-                                if i.is_some_and(|i| i != tree.iter) {
+                                if i.is_some_and(|i| i != tree.branch_id) {
                                     continue;
                                 }
                                 if tree.remaining_finish > 0
@@ -1230,7 +1228,7 @@ impl PipelineRunner {
                         if input.remaining_finish > 0 {
                             return false;
                         }
-                        run_id.push(input.iter);
+                        run_id.push(input.branch_id);
                         let mut all = true;
                         for opt in &mut input.next {
                             let Some(next) = opt else { continue };

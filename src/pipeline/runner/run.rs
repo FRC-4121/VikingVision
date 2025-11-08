@@ -9,22 +9,28 @@ use std::ops::Deref;
 use std::sync::LazyLock;
 use supply::prelude::*;
 
+/// A tree of inputs passed to a component.
+///
+/// This is passed to components that take a `MinTree` or `FullTree` as their input kind. Note that this
+/// isn't perfectly optimal, and may have completely empty layers - if you want to try to implement this
+/// better, be my guest.
 #[derive(Debug, Clone)]
 pub struct InputTree {
+    /// The input values at this level of the tree
     pub vals: SmallVec<[Arc<dyn Data>; 2]>,
+    /// The next layer of the tree, with the inputs that branched after this
     pub next: Vec<Option<InputTree>>,
+    /// The last element ID of the component that branched at this depth
+    pub branch_id: u32,
     pub(crate) remaining_inputs: u32,
     pub(crate) remaining_finish: u32,
-    pub iter: u32,
-    pub(crate) prev_done: bool,
 }
 impl Data for InputTree {}
 impl PartialEq for InputTree {
     fn eq(&self, other: &Self) -> bool {
         self.remaining_inputs == other.remaining_inputs
             && self.remaining_finish == other.remaining_finish
-            && self.iter == other.iter
-            && self.prev_done == other.prev_done
+            && self.branch_id == other.branch_id
             && self.vals.len() == other.vals.len()
             && self.next == other.next
     }
@@ -60,14 +66,16 @@ impl InputTree {
             InputIndex(t, c) => {
                 let mut lower_bound = None;
                 loop {
-                    let mut min = None;
+                    let mut min = None::<&InputTree>;
                     for i in &self.next {
                         let Some(tree) = i else { continue };
-                        if lower_bound.is_some_and(|b| b > tree.iter) {
+                        if lower_bound.is_some_and(|b| b > tree.branch_id) {
                             continue;
                         }
                         if let Some(min) = &mut min {
-                            *min = tree;
+                            if min.branch_id > tree.branch_id {
+                                *min = tree;
+                            }
                         } else {
                             min = Some(tree);
                         }
@@ -76,7 +84,7 @@ impl InputTree {
                     if let Some(found) = min.first(InputIndex(t - 1, c)) {
                         return Some(found);
                     } else {
-                        lower_bound = Some(min.iter);
+                        lower_bound = Some(min.branch_id);
                     }
                 }
             }
@@ -94,14 +102,16 @@ impl InputTree {
             InputIndex(t, c) => {
                 let mut upper_bound = None;
                 loop {
-                    let mut max = None;
+                    let mut max = None::<&InputTree>;
                     for i in &self.next {
                         let Some(tree) = i else { continue };
-                        if upper_bound.is_some_and(|b| b < tree.iter) {
+                        if upper_bound.is_some_and(|b| b < tree.branch_id) {
                             continue;
                         }
                         if let Some(max) = &mut max {
-                            *max = tree;
+                            if max.branch_id < tree.branch_id {
+                                *max = tree;
+                            }
                         } else {
                             max = Some(tree);
                         }
@@ -110,7 +120,7 @@ impl InputTree {
                     if let Some(found) = max.last(InputIndex(t - 1, c)) {
                         return Some(found);
                     } else {
-                        upper_bound = Some(max.iter);
+                        upper_bound = Some(max.branch_id);
                     }
                 }
             }
@@ -179,7 +189,7 @@ impl<'a> Iterator for IndexedInputIterator<'a> {
                 }
                 Some(None) => *idx += 1,
                 Some(Some(tree)) => {
-                    self.index.push(tree.iter);
+                    self.index.push(tree.branch_id);
                     self.vec.push((tree, 0));
                 }
             }
@@ -187,7 +197,7 @@ impl<'a> Iterator for IndexedInputIterator<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InputIndex(pub u32, pub u32);
 
 #[derive(Debug, Default)]
@@ -768,7 +778,7 @@ impl PipelineRunner {
                 };
                 let mut indices = smallvec::smallvec![0; tree_shape.len()];
                 let mut tree = build_tree(args.0.into_iter(), tree_shape);
-                tree.iter = run_id;
+                tree.branch_id = run_id;
                 let mut lock = mutable.lock().unwrap();
                 let n = lock.first;
                 indices[0] = n as _;
@@ -808,8 +818,7 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
         next: Vec::new(),
         remaining_inputs: 0,
         remaining_finish: 0,
-        iter: 0,
-        prev_done: true,
+        branch_id: 0,
     };
     let mut tree = &mut root;
     let mut last = 0;
@@ -824,8 +833,7 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
                 next: Vec::new(),
                 remaining_inputs: 0,
                 remaining_finish: 0,
-                iter: 0,
-                prev_done: true,
+                branch_id: 0,
             })];
             tree = tree.next[0].as_mut().unwrap();
         }
