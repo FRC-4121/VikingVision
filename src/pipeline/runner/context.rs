@@ -1096,9 +1096,14 @@ impl PipelineRunner {
                                     continue;
                                 }
                                 if let Some(to) = broadcast {
-                                    tracing::debug!(parent: parent, to, idx, "debug a");
                                     match idx.cmp(&(to as usize)) {
-                                        std::cmp::Ordering::Less => *opt = None,
+                                        std::cmp::Ordering::Less => {
+                                            if tree_complete(tree) {
+                                                *opt = None
+                                            } else {
+                                                all = false
+                                            }
+                                        }
                                         std::cmp::Ordering::Equal => {
                                             if tree_complete(tree) {
                                                 let ctx = ComponentContextInner {
@@ -1171,9 +1176,14 @@ impl PipelineRunner {
                                 }
                                 if all_children {
                                     if let Some(to) = broadcast {
-                                        tracing::debug!(parent: parent, to, idx, "debug b");
                                         match idx.cmp(&(to as usize)) {
-                                            std::cmp::Ordering::Less => *opt = None,
+                                            std::cmp::Ordering::Less => {
+                                                if tree_complete(tree) {
+                                                    *opt = None
+                                                } else {
+                                                    all = false
+                                                }
+                                            }
                                             std::cmp::Ordering::Equal => {
                                                 if tree_complete(tree) {
                                                     let ctx = ComponentContextInner {
