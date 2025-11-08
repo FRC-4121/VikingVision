@@ -19,6 +19,16 @@ pub struct InputTree {
     pub(crate) prev_done: bool,
 }
 impl Data for InputTree {}
+impl PartialEq for InputTree {
+    fn eq(&self, other: &Self) -> bool {
+        self.remaining_inputs == other.remaining_inputs
+            && self.remaining_finish == other.remaining_finish
+            && self.iter == other.iter
+            && self.prev_done == other.prev_done
+            && self.vals.len() == other.vals.len()
+            && self.next == other.next
+    }
+}
 impl InputTree {
     /// Iterate over the values in a certain input index in this tree.
     pub fn iter(&self, idx: InputIndex) -> InputIterator<'_> {

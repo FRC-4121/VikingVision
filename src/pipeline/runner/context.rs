@@ -416,10 +416,11 @@ impl<'r> ComponentContextInner<'r> {
         match &self.input {
             InputKind::Empty => None,
             InputKind::Single(data) => {
-                let InputMode::Single { name, .. } = &self.component.input_mode else {
-                    unreachable!()
+                let exp = match &self.component.input_mode {
+                    InputMode::Single { name, .. } => name.as_deref(),
+                    _ => None,
                 };
-                (name.as_deref() == req_channel).then(|| data.clone())
+                (exp == req_channel).then(|| data.clone())
             }
             InputKind::Multiple(branch) => req_channel.and_then(|name| {
                 let InputMode::Multiple {
@@ -605,7 +606,10 @@ impl<'r> ComponentContextInner<'r> {
             next_id.0.extend(ext);
             let next_comp = &self.runner.components[comp_id.index()];
             match &next_comp.input_mode {
-                InputMode::Single { .. } => {
+                InputMode::Single { refs, .. } => {
+                    refs.lock()
+                        .unwrap()
+                        .push((next_id.0.clone(), const { NonZero::new(1).unwrap() }));
                     self.spawn_next(next_comp, InputKind::Single(data.clone()), next_id, scope)
                 }
                 InputMode::Multiple {
@@ -692,7 +696,7 @@ impl<'r> ComponentContextInner<'r> {
                             next: Vec::new(),
                             iter: idx,
                             remaining_inputs: remaining,
-                            remaining_finish: shape.first().map_or(u32::MAX, |v| v - sum),
+                            remaining_finish: shape.first().map_or(0, |v| v - sum),
                             prev_done,
                         };
                         let (inserted, new_inputs) = if let Some(n) = open {
@@ -874,6 +878,7 @@ impl<'r> ComponentContextInner<'r> {
                     lock.first = fst;
                 }
             }
+            (InputMode::Multiple { .. }, InputKind::Single(_)) => {} // already cleaned up
             _ => {
                 tracing::error!(
                     id = %self.comp_id(),
@@ -1013,6 +1018,8 @@ impl PipelineRunner {
         let mut buf = Vec::new();
         for (id, index, _) in component.dependents.values().flatten() {
             let next = &self.components[id.index()];
+            let _guard =
+                tracing::info_span!("next", name = &*next.name, id = %id, ?index).entered();
             match &next.input_mode {
                 InputMode::Single { refs, .. } => {
                     {
@@ -1036,7 +1043,6 @@ impl PipelineRunner {
                 InputMode::Multiple {
                     mutable, broadcast, ..
                 } => {
-                    tracing::info!(?broadcast, "propagating");
                     #[allow(clippy::too_many_arguments)]
                     fn cleanup<'s, 'r: 's>(
                         remaining: &mut u32,
@@ -1076,30 +1082,40 @@ impl PipelineRunner {
                                 );
                                 if !popped
                                     || tree.remaining_finish > 0
-                                    || tree.next.iter().any(Option::is_some)
+                                    || (broadcast.is_none()
+                                        && tree.next.iter().any(Option::is_some))
                                 {
                                     all = false;
                                     continue;
                                 }
                                 if let Some(to) = broadcast {
-                                    tracing::debug!(to, idx, "debug a");
-                                    if to as usize == idx {
-                                        let ctx = ComponentContextInner {
-                                            runner,
-                                            component,
-                                            input: InputKind::Single(Arc::new(opt.take().unwrap())),
-                                            callback: callback.clone(),
-                                            context: context.clone(),
-                                            branch_count: Mutex::new(LiteMap::new()),
-                                            run_id: RunId(run_id[..(to as usize + 1)].into()),
-                                        };
-                                        ctx.run(scope);
+                                    tracing::debug!(parent: parent, to, idx, "debug a");
+                                    match idx.cmp(&(to as usize)) {
+                                        std::cmp::Ordering::Less => *opt = None,
+                                        std::cmp::Ordering::Equal => {
+                                            let ctx = ComponentContextInner {
+                                                runner,
+                                                component,
+                                                input: InputKind::Single(Arc::new(
+                                                    opt.take().unwrap(),
+                                                )),
+                                                callback: callback.clone(),
+                                                context: context.clone(),
+                                                branch_count: Mutex::new(LiteMap::new()),
+                                                run_id: RunId(run_id[..(to as usize + 1)].into()),
+                                            };
+                                            ctx.run(scope);
+                                        }
+                                        std::cmp::Ordering::Greater => {}
                                     }
                                 } else {
                                     *opt = None;
                                 }
                             }
                         } else {
+                            if *remaining == 0 {
+                                tracing::error!(parent: parent, "saturating sub at 0");
+                            }
                             *remaining = remaining.saturating_sub(1);
                             if *remaining > 0 {
                                 return false;
@@ -1110,12 +1126,13 @@ impl PipelineRunner {
                                     continue;
                                 }
                                 if tree.remaining_finish > 0
-                                    || tree.next.iter().any(Option::is_some)
+                                    || (broadcast.is_none()
+                                        && tree.next.iter().any(Option::is_some))
                                 {
                                     all = false;
                                     continue;
                                 }
-                                let mut any = false;
+                                let mut all_children = true;
                                 let mut run_id = run_id.to_vec();
                                 for opt in &mut tree.next {
                                     let Some(input) = opt else { continue };
@@ -1131,29 +1148,39 @@ impl PipelineRunner {
                                         scope,
                                     );
                                     if popped {
-                                        debug_assert_eq!(broadcast, None);
-                                        *opt = None;
-                                        any = true;
+                                        if broadcast.is_none() {
+                                            *opt = None;
+                                        }
                                     } else {
+                                        all_children = false;
                                         all = false;
+                                        if broadcast.is_none() {
+                                            break;
+                                        }
                                     }
                                 }
-                                if !any {
+                                if all_children {
                                     if let Some(to) = broadcast {
-                                        tracing::debug!(to, idx, "debug b");
-                                        if to as usize == idx {
-                                            let ctx = ComponentContextInner {
-                                                runner,
-                                                component,
-                                                input: InputKind::Single(Arc::new(
-                                                    opt.take().unwrap(),
-                                                )),
-                                                callback: callback.clone(),
-                                                context: context.clone(),
-                                                branch_count: Mutex::new(LiteMap::new()),
-                                                run_id: RunId(run_id[..(to as usize + 1)].into()),
-                                            };
-                                            ctx.run(scope);
+                                        tracing::debug!(parent: parent, to, idx, "debug b");
+                                        match idx.cmp(&(to as usize)) {
+                                            std::cmp::Ordering::Less => *opt = None,
+                                            std::cmp::Ordering::Equal => {
+                                                let ctx = ComponentContextInner {
+                                                    runner,
+                                                    component,
+                                                    input: InputKind::Single(Arc::new(
+                                                        opt.take().unwrap(),
+                                                    )),
+                                                    callback: callback.clone(),
+                                                    context: context.clone(),
+                                                    branch_count: Mutex::new(LiteMap::new()),
+                                                    run_id: RunId(
+                                                        run_id[..(to as usize + 1)].into(),
+                                                    ),
+                                                };
+                                                ctx.run(scope);
+                                            }
+                                            std::cmp::Ordering::Greater => {}
                                         }
                                     } else {
                                         *opt = None;
@@ -1183,15 +1210,13 @@ impl PipelineRunner {
                         let mut all = true;
                         for opt in &mut input.next {
                             let Some(next) = opt else { continue };
-                            let rem = dft(
+                            let popped = dft(
                                 next, run_id, runner, component, broadcast, parent, context,
                                 callback, scope,
                             );
-                            if rem {
+                            if popped {
                                 if broadcast {
                                     *opt = None;
-                                } else {
-                                    panic!();
                                 }
                             } else {
                                 all = false;
@@ -1205,6 +1230,7 @@ impl PipelineRunner {
                     }
                     let mut lock = mutable.lock().unwrap();
                     let mut remaining = u32::MAX;
+                    let old = lock.inputs.clone();
                     cleanup(
                         &mut remaining,
                         &mut lock.inputs,
@@ -1219,6 +1245,11 @@ impl PipelineRunner {
                         callback,
                         scope,
                     );
+                    if old != lock.inputs {
+                        tracing::debug!("inputs changed: {:#?}", (old, &lock.inputs));
+                    } else {
+                        tracing::warn!("no change? {old:#?}")
+                    }
                 }
             }
         }
