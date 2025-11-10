@@ -195,6 +195,22 @@ fn graph_mutation() {
 
 #[test]
 fn branching() {
+    struct PrintTree;
+    impl Component for PrintTree {
+        fn inputs(&self) -> Inputs {
+            Inputs::min_tree(["ref", "elem"])
+        }
+        fn output_kind(&self, _name: &str) -> OutputKind {
+            OutputKind::None
+        }
+        fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+            println!(
+                "indices: {:?} in {:#?}",
+                context.input_indices(),
+                context.get_as::<InputTree>(None)
+            );
+        }
+    }
     #[derive(Debug)]
     enum Message {
         Unsorted1(Vec<i32>),
@@ -221,6 +237,9 @@ fn branching() {
         .unwrap();
     let collect2 = graph
         .add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect2")
+        .unwrap();
+    let print_tree = graph
+        .add_named_component(Arc::new(PrintTree), "print-tree")
         .unwrap();
     let print1s = graph
         .add_named_component(
@@ -265,11 +284,17 @@ fn branching() {
         .add_dependency((broadcast2, "elem"), (collect2, "elem"))
         .unwrap();
     graph.add_dependency(broadcast1, (collect2, "ref")).unwrap();
+    graph
+        .add_dependency((broadcast2, "elem"), (print_tree, "elem"))
+        .unwrap();
+    graph
+        .add_dependency(broadcast1, (print_tree, "ref"))
+        .unwrap();
     graph.add_dependency(collect1, print1u).unwrap();
     graph.add_dependency((collect1, "sorted"), print1s).unwrap();
     graph.add_dependency(collect2, print2u).unwrap();
     graph.add_dependency((collect2, "sorted"), print2s).unwrap();
-    println!("{graph:#?}");
+    // println!("{graph:#?}");
     let (resolver, runner) = graph.compile().unwrap();
     let broadcast = resolver.get(broadcast1).unwrap();
     let resp = rayon::scope(|scope| {
@@ -287,6 +312,7 @@ fn branching() {
             .unwrap();
         assert_terminates(rx)
     });
+    // println!("{runner:#?}");
     println!("got response: {resp:?}");
     assert_eq!(resp.len(), 8);
     assert_eq!(
