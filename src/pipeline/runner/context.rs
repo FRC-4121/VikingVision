@@ -431,7 +431,10 @@ impl<'r> ComponentContextInner<'r> {
                 };
                 let mut idx = *lookup.get(name)?;
                 let (head, mut branch) = branch.split_first().unwrap_or((&0, &[]));
-                let lock = mutable.lock().unwrap();
+                let Ok(lock) = mutable.lock() else {
+                    tracing::warn!("attempted to read from a poisoned component");
+                    return None;
+                };
                 let mut this = lock
                     .inputs
                     .get(*head as usize)
@@ -618,7 +621,10 @@ impl<'r> ComponentContextInner<'r> {
                     broadcast,
                     ..
                 } => {
-                    let mut lock = mutable.lock().unwrap();
+                    let Ok(mut lock) = mutable.lock() else {
+                        tracing::warn!("attempted to submit to a poisoned component");
+                        continue;
+                    };
                     // this has to be written as a tail-recursive function because Rust's control-flow can't track the looping
                     #[allow(clippy::too_many_arguments)]
                     fn insert_arg<'s, 'r: 's>(
@@ -868,12 +874,13 @@ impl<'r> ComponentContextInner<'r> {
                     (true, true)
                 }
                 let fst = path[0] as usize;
-                let mut lock = mutable.lock().unwrap();
-                let unwind;
-                let mut remaining = u32::MAX;
-                (unwind, propagate) = cleanup(&mut lock.inputs, &mut remaining, path);
-                if unwind && fst < lock.first {
-                    lock.first = fst;
+                if let Ok(mut lock) = mutable.lock() {
+                    let unwind;
+                    let mut remaining = u32::MAX;
+                    (unwind, propagate) = cleanup(&mut lock.inputs, &mut remaining, path);
+                    if unwind && fst < lock.first {
+                        lock.first = fst;
+                    }
                 }
             }
             (InputMode::Multiple { .. }, InputKind::Single(_)) => {} // already cleaned up
@@ -1250,7 +1257,9 @@ impl PipelineRunner {
                         run_id.pop();
                         all
                     }
-                    let mut lock = mutable.lock().unwrap();
+                    let Ok(mut lock) = mutable.lock() else {
+                        continue;
+                    };
                     let mut remaining = u32::MAX;
                     cleanup(
                         &mut remaining,
@@ -1287,7 +1296,10 @@ impl PipelineRunner {
                     }
                 }
                 InputMode::Multiple { mutable, .. } => {
-                    let lock = mutable.lock().unwrap();
+                    let lock = mutable.lock().unwrap_or_else(|err| {
+                        tracing::error!(id = %RunnerComponentId::new(n), name = &*comp.name, "poisoned component lock");
+                        err.into_inner()
+                    });
                     if lock.inputs.iter().any(Option::is_some) {
                         tracing::error!(id = %RunnerComponentId::new(n), name = &*comp.name, inputs = ?lock.inputs, "leaked multi-input component");
                         res = Err(LeakedInputs);
