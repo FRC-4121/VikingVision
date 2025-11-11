@@ -811,10 +811,7 @@ impl PipelineGraph {
                         name: std::mem::replace(&mut component.name, DEFAULT_NAME.clone()),
                         dependents: HashMap::new(),
                         input_mode: match &input {
-                            InputKind::Single(_) => runner::InputMode::Single {
-                                name: None,
-                                refs: Mutex::default(),
-                            },
+                            InputKind::Single(_) => runner::InputMode::Single { name: None },
                             InputKind::Multiple {
                                 single,
                                 multi: Some(MultiData { chan, .. }),
@@ -823,7 +820,6 @@ impl PipelineGraph {
                                 if single.is_empty() {
                                     runner::InputMode::Single {
                                         name: Some(chan.clone()),
-                                        refs: Mutex::default(),
                                     }
                                 } else {
                                     runner::InputMode::Multiple {
@@ -840,7 +836,6 @@ impl PipelineGraph {
                                 if let [(name, _)] = &**single {
                                     runner::InputMode::Single {
                                         name: Some(name.clone()),
-                                        refs: Mutex::default(),
                                     }
                                 } else {
                                     runner::InputMode::Multiple {
