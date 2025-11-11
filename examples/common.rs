@@ -53,5 +53,13 @@ pub fn setup() -> std::io::Result<tracing::span::EnteredSpan> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(Writer(file))
         .init();
+
+    std::panic::set_hook(Box::new(|panic_info| {
+        tracing::error!(
+            "panic: {panic_info}\n{}",
+            std::backtrace::Backtrace::capture()
+        )
+    }));
+
     Ok(tracing::info_span!("main").entered())
 }
