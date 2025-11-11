@@ -575,7 +575,7 @@ impl<'r> ComponentContextInner<'r> {
     where
         'r: 's,
     {
-        let _guard = tracing::info_span!("submit", ?channel).entered();
+        let _guard = tracing::error_span!("submit", ?channel).entered();
         let dependents = self
             .component
             .dependents
@@ -607,6 +607,8 @@ impl<'r> ComponentContextInner<'r> {
             let mut next_id = run_id.clone();
             next_id.0.extend(ext);
             let next_comp = &self.runner.components[comp_id.index()];
+            let _guard =
+                tracing::error_span!("next", %comp_id, name = &*next_comp.name, ?index).entered();
             match &next_comp.input_mode {
                 InputMode::Single { .. } => {
                     self.spawn_next(next_comp, InputKind::Single(data.clone()), next_id, scope)
@@ -626,9 +628,9 @@ impl<'r> ComponentContextInner<'r> {
                     fn insert_arg<'s, 'r: 's>(
                         mut slice: &[u32],
                         mut shape: &[u32],
-                        last_idx: u32,
                         index: usize,
                         inputs: &mut Vec<Option<InputTree>>,
+                        broadcast: bool,
                         data: Arc<dyn Data>,
                         mut path: SmallVec<[u32; 2]>,
                         prev_done: bool,
@@ -644,7 +646,7 @@ impl<'r> ComponentContextInner<'r> {
                         };
                         let is_last = slice.is_empty();
                         let mut open = None;
-                        let size = sum - last_idx;
+                        let size = sum - shape.first().unwrap_or(&0);
                         for (n, i) in inputs.iter_mut().enumerate() {
                             let Some(tree) = i else {
                                 open = Some(n);
@@ -671,9 +673,9 @@ impl<'r> ComponentContextInner<'r> {
                                     insert_arg(
                                         slice,
                                         shape,
-                                        sum,
                                         index,
                                         &mut tree.next,
+                                        broadcast,
                                         data,
                                         path,
                                         done,
@@ -687,18 +689,21 @@ impl<'r> ComponentContextInner<'r> {
                             }
                         }
                         let mut vals = smallvec::smallvec![PLACEHOLDER_DATA.clone(); size as usize];
-                        let remaining = if is_last {
+                        let mut remaining_inputs = size;
+                        let mut remaining_finish = sum;
+                        if is_last {
                             vals[index] = data.clone();
-                            size - 1
-                        } else {
-                            size
-                        };
+                            remaining_inputs -= 1;
+                        }
+                        if broadcast && shape.is_empty() {
+                            remaining_finish = u32::MAX;
+                        }
                         let new = InputTree {
                             vals,
                             next: Vec::new(),
                             branch_id: idx,
-                            remaining_inputs: remaining,
-                            remaining_finish: shape.first().map_or(0, |v| v - sum),
+                            remaining_inputs,
+                            remaining_finish,
                         };
                         let (inserted, new_inputs) = if let Some(n) = open {
                             let r = &mut inputs[n];
@@ -710,7 +715,7 @@ impl<'r> ComponentContextInner<'r> {
                             (n, &mut inputs[n].as_mut().unwrap().next)
                         };
                         path.push(inserted as u32);
-                        let done = prev_done && remaining == 0;
+                        let done = prev_done && remaining_inputs == 0;
                         if is_last {
                             if done {
                                 maybe_run(
@@ -725,7 +730,7 @@ impl<'r> ComponentContextInner<'r> {
                             }
                         } else {
                             insert_arg(
-                                slice, shape, sum, index, new_inputs, data, path, done, this,
+                                slice, shape, index, new_inputs, broadcast, data, path, done, this,
                                 scope, component, run_id,
                             );
                         }
@@ -761,12 +766,13 @@ impl<'r> ComponentContextInner<'r> {
                             run_id.0.pop();
                         }
                     }
+                    let old = lock.inputs.clone(); // TODO: remove before merge
                     insert_arg(
                         &run_id.0,
                         tree_shape,
-                        0,
                         index.1 as _,
                         &mut lock.inputs,
+                        broadcast.is_none(),
                         data.clone(),
                         SmallVec::new(),
                         broadcast.is_none(),
@@ -774,6 +780,12 @@ impl<'r> ComponentContextInner<'r> {
                         scope,
                         next_comp,
                         next_id.clone(),
+                    );
+                    tracing::debug!(
+                        ?tree_shape,
+                        index = index.1,
+                        "submit: {:#?}",
+                        (old, &lock.inputs)
                     );
                 }
             }
@@ -873,6 +885,7 @@ impl<'r> ComponentContextInner<'r> {
         self.runner.propagate(
             self.component,
             &self.run_id.0,
+            true,
             &tracing::Span::current(),
             &self.context,
             &self.callback,
@@ -986,10 +999,12 @@ impl PipelineRunner {
         )
     }
     /// Clean up the state for a finished component
+    #[allow(clippy::too_many_arguments)]
     fn propagate<'s, 'r: 's>(
         &'r self,
         component: &'r ComponentData,
         run_id: &[u32],
+        can_extra: bool,
         parent: &tracing::Span,
         context: &Context<'r>,
         callback: &Option<Callback<'r>>,
@@ -997,7 +1012,7 @@ impl PipelineRunner {
     ) {
         let _guard =
             tracing::info_span!(parent: parent, "propagate", name = &*component.name, id = %self.component_id(component)).entered();
-        for (id, index, _) in component.dependents.values().flatten() {
+        for (id, index, push) in component.dependents.values().flatten() {
             let next = &self.components[id.index()];
             let _guard =
                 tracing::info_span!("next", name = &*next.name, id = %id, ?index).entered();
@@ -1013,12 +1028,12 @@ impl PipelineRunner {
                                 .iter()
                                 .all(|opt| opt.as_ref().is_none_or(tree_complete))
                     }
-                    #[allow(clippy::too_many_arguments)]
                     fn cleanup<'s, 'r: 's>(
                         remaining: &mut u32,
                         inputs: &mut Vec<Option<InputTree>>,
                         idx: usize,
                         target: usize,
+                        extra: usize,
                         run_id: &[u32],
                         runner: &'r PipelineRunner,
                         component: &'r ComponentData,
@@ -1027,6 +1042,7 @@ impl PipelineRunner {
                         callback: &Option<Callback<'r>>,
                         scope: &rayon::Scope<'s>,
                     ) -> bool {
+                        let _guard = tracing::info_span!("cleanup",).entered();
                         let i = run_id.get(idx).copied();
                         let mut all = true;
                         if idx < target {
@@ -1035,11 +1051,15 @@ impl PipelineRunner {
                                 if i.is_some_and(|i| i != tree.branch_id) {
                                     continue;
                                 }
+                                if idx + extra >= target {
+                                    tree.remaining_finish -= 1;
+                                }
                                 let popped = cleanup(
                                     &mut tree.remaining_finish,
                                     &mut tree.next,
                                     idx + 1,
                                     target,
+                                    extra,
                                     run_id,
                                     runner,
                                     component,
@@ -1092,15 +1112,17 @@ impl PipelineRunner {
                                 }
                             }
                         } else {
-                            *remaining = remaining.saturating_sub(1);
-                            if *remaining > 0 {
-                                return false;
-                            }
+                            // *remaining = remaining.saturating_sub(1);
+                            // *remaining -= 1;
+                            // if *remaining > 0 {
+                            //     return false;
+                            // }
                             for opt in &mut *inputs {
                                 let Some(tree) = opt else { continue };
                                 if i.is_some_and(|i| i != tree.branch_id) {
                                     continue;
                                 }
+                                tree.remaining_finish -= 1;
                                 if tree.remaining_finish > 0
                                     || (broadcast.is_none()
                                         && tree.next.iter().any(Option::is_some))
@@ -1165,7 +1187,6 @@ impl PipelineRunner {
                         while inputs.pop_if(|x| x.is_none()).is_some() {}
                         all
                     }
-                    #[allow(clippy::too_many_arguments)]
                     fn dft<'s, 'r: 's>(input: &mut InputTree, broadcast: bool) -> bool {
                         if input.remaining_finish > 0 {
                             return false;
@@ -1188,11 +1209,16 @@ impl PipelineRunner {
                         continue;
                     };
                     let mut remaining = u32::MAX;
+                    let old = lock.inputs.clone(); // TODO: remove before merge
+                    let flag = can_extra && id.flag();
+                    let target = (run_id.len() + flag as usize - 1).min(index.0 as _);
+                    tracing::debug!(target, "cleaning up: {old:#?}");
                     cleanup(
                         &mut remaining,
                         &mut lock.inputs,
                         0,
-                        run_id.len().min(index.0 as _),
+                        target,
+                        target.saturating_sub(run_id.len() - 1),
                         run_id,
                         self,
                         next,
@@ -1201,13 +1227,20 @@ impl PipelineRunner {
                         callback,
                         scope,
                     );
+                    tracing::debug!(
+                        target,
+                        flag = id.flag(),
+                        ?index,
+                        "cleanup: {:#?}",
+                        (old, &lock.inputs)
+                    );
                     if broadcast.is_some() {
                         continue; // skip the propagation
                     }
                 }
             }
             if id.flag() {
-                self.propagate(next, run_id, parent, context, callback, scope);
+                self.propagate(next, run_id, false, parent, context, callback, scope);
             }
         }
     }

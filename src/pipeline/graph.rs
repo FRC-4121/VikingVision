@@ -1001,7 +1001,11 @@ impl PipelineGraph {
                     .dependents
                     .entry(comp.1.clone())
                     .or_default()
-                    .push((ComponentId::new(n), iidx, branch_single.then_some(s as _)));
+                    .push((
+                        ComponentId::new(n).with_flag(branches),
+                        iidx,
+                        branch_single.then_some(s as _),
+                    ));
             }
             if let Some((name, from)) = multi {
                 let depth = from
@@ -1045,7 +1049,7 @@ impl PipelineGraph {
         for comp in &mut components {
             if let runner::InputMode::Multiple { tree_shape, .. } = &mut comp.input_mode {
                 let mut last = 0;
-                for elem in tree_shape {
+                for elem in tree_shape.iter_mut().rev() {
                     last += *elem;
                     *elem = last;
                 }
