@@ -1100,7 +1100,7 @@ impl PipelineRunner {
                                                         run_id[..(to as usize + 1)].into(),
                                                     ),
                                                 };
-                                                ctx.run(scope);
+                                                scope.spawn(move |scope| ctx.run(scope));
                                             } else {
                                                 all = false;
                                             }
@@ -1171,7 +1171,7 @@ impl PipelineRunner {
                                                             run_id[..(to as usize + 1)].into(),
                                                         ),
                                                     };
-                                                    ctx.run(scope);
+                                                    scope.spawn(move |scope| ctx.run(scope));
                                                 } else {
                                                     all = false;
                                                 }
