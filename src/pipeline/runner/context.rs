@@ -609,6 +609,7 @@ impl<'r> ComponentContextInner<'r> {
             let next_comp = &self.runner.components[comp_id.index()];
             let _guard =
                 tracing::error_span!("next", %comp_id, name = &*next_comp.name, ?index).entered();
+            let mut deferred = Vec::new();
             match &next_comp.input_mode {
                 InputMode::Single { .. } => {
                     self.spawn_next(next_comp, InputKind::Single(data.clone()), next_id, scope)
@@ -633,10 +634,8 @@ impl<'r> ComponentContextInner<'r> {
                         broadcast: bool,
                         data: Arc<dyn Data>,
                         mut path: SmallVec<[u32; 2]>,
+                        deferred: &mut Vec<(SmallVec<[u32; 2]>, RunId)>,
                         prev_done: bool,
-                        this: &ComponentContextInner<'r>,
-                        scope: &rayon::Scope<'s>,
-                        component: &'r ComponentData,
                         mut run_id: RunId,
                     ) {
                         let (Some(&idx), Some(&sum)) =
@@ -662,9 +661,7 @@ impl<'r> ComponentContextInner<'r> {
                                             shape.len(),
                                             &mut tree.next,
                                             &mut path,
-                                            this,
-                                            scope,
-                                            component,
+                                            deferred,
                                             &mut run_id,
                                         );
                                     }
@@ -678,10 +675,8 @@ impl<'r> ComponentContextInner<'r> {
                                         broadcast,
                                         data,
                                         path,
+                                        deferred,
                                         done,
-                                        this,
-                                        scope,
-                                        component,
                                         run_id,
                                     );
                                 }
@@ -722,16 +717,14 @@ impl<'r> ComponentContextInner<'r> {
                                     shape.len(),
                                     new_inputs,
                                     &mut path,
-                                    this,
-                                    scope,
-                                    component,
+                                    deferred,
                                     &mut run_id,
                                 );
                             }
                         } else {
                             insert_arg(
-                                slice, shape, index, new_inputs, broadcast, data, path, done, this,
-                                scope, component, run_id,
+                                slice, shape, index, new_inputs, broadcast, data, path, deferred,
+                                done, run_id,
                             );
                         }
                     }
@@ -740,18 +733,17 @@ impl<'r> ComponentContextInner<'r> {
                         remaining: usize,
                         inputs: &mut Vec<Option<InputTree>>,
                         path: &mut SmallVec<[u32; 2]>,
-                        this: &ComponentContextInner<'r>,
-                        scope: &rayon::Scope<'s>,
-                        component: &'r ComponentData,
+                        deferred: &mut Vec<(SmallVec<[u32; 2]>, RunId)>,
                         run_id: &mut RunId,
                     ) {
                         let Some(next) = remaining.checked_sub(1) else {
-                            this.spawn_next(
-                                component,
-                                InputKind::Multiple(path.clone()),
-                                run_id.clone(),
-                                scope,
-                            );
+                            deferred.push((path.clone(), run_id.clone()));
+                            // this.spawn_next(
+                            //     component,
+                            //     InputKind::Multiple(path.clone()),
+                            //     run_id.clone(),
+                            //     scope,
+                            // );
                             return;
                         };
                         for (n, opt) in inputs.iter_mut().enumerate() {
@@ -761,7 +753,7 @@ impl<'r> ComponentContextInner<'r> {
                             }
                             path.push(n as _);
                             run_id.0.push(tree.branch_id);
-                            maybe_run(next, &mut tree.next, path, this, scope, component, run_id);
+                            maybe_run(next, &mut tree.next, path, deferred, run_id);
                             path.pop();
                             run_id.0.pop();
                         }
@@ -775,10 +767,8 @@ impl<'r> ComponentContextInner<'r> {
                         broadcast.is_none(),
                         data.clone(),
                         SmallVec::new(),
+                        &mut deferred,
                         broadcast.is_none(),
-                        self,
-                        scope,
-                        next_comp,
                         next_id.clone(),
                     );
                     tracing::debug!(
@@ -787,6 +777,10 @@ impl<'r> ComponentContextInner<'r> {
                         "submit: {:#?}",
                         (old, &lock.inputs)
                     );
+                    drop(lock);
+                    for (path, run_id) in deferred.drain(..) {
+                        self.spawn_next(next_comp, InputKind::Multiple(path), run_id, scope);
+                    }
                 }
             }
         }
@@ -807,18 +801,16 @@ impl<'r> ComponentContextInner<'r> {
         let runner = self.runner;
         let callback = self.callback.clone();
         let context = self.context.clone();
-        scope.spawn(move |scope| {
-            ComponentContextInner {
-                input,
-                runner,
-                component,
-                callback,
-                context,
-                run_id,
-                branch_count: Mutex::new(LiteMap::new()),
-            }
-            .run(scope);
-        });
+        ComponentContextInner {
+            input,
+            runner,
+            component,
+            callback,
+            context,
+            run_id,
+            branch_count: Mutex::new(LiteMap::new()),
+        }
+        .spawn(scope);
     }
 
     /// Mark this component as finished and cleans up resources.
@@ -882,7 +874,7 @@ impl<'r> ComponentContextInner<'r> {
                 );
             }
         }
-        self.runner.propagate(
+        self.runner.post_propagate(
             self.component,
             &self.run_id.0,
             true,
@@ -914,14 +906,22 @@ impl<'r> ComponentContextInner<'r> {
     }
 
     /// Run the component with tracing instrumentation.
-    pub(super) fn run<'s>(self, scope: &rayon::Scope<'s>)
+    pub(super) fn spawn<'s>(self, scope: &rayon::Scope<'s>)
     where
         'r: 's,
     {
-        self.tracing_span().in_scope(|| {
-            self.component
-                .component
-                .run(ComponentContext { inner: self, scope })
+        self.runner.pre_propagate(
+            self.component,
+            &self.run_id.0,
+            true,
+            &tracing::Span::current(),
+        );
+        scope.spawn(move |scope| {
+            self.tracing_span().in_scope(|| {
+                self.component
+                    .component
+                    .run(ComponentContext { inner: self, scope })
+            });
         });
     }
 }
@@ -998,9 +998,91 @@ impl PipelineRunner {
                 / size_of::<ComponentData>(),
         )
     }
+    fn pre_propagate(
+        &self,
+        component: &ComponentData,
+        run_id: &[u32],
+        can_extra: bool,
+        parent: &tracing::Span,
+    ) {
+        let _guard =
+            tracing::info_span!(parent: parent, "pre_propagate", name = &*component.name, id = %self.component_id(component)).entered();
+        for (id, index, push) in component.dependents.values().flatten() {
+            let next = &self.components[id.index()];
+            let _guard =
+                tracing::info_span!("next", name = &*next.name, id = %id, ?index).entered();
+            if let InputMode::Multiple {
+                ref mutable,
+                broadcast,
+                ..
+            } = next.input_mode
+            {
+                fn insert(
+                    remaining: &mut u32,
+                    inputs: &mut Vec<Option<InputTree>>,
+                    idx: usize,
+                    target: usize,
+                    extra: usize,
+                    run_id: &[u32],
+                ) {
+                    let i = run_id.get(idx).copied();
+                    if idx < target {
+                        for opt in &mut *inputs {
+                            let Some(tree) = opt else { continue };
+                            if i.is_some_and(|i| i != tree.branch_id) {
+                                continue;
+                            }
+                            if idx + extra == target {
+                                *remaining += 1;
+                            } else {
+                                insert(
+                                    &mut tree.remaining_finish,
+                                    &mut tree.next,
+                                    idx + 1,
+                                    target,
+                                    extra,
+                                    run_id,
+                                );
+                            }
+                        }
+                    } else {
+                        for opt in &mut *inputs {
+                            let Some(tree) = opt else { continue };
+                            if i.is_some_and(|i| i != tree.branch_id) {
+                                continue;
+                            }
+                            if extra == 0 {
+                                *remaining += 1;
+                            }
+                        }
+                    }
+                }
+                let Ok(mut lock) = mutable.lock() else {
+                    continue;
+                };
+                let mut remaining = u32::MAX;
+                let old = lock.inputs.clone(); // TODO: remove before merge
+                let flag = can_extra && id.flag();
+                let target = (run_id.len() + flag as usize - 1).min(index.0 as _);
+                insert(
+                    &mut remaining,
+                    &mut lock.inputs,
+                    0,
+                    target,
+                    target.saturating_sub(run_id.len() - 1),
+                    run_id,
+                );
+                tracing::debug!("insert: {:#?}", (old, &lock.inputs));
+                if broadcast.is_some() {
+                    continue;
+                }
+            }
+            self.pre_propagate(next, run_id, false, parent);
+        }
+    }
     /// Clean up the state for a finished component
     #[allow(clippy::too_many_arguments)]
-    fn propagate<'s, 'r: 's>(
+    fn post_propagate<'s, 'r: 's>(
         &'r self,
         component: &'r ComponentData,
         run_id: &[u32],
@@ -1011,7 +1093,7 @@ impl PipelineRunner {
         scope: &rayon::Scope<'s>,
     ) {
         let _guard =
-            tracing::info_span!(parent: parent, "propagate", name = &*component.name, id = %self.component_id(component)).entered();
+            tracing::info_span!(parent: parent, "post_propagate", name = &*component.name, id = %self.component_id(component)).entered();
         for (id, index, push) in component.dependents.values().flatten() {
             let next = &self.components[id.index()];
             let _guard =
@@ -1042,7 +1124,8 @@ impl PipelineRunner {
                         callback: &Option<Callback<'r>>,
                         scope: &rayon::Scope<'s>,
                     ) -> bool {
-                        let _guard = tracing::info_span!("cleanup",).entered();
+                        let _guard = tracing::info_span!("cleanup").entered();
+
                         let i = run_id.get(idx).copied();
                         let mut all = true;
                         if idx < target {
@@ -1053,6 +1136,9 @@ impl PipelineRunner {
                                 }
                                 if idx + extra >= target {
                                     tree.remaining_finish -= 1;
+                                    if idx + extra == target {
+                                        *remaining -= 1;
+                                    }
                                 }
                                 let popped = cleanup(
                                     &mut tree.remaining_finish,
@@ -1100,7 +1186,7 @@ impl PipelineRunner {
                                                         run_id[..(to as usize + 1)].into(),
                                                     ),
                                                 };
-                                                scope.spawn(move |scope| ctx.run(scope));
+                                                ctx.spawn(scope);
                                             } else {
                                                 all = false;
                                             }
@@ -1123,6 +1209,9 @@ impl PipelineRunner {
                                     continue;
                                 }
                                 tree.remaining_finish -= 1;
+                                if extra == 0 {
+                                    *remaining -= 1;
+                                }
                                 if tree.remaining_finish > 0
                                     || (broadcast.is_none()
                                         && tree.next.iter().any(Option::is_some))
@@ -1171,7 +1260,7 @@ impl PipelineRunner {
                                                             run_id[..(to as usize + 1)].into(),
                                                         ),
                                                     };
-                                                    scope.spawn(move |scope| ctx.run(scope));
+                                                    ctx.spawn(scope);
                                                 } else {
                                                     all = false;
                                                 }
@@ -1240,7 +1329,7 @@ impl PipelineRunner {
                 }
             }
             if id.flag() {
-                self.propagate(next, run_id, false, parent, context, callback, scope);
+                self.post_propagate(next, run_id, false, parent, context, callback, scope);
             }
         }
     }

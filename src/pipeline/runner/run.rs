@@ -794,18 +794,16 @@ impl PipelineRunner {
             }
         };
         let data = &self.components[component.index()];
-        scope.spawn(move |scope| {
-            ComponentContextInner {
-                runner: self,
-                component: data,
-                input,
-                callback,
-                context,
-                run_id: RunId(smallvec::smallvec![run_id]),
-                branch_count: Mutex::new(LiteMap::new()),
-            }
-            .run(scope);
-        });
+        ComponentContextInner {
+            runner: self,
+            component: data,
+            input,
+            callback,
+            context,
+            run_id: RunId(smallvec::smallvec![run_id]),
+            branch_count: Mutex::new(LiteMap::new()),
+        }
+        .spawn(scope);
         Ok(())
     }
 }
