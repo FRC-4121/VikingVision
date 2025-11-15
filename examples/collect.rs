@@ -40,7 +40,11 @@ mod mocks {
 
 fn main() -> anyhow::Result<()> {
     let _guard = setup()?;
-    let mock = std::env::args().nth(2).as_deref() == Some("mock");
+    let (mock, reduce) = match std::env::args().nth(2).as_deref() {
+        Some("mock") => (true, false),
+        Some("reduce") => (false, true),
+        _ => (false, false),
+    };
     let mut graph = PipelineGraph::new();
     let broadcast1 =
         graph.add_named_component(Arc::new(BroadcastVec::<Vec<i32>>::new()), "broadcast1")?;
@@ -68,8 +72,10 @@ fn main() -> anyhow::Result<()> {
     graph.add_dependency((broadcast1, "elem"), broadcast2)?;
     graph.add_dependency((broadcast2, "elem"), (collect1, "elem"))?;
     graph.add_dependency(broadcast2, (collect1, "ref"))?;
-    graph.add_dependency((broadcast2, "elem"), (collect2, "elem"))?;
-    graph.add_dependency(broadcast1, (collect2, "ref"))?;
+    if !reduce {
+        graph.add_dependency((broadcast2, "elem"), (collect2, "elem"))?;
+        graph.add_dependency(broadcast1, (collect2, "ref"))?;
+    }
     graph.add_dependency(collect1, print1u)?;
     graph.add_dependency((collect1, "sorted"), print1s)?;
     graph.add_dependency(collect2, print2u)?;
