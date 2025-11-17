@@ -817,10 +817,8 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
         branch_id: 0,
     };
     let mut tree = &mut root;
-    let mut last = 0;
     while let Some(&sum) = shape.split_off_first() {
-        let len = sum - last;
-        last = sum;
+        let len = sum - shape.first().unwrap_or(&0);
         tree.vals.extend(iter.by_ref().take(len as _));
         tree.remaining_inputs = len;
         if !shape.is_empty() {
