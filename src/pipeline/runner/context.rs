@@ -758,7 +758,6 @@ impl<'r> ComponentContextInner<'r> {
                             run_id.0.pop();
                         }
                     }
-                    let old = lock.inputs.clone(); // TODO: remove before merge
                     insert_arg(
                         &run_id.0,
                         tree_shape,
@@ -770,12 +769,6 @@ impl<'r> ComponentContextInner<'r> {
                         &mut deferred,
                         broadcast.is_none(),
                         next_id.clone(),
-                    );
-                    tracing::debug!(
-                        ?tree_shape,
-                        index = index.1,
-                        "submit: {:#?}",
-                        (old, &lock.inputs)
                     );
                     drop(lock);
                     for (path, run_id) in deferred.drain(..) {
@@ -910,12 +903,8 @@ impl<'r> ComponentContextInner<'r> {
     where
         'r: 's,
     {
-        self.runner.pre_propagate(
-            self.component,
-            &self.run_id.0,
-            true,
-            &tracing::Span::current(),
-        );
+        self.runner
+            .pre_propagate(self.component, &self.run_id.0, &tracing::Span::current());
         scope.spawn(move |scope| {
             self.tracing_span().in_scope(|| {
                 self.component
@@ -998,16 +987,10 @@ impl PipelineRunner {
                 / size_of::<ComponentData>(),
         )
     }
-    fn pre_propagate(
-        &self,
-        component: &ComponentData,
-        run_id: &[u32],
-        can_extra: bool,
-        parent: &tracing::Span,
-    ) {
+    fn pre_propagate(&self, component: &ComponentData, run_id: &[u32], parent: &tracing::Span) {
         let _guard =
             tracing::info_span!(parent: parent, "pre_propagate", name = &*component.name, id = %self.component_id(component)).entered();
-        for (id, index, push) in component.dependents.values().flatten() {
+        for (id, index, _) in component.dependents.values().flatten() {
             let next = &self.components[id.index()];
             let _guard =
                 tracing::info_span!("next", name = &*next.name, id = %id, ?index).entered();
@@ -1025,7 +1008,6 @@ impl PipelineRunner {
                     target: usize,
                     run_id: &[u32],
                     tree_shape: &[u32],
-                    broadcast: bool,
                 ) {
                     let i = run_id[idx];
                     let sum = tree_shape[idx];
@@ -1045,7 +1027,6 @@ impl PipelineRunner {
                                 target,
                                 run_id,
                                 tree_shape,
-                                broadcast,
                             );
                             return;
                         }
@@ -1070,7 +1051,6 @@ impl PipelineRunner {
                             target,
                             run_id,
                             tree_shape,
-                            broadcast,
                         );
                     } else {
                         *remaining += 1;
@@ -1080,9 +1060,6 @@ impl PipelineRunner {
                     continue;
                 };
                 let mut remaining = 0;
-                let old = lock.inputs.clone(); // TODO: remove before merge
-                // let flag = can_extra && id.flag();
-                // let target = (run_id.len() + flag as usize - 1).min(index.0 as _);
                 insert(
                     &mut remaining,
                     &mut lock.inputs,
@@ -1090,14 +1067,12 @@ impl PipelineRunner {
                     run_id.len() - 1,
                     run_id,
                     tree_shape,
-                    broadcast.is_none(),
                 );
-                tracing::debug!("insert: {:#?}", (old, &lock.inputs));
                 if broadcast.is_some() {
                     continue;
                 }
             }
-            self.pre_propagate(next, run_id, false, parent);
+            self.pre_propagate(next, run_id, parent);
         }
     }
     /// Clean up the state for a finished component
@@ -1318,10 +1293,12 @@ impl PipelineRunner {
                         continue;
                     };
                     let mut remaining = u32::MAX;
-                    let old = lock.inputs.clone(); // TODO: remove before merge
-                    let flag = can_extra && id.flag();
-                    let target = (run_id.len() + flag as usize - 1).min(index.0 as _);
-                    tracing::debug!(target, "cleaning up: {old:#?}");
+                    let extra = if can_extra {
+                        id.flag() as usize + push.is_some() as usize
+                    } else {
+                        0
+                    };
+                    let target = (run_id.len() + extra - 1).min(index.0 as _);
                     cleanup(
                         &mut remaining,
                         &mut lock.inputs,
@@ -1335,13 +1312,6 @@ impl PipelineRunner {
                         context,
                         callback,
                         scope,
-                    );
-                    tracing::debug!(
-                        target,
-                        flag = id.flag(),
-                        ?index,
-                        "cleanup: {:#?}",
-                        (old, &lock.inputs)
                     );
                     if broadcast.is_some() {
                         continue; // skip the propagation
