@@ -1014,6 +1014,7 @@ impl PipelineRunner {
             if let InputMode::Multiple {
                 ref mutable,
                 broadcast,
+                ref tree_shape,
                 ..
             } = next.input_mode
             {
@@ -1022,55 +1023,74 @@ impl PipelineRunner {
                     inputs: &mut Vec<Option<InputTree>>,
                     idx: usize,
                     target: usize,
-                    extra: usize,
                     run_id: &[u32],
+                    tree_shape: &[u32],
+                    broadcast: bool,
                 ) {
-                    let i = run_id.get(idx).copied();
+                    let i = run_id[idx];
+                    let sum = tree_shape[idx];
+                    let size = sum - tree_shape.get(1).unwrap_or(&0);
                     if idx < target {
-                        for opt in &mut *inputs {
+                        let mut empty = None;
+                        for (n, opt) in inputs.iter_mut().enumerate() {
                             let Some(tree) = opt else { continue };
-                            if i.is_some_and(|i| i != tree.branch_id) {
+                            if i != tree.branch_id {
+                                empty = Some(n);
                                 continue;
                             }
-                            if idx + extra == target {
-                                *remaining += 1;
-                            } else {
-                                insert(
-                                    &mut tree.remaining_finish,
-                                    &mut tree.next,
-                                    idx + 1,
-                                    target,
-                                    extra,
-                                    run_id,
-                                );
-                            }
+                            insert(
+                                &mut tree.remaining_finish,
+                                &mut tree.next,
+                                idx + 1,
+                                target,
+                                run_id,
+                                tree_shape,
+                                broadcast,
+                            );
+                            return;
                         }
+                        let new = InputTree {
+                            vals: smallvec::smallvec![PLACEHOLDER_DATA.clone(); size as _],
+                            next: Vec::new(),
+                            branch_id: i,
+                            remaining_inputs: size,
+                            remaining_finish: sum,
+                        };
+                        let tree = if let Some(n) = empty {
+                            inputs[n] = Some(new);
+                            inputs[n].as_mut().unwrap()
+                        } else {
+                            inputs.push(Some(new));
+                            inputs.last_mut().unwrap().as_mut().unwrap()
+                        };
+                        insert(
+                            &mut tree.remaining_finish,
+                            &mut tree.next,
+                            idx + 1,
+                            target,
+                            run_id,
+                            tree_shape,
+                            broadcast,
+                        );
                     } else {
-                        for opt in &mut *inputs {
-                            let Some(tree) = opt else { continue };
-                            if i.is_some_and(|i| i != tree.branch_id) {
-                                continue;
-                            }
-                            if extra == 0 {
-                                *remaining += 1;
-                            }
-                        }
+                        *remaining += 1;
                     }
                 }
                 let Ok(mut lock) = mutable.lock() else {
                     continue;
                 };
-                let mut remaining = u32::MAX;
+                let mut remaining = 0;
                 let old = lock.inputs.clone(); // TODO: remove before merge
-                let flag = can_extra && id.flag();
-                let target = (run_id.len() + flag as usize - 1).min(index.0 as _);
+                // let flag = can_extra && id.flag();
+                // let target = (run_id.len() + flag as usize - 1).min(index.0 as _);
                 insert(
                     &mut remaining,
                     &mut lock.inputs,
                     0,
-                    target,
-                    target.saturating_sub(run_id.len() - 1),
+                    run_id.len() - 1,
                     run_id,
+                    tree_shape,
+                    broadcast.is_none(),
                 );
                 tracing::debug!("insert: {:#?}", (old, &lock.inputs));
                 if broadcast.is_some() {
