@@ -167,7 +167,7 @@ impl Component for GroupComponent {
         })
     }
     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
-        let (inner, scope, _) = ctx.explode();
+        let (mut inner, scope) = ctx.explode();
         let Some((state, c)) = self.inner.get_state_flat() else {
             return;
         };
@@ -191,7 +191,10 @@ impl Component for GroupComponent {
                 .collect::<Vec<_>>();
             spawn_recursive(scope, move |scope| {
                 let flag = flag_clone.load(Ordering::Acquire);
-                flag == u32::MAX || {
+                let next = flag == u32::MAX;
+                if next {
+                    inner.finish(scope);
+                } else {
                     let _guard = span.enter();
                     for (channel, (listener, kind)) in multi.iter() {
                         let val = listener.data.lock().unwrap().remove(&flag);
@@ -215,8 +218,8 @@ impl Component for GroupComponent {
                             }
                         }
                     }
-                    false
                 }
+                next
             });
         }
     }

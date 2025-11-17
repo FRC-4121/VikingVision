@@ -2,6 +2,7 @@ use crate::pipeline::graph::GraphComponentId;
 use smol_str::SmolStr;
 
 pub mod apriltag;
+pub mod collect;
 pub mod draw;
 pub mod ffmpeg;
 pub mod group;
@@ -36,6 +37,7 @@ impl From<GraphComponentId> for ComponentIdentifier {
 pub mod prelude {
     #[cfg(feature = "apriltag")]
     pub use super::apriltag::{AprilTagComponent, DetectPoseComponent};
+    pub use super::collect::{CollectVecComponent, SelectLastComponent};
     pub use super::draw::DrawComponent;
     pub use super::ffmpeg::FfmpegComponent;
     pub use super::group::GroupComponent;

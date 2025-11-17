@@ -4,23 +4,200 @@ use crate::pipeline::component::TypeMismatch;
 use crate::utils::LogErr;
 use litemap::LiteMap;
 use std::convert::Infallible;
-use std::num::NonZero;
 use std::ops::Deref;
 use std::sync::LazyLock;
 use supply::prelude::*;
 
-#[derive(Debug)]
-pub(crate) struct InputTree {
+/// A tree of inputs passed to a component.
+///
+/// This is passed to components that take a `MinTree` or `FullTree` as their input kind. Note that this
+/// isn't perfectly optimal, and may have completely empty layers - if you want to try to implement this
+/// better, be my guest.
+#[derive(Debug, Clone)]
+pub struct InputTree {
+    /// The input values at this level of the tree
     pub vals: SmallVec<[Arc<dyn Data>; 2]>,
+    /// The next layer of the tree, with the inputs that branched after this
     pub next: Vec<Option<InputTree>>,
-    pub remaining_inputs: u32,
-    pub remaining_finish: u32,
-    pub iter: u32,
-    pub prev_done: bool,
+    /// The last element ID of the component that branched at this depth
+    pub branch_id: u32,
+    pub(crate) remaining_inputs: u32,
+    pub(crate) remaining_finish: u32,
+}
+impl Data for InputTree {}
+impl PartialEq for InputTree {
+    fn eq(&self, other: &Self) -> bool {
+        self.remaining_inputs == other.remaining_inputs
+            && self.remaining_finish == other.remaining_finish
+            && self.branch_id == other.branch_id
+            && self.vals.len() == other.vals.len()
+            && self.next == other.next
+    }
+}
+impl InputTree {
+    /// Iterate over the values in a certain input index in this tree.
+    pub fn iter(&self, idx: InputIndex) -> InputIterator<'_> {
+        let mut vec = Vec::with_capacity(idx.0 as usize + 1);
+        vec.push((self, 0));
+        InputIterator { vec, target: idx }
+    }
+    /// Iterate over the values in a certain input index, along with the corresponding [`RunId`] for those values.
+    ///
+    /// Since the IDs are stored as a prefix tree, the run ID of this component must be passed in order to get correct IDs.
+    pub fn indexed_iter(&self, idx: InputIndex, relative: RunId) -> IndexedInputIterator<'_> {
+        let mut vec = Vec::with_capacity(idx.0 as usize + 1);
+        vec.push((self, 0));
+        IndexedInputIterator {
+            vec,
+            target: idx,
+            index: relative.0,
+        }
+    }
+    /// Get the first input at the given index.
+    ///
+    /// Comparisons are done by the run ID.
+    pub fn first(&self, idx: InputIndex) -> Option<&Arc<dyn Data>> {
+        match idx {
+            InputIndex(0, c) => self
+                .vals
+                .get(c as usize)
+                .filter(|v| !Arc::ptr_eq(v, &PLACEHOLDER_DATA)),
+            InputIndex(t, c) => {
+                let mut lower_bound = None;
+                loop {
+                    let mut min = None::<&InputTree>;
+                    for i in &self.next {
+                        let Some(tree) = i else { continue };
+                        if lower_bound.is_some_and(|b| b >= tree.branch_id) {
+                            continue;
+                        }
+                        if let Some(min) = &mut min {
+                            if min.branch_id > tree.branch_id {
+                                *min = tree;
+                            }
+                        } else {
+                            min = Some(tree);
+                        }
+                    }
+                    let min = min?;
+                    if let Some(found) = min.first(InputIndex(t - 1, c)) {
+                        return Some(found);
+                    } else {
+                        lower_bound = Some(min.branch_id);
+                    }
+                }
+            }
+        }
+    }
+    /// Get the last input at the given index.
+    ///
+    /// Comparisons are done by the run ID.
+    pub fn last(&self, idx: InputIndex) -> Option<&Arc<dyn Data>> {
+        match idx {
+            InputIndex(0, c) => self
+                .vals
+                .get(c as usize)
+                .filter(|v| !Arc::ptr_eq(v, &PLACEHOLDER_DATA)),
+            InputIndex(t, c) => {
+                let mut upper_bound = None;
+                loop {
+                    let mut max = None::<&InputTree>;
+                    for i in &self.next {
+                        let Some(tree) = i else { continue };
+                        if upper_bound.is_some_and(|b| b <= tree.branch_id) {
+                            continue;
+                        }
+                        if let Some(max) = &mut max {
+                            if max.branch_id < tree.branch_id {
+                                *max = tree;
+                            }
+                        } else {
+                            max = Some(tree);
+                        }
+                    }
+                    let max = max?;
+                    if let Some(found) = max.last(InputIndex(t - 1, c)) {
+                        return Some(found);
+                    } else {
+                        upper_bound = Some(max.branch_id);
+                    }
+                }
+            }
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct InputIndex(pub u32, pub u32);
+/// Pop a value from the stack and increment the previous index
+fn pop<'a>(vec: &mut Vec<(&'a InputTree, usize)>) -> Option<&'a InputTree> {
+    let v = vec.pop().map(|(t, _)| t);
+    if let Some((_, back)) = vec.last_mut() {
+        *back += 1;
+    }
+    v
+}
+
+/// The iterator returned from [`InputTree::iter`]
+#[derive(Debug, Clone)]
+pub struct InputIterator<'a> {
+    vec: Vec<(&'a InputTree, usize)>,
+    target: InputIndex,
+}
+impl<'a> Iterator for InputIterator<'a> {
+    type Item = &'a Arc<dyn Data>;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.vec.len() == self.target.0 as usize + 1 {
+                let tree = pop(&mut self.vec).unwrap();
+                if let Some(input) = tree.vals.get(self.target.1 as usize) {
+                    return Some(input);
+                }
+            }
+            let (tree, idx) = self.vec.last_mut()?;
+            match tree.next.get(*idx) {
+                None => drop(pop(&mut self.vec)),
+                Some(None) => *idx += 1,
+                Some(Some(tree)) => self.vec.push((tree, 0)),
+            }
+        }
+    }
+}
+
+/// The iterator returned from [`InputTree::indexed_iter`]
+#[derive(Debug, Clone)]
+pub struct IndexedInputIterator<'a> {
+    vec: Vec<(&'a InputTree, usize)>,
+    target: InputIndex,
+    index: SmallVec<[u32; 2]>,
+}
+impl<'a> Iterator for IndexedInputIterator<'a> {
+    type Item = (&'a Arc<dyn Data>, RunId);
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.vec.len() == self.target.0 as usize + 1 {
+                let tree = pop(&mut self.vec).unwrap();
+                self.index.pop();
+                if let Some(input) = tree.vals.get(self.target.1 as usize) {
+                    return Some((input, RunId(self.index.clone())));
+                }
+            }
+            let (tree, idx) = self.vec.last_mut()?;
+            match tree.next.get(*idx) {
+                None => {
+                    pop(&mut self.vec);
+                    self.index.pop();
+                }
+                Some(None) => *idx += 1,
+                Some(Some(tree)) => {
+                    self.index.push(tree.branch_id);
+                    self.vec.push((tree, 0));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InputIndex(pub u32, pub u32);
 
 #[derive(Debug, Default)]
 pub(crate) struct MutableData {
@@ -33,12 +210,12 @@ pub(crate) struct MutableData {
 pub(crate) enum InputMode {
     Single {
         name: Option<SmolStr>,
-        refs: Mutex<Vec<(SmallVec<[u32; 2]>, NonZero<u32>)>>,
     },
     Multiple {
         lookup: HashMap<SmolStr, InputIndex>,
         tree_shape: SmallVec<[u32; 2]>,
         mutable: Mutex<MutableData>,
+        broadcast: Option<u32>,
     },
 }
 pub(super) struct PlaceholderData;
@@ -599,7 +776,7 @@ impl PipelineRunner {
                 };
                 let mut indices = smallvec::smallvec![0; tree_shape.len()];
                 let mut tree = build_tree(args.0.into_iter(), tree_shape);
-                tree.iter = run_id;
+                tree.branch_id = run_id;
                 let mut lock = mutable.lock().unwrap();
                 let n = lock.first;
                 indices[0] = n as _;
@@ -617,18 +794,16 @@ impl PipelineRunner {
             }
         };
         let data = &self.components[component.index()];
-        scope.spawn(move |scope| {
-            ComponentContextInner {
-                runner: self,
-                component: data,
-                input,
-                callback,
-                context,
-                run_id: RunId(smallvec::smallvec![run_id]),
-                branch_count: Mutex::new(LiteMap::new()),
-            }
-            .run(scope);
-        });
+        ComponentContextInner {
+            runner: self,
+            component: data,
+            input,
+            callback,
+            context,
+            run_id: RunId(smallvec::smallvec![run_id]),
+            branch_count: Mutex::new(LiteMap::new()),
+        }
+        .spawn(scope);
         Ok(())
     }
 }
@@ -639,14 +814,11 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
         next: Vec::new(),
         remaining_inputs: 0,
         remaining_finish: 0,
-        iter: 0,
-        prev_done: true,
+        branch_id: 0,
     };
     let mut tree = &mut root;
-    let mut last = 0;
     while let Some(&sum) = shape.split_off_first() {
-        let len = sum - last;
-        last = sum;
+        let len = sum - shape.first().unwrap_or(&0);
         tree.vals.extend(iter.by_ref().take(len as _));
         tree.remaining_inputs = len;
         if !shape.is_empty() {
@@ -655,8 +827,7 @@ fn build_tree(mut iter: std::vec::IntoIter<Arc<dyn Data>>, mut shape: &[u32]) ->
                 next: Vec::new(),
                 remaining_inputs: 0,
                 remaining_finish: 0,
-                iter: 0,
-                prev_done: true,
+                branch_id: 0,
             })];
             tree = tree.next[0].as_mut().unwrap();
         }

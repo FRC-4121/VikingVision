@@ -6,6 +6,7 @@ use super::runner::ComponentContext;
 use crate::buffer::Buffer;
 use crate::pipeline::graph::{GraphComponentId, IdResolver, PipelineGraph};
 use crate::utils::LogErr;
+use smol_str::SmolStr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::{Arc, Mutex, TryLockError};
@@ -229,7 +230,17 @@ pub enum Inputs {
     /// This component takes inputs through its primary input.
     Primary,
     /// This component takes multiple, named inputs (or none at all).
-    Named(Vec<smol_str::SmolStr>),
+    ///
+    /// If one input branches before another is reached, this will rerun this component with each set of inputs.
+    Named(Vec<SmolStr>),
+    /// This comopnent receives an [`InputTree`] on the primary input, rooted at the earliest branching input.
+    ///
+    /// This is useful for components that "collect" previous values to combine them.
+    MinTree(Vec<SmolStr>),
+    /// This component receives an [`InputTree`] on the primary input, once per pipeline run.
+    ///
+    /// Similarly to [`Inputs::Mintree`], this can collect and combine previous values, but it has access to all of the input for a pipeline run.
+    FullTree(Vec<SmolStr>),
 }
 impl Inputs {
     /// `Named(Vec::new())` means a component taktes no inputs; this is just an alias for that.
@@ -237,14 +248,23 @@ impl Inputs {
     pub const fn none() -> Self {
         Self::Named(Vec::new())
     }
+    /// Convenience function to create a [`Named`] variant.
     pub fn named<S: Into<smol_str::SmolStr>, I: IntoIterator<Item = S>>(iter: I) -> Self {
         Self::Named(iter.into_iter().map(Into::into).collect())
+    }
+    /// Convenience function to create a [`MinTree`] variant.
+    pub fn min_tree<S: Into<smol_str::SmolStr>, I: IntoIterator<Item = S>>(iter: I) -> Self {
+        Self::MinTree(iter.into_iter().map(Into::into).collect())
+    }
+    /// Convenience function to create a [`FullTree`] variant.
+    pub fn full_tree<S: Into<smol_str::SmolStr>, I: IntoIterator<Item = S>>(iter: I) -> Self {
+        Self::FullTree(iter.into_iter().map(Into::into).collect())
     }
     /// Get the number of inputs this component is expecting
     pub fn expecting(&self) -> usize {
         match self {
             Self::Primary => 1,
-            Self::Named(v) => v.len(),
+            Self::Named(v) | Self::MinTree(v) | Self::FullTree(v) => v.len(),
         }
     }
     /// Check whether a channel is expected from this component.
@@ -253,10 +273,12 @@ impl Inputs {
     /// [`Component::can_take`] on instead.
     pub fn can_take(&self, channel: Option<&str>, component: Option<&dyn Component>) -> bool {
         match self {
-            Inputs::Primary => channel.is_none(),
-            Inputs::Named(vec) => channel.is_some_and(|ch| {
-                vec.iter().any(|v| v == ch) || component.is_some_and(|c| c.can_take(ch))
-            }),
+            Self::Primary => channel.is_none(),
+            Self::Named(vec) | Self::MinTree(vec) | Self::FullTree(vec) => {
+                channel.is_some_and(|ch| {
+                    vec.iter().any(|v| v == ch) || component.is_some_and(|c| c.can_take(ch))
+                })
+            }
         }
     }
 }

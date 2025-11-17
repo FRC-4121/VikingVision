@@ -2,7 +2,6 @@ use super::*;
 use crate::pipeline::component::{IntoData, OutputKind};
 use litemap::LiteMap;
 use std::mem::ManuallyDrop;
-use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
@@ -234,6 +233,82 @@ pub mod lazy_maps {
             f.debug_map().entries(self.iter()).finish()
         }
     }
+
+    /// The iterator returned from [`InputIndexMap::iter`]
+    #[derive(Clone)]
+    pub struct InputIndexMapIter<'r>(Iter<'r, SmolStr, InputIndex>, u32);
+    impl<'r> Iterator for InputIndexMapIter<'r> {
+        type Item = (&'r SmolStr, InputIndex);
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0
+                .next()
+                .map(|(k, InputIndex(r, c))| (k, InputIndex(r - self.1, *c)))
+        }
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            self.0.size_hint()
+        }
+    }
+    impl<'r> ExactSizeIterator for InputIndexMapIter<'r> {
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+    }
+    impl<'r> std::iter::FusedIterator for InputIndexMapIter<'r> {}
+
+    /// A map of input channels to [`InputIndex`]es that can be used on an input tree.
+    ///
+    /// This doesn't allocate, and borrows from the runner.
+    #[derive(Clone, Copy)]
+    pub struct InputIndexMap<'r>(pub(super) &'r HashMap<SmolStr, InputIndex>, pub(super) u32);
+    impl<'r> InputIndexMap<'r> {
+        pub fn iter(&self) -> InputIndexMapIter<'r> {
+            InputIndexMapIter(self.0.iter(), self.1)
+        }
+        pub fn keys(&self) -> Keys<'r, SmolStr, InputIndex> {
+            self.0.keys()
+        }
+        pub fn contains_key<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> bool
+        where
+            SmolStr: Borrow<Q>,
+        {
+            self.0.contains_key(chan)
+        }
+        pub fn get<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> Option<InputIndex>
+        where
+            SmolStr: Borrow<Q>,
+        {
+            self.0
+                .get(chan)
+                .map(|InputIndex(t, c)| InputIndex(t - self.1, *c))
+        }
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+        pub fn is_empty(&self) -> bool {
+            self.len() == 0
+        }
+    }
+    impl<'r> IntoIterator for InputIndexMap<'r> {
+        type IntoIter = InputIndexMapIter<'r>;
+        type Item = (&'r SmolStr, InputIndex);
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
+        }
+    }
+    impl<'r> IntoIterator for &InputIndexMap<'r> {
+        type IntoIter = InputIndexMapIter<'r>;
+        type Item = (&'r SmolStr, InputIndex);
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
+        }
+    }
+    impl Debug for InputIndexMap<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            f.debug_map().entries(self.iter()).finish()
+        }
+    }
 }
 
 /// Core context used to get input and submit output from a component body.
@@ -265,7 +340,7 @@ impl Debug for ComponentContextInner<'_> {
 impl Drop for ComponentContextInner<'_> {
     fn drop(&mut self) {
         if !self.finished() {
-            self.finish(None);
+            tracing::warn!("component dropped without finishing");
         }
     }
 }
@@ -316,6 +391,19 @@ impl<'r> ComponentContextInner<'r> {
         lazy_maps::ListenerMap(&self.component.dependents)
     }
 
+    pub fn input_indices(&self) -> Option<lazy_maps::InputIndexMap<'r>> {
+        if let InputMode::Multiple {
+            ref lookup,
+            broadcast: Some(prune),
+            ..
+        } = self.component.input_mode
+        {
+            Some(lazy_maps::InputIndexMap(lookup, prune))
+        } else {
+            None
+        }
+    }
+
     /// Retrieve the input data from either a named channel or the primary one.
     pub fn get<'b>(&self, channel: impl Into<Option<&'b str>>) -> Option<Arc<dyn Data>> {
         if self.finished() {
@@ -327,10 +415,11 @@ impl<'r> ComponentContextInner<'r> {
         match &self.input {
             InputKind::Empty => None,
             InputKind::Single(data) => {
-                let InputMode::Single { name, .. } = &self.component.input_mode else {
-                    unreachable!()
+                let exp = match &self.component.input_mode {
+                    InputMode::Single { name, .. } => name.as_deref(),
+                    _ => None,
                 };
-                (name.as_deref() == req_channel).then(|| data.clone())
+                (exp == req_channel).then(|| data.clone())
             }
             InputKind::Multiple(branch) => req_channel.and_then(|name| {
                 let InputMode::Multiple {
@@ -341,7 +430,10 @@ impl<'r> ComponentContextInner<'r> {
                 };
                 let mut idx = *lookup.get(name)?;
                 let (head, mut branch) = branch.split_first().unwrap_or((&0, &[]));
-                let lock = mutable.lock().unwrap();
+                let Ok(lock) = mutable.lock() else {
+                    tracing::warn!("attempted to read from a poisoned component");
+                    return None;
+                };
                 let mut this = lock
                     .inputs
                     .get(*head as usize)
@@ -406,6 +498,7 @@ impl<'r> ComponentContextInner<'r> {
                     lookup,
                     tree_shape,
                     mutable,
+                    ..
                 } = &self.component.input_mode
                 else {
                     unreachable!()
@@ -482,7 +575,7 @@ impl<'r> ComponentContextInner<'r> {
     where
         'r: 's,
     {
-        let _guard = tracing::info_span!("submit", ?channel).entered();
+        let _guard = tracing::error_span!("submit", ?channel).entered();
         let dependents = self
             .component
             .dependents
@@ -514,6 +607,9 @@ impl<'r> ComponentContextInner<'r> {
             let mut next_id = run_id.clone();
             next_id.0.extend(ext);
             let next_comp = &self.runner.components[comp_id.index()];
+            let _guard =
+                tracing::error_span!("next", %comp_id, name = &*next_comp.name, ?index).entered();
+            let mut deferred = Vec::new();
             match &next_comp.input_mode {
                 InputMode::Single { .. } => {
                     self.spawn_next(next_comp, InputKind::Single(data.clone()), next_id, scope)
@@ -521,23 +617,25 @@ impl<'r> ComponentContextInner<'r> {
                 InputMode::Multiple {
                     tree_shape,
                     mutable,
+                    broadcast,
                     ..
                 } => {
-                    let mut lock = mutable.lock().unwrap();
+                    let Ok(mut lock) = mutable.lock() else {
+                        tracing::warn!("attempted to submit to a poisoned component");
+                        continue;
+                    };
                     // this has to be written as a tail-recursive function because Rust's control-flow can't track the looping
                     #[allow(clippy::too_many_arguments)]
                     fn insert_arg<'s, 'r: 's>(
                         mut slice: &[u32],
                         mut shape: &[u32],
-                        last_idx: u32,
                         index: usize,
                         inputs: &mut Vec<Option<InputTree>>,
+                        broadcast: bool,
                         data: Arc<dyn Data>,
                         mut path: SmallVec<[u32; 2]>,
+                        deferred: &mut Vec<(SmallVec<[u32; 2]>, RunId)>,
                         prev_done: bool,
-                        this: &ComponentContextInner<'r>,
-                        scope: &rayon::Scope<'s>,
-                        component: &'r ComponentData,
                         mut run_id: RunId,
                     ) {
                         let (Some(&idx), Some(&sum)) =
@@ -547,13 +645,13 @@ impl<'r> ComponentContextInner<'r> {
                         };
                         let is_last = slice.is_empty();
                         let mut open = None;
-                        let size = sum - last_idx;
+                        let size = sum - shape.first().unwrap_or(&0);
                         for (n, i) in inputs.iter_mut().enumerate() {
                             let Some(tree) = i else {
                                 open = Some(n);
                                 continue;
                             };
-                            if tree.iter == idx {
+                            if tree.branch_id == idx {
                                 let done = prev_done && tree.remaining_inputs == 0;
                                 if is_last {
                                     tree.vals[index] = data;
@@ -563,9 +661,7 @@ impl<'r> ComponentContextInner<'r> {
                                             shape.len(),
                                             &mut tree.next,
                                             &mut path,
-                                            this,
-                                            scope,
-                                            component,
+                                            deferred,
                                             &mut run_id,
                                         );
                                     }
@@ -574,15 +670,13 @@ impl<'r> ComponentContextInner<'r> {
                                     insert_arg(
                                         slice,
                                         shape,
-                                        sum,
                                         index,
                                         &mut tree.next,
+                                        broadcast,
                                         data,
                                         path,
+                                        deferred,
                                         done,
-                                        this,
-                                        scope,
-                                        component,
                                         run_id,
                                     );
                                 }
@@ -590,19 +684,21 @@ impl<'r> ComponentContextInner<'r> {
                             }
                         }
                         let mut vals = smallvec::smallvec![PLACEHOLDER_DATA.clone(); size as usize];
-                        let remaining = if is_last {
+                        let mut remaining_inputs = size;
+                        let mut remaining_finish = sum;
+                        if is_last {
                             vals[index] = data.clone();
-                            size - 1
-                        } else {
-                            size
-                        };
+                            remaining_inputs -= 1;
+                        }
+                        if broadcast && shape.is_empty() {
+                            remaining_finish = u32::MAX;
+                        }
                         let new = InputTree {
                             vals,
                             next: Vec::new(),
-                            iter: idx,
-                            remaining_inputs: remaining,
-                            remaining_finish: shape.first().map_or(u32::MAX, |v| v - sum),
-                            prev_done,
+                            branch_id: idx,
+                            remaining_inputs,
+                            remaining_finish,
                         };
                         let (inserted, new_inputs) = if let Some(n) = open {
                             let r = &mut inputs[n];
@@ -614,23 +710,21 @@ impl<'r> ComponentContextInner<'r> {
                             (n, &mut inputs[n].as_mut().unwrap().next)
                         };
                         path.push(inserted as u32);
-                        let done = prev_done && remaining == 0;
+                        let done = prev_done && remaining_inputs == 0;
                         if is_last {
                             if done {
                                 maybe_run(
                                     shape.len(),
                                     new_inputs,
                                     &mut path,
-                                    this,
-                                    scope,
-                                    component,
+                                    deferred,
                                     &mut run_id,
                                 );
                             }
                         } else {
                             insert_arg(
-                                slice, shape, sum, index, new_inputs, data, path, done, this,
-                                scope, component, run_id,
+                                slice, shape, index, new_inputs, broadcast, data, path, deferred,
+                                done, run_id,
                             );
                         }
                     }
@@ -639,18 +733,17 @@ impl<'r> ComponentContextInner<'r> {
                         remaining: usize,
                         inputs: &mut Vec<Option<InputTree>>,
                         path: &mut SmallVec<[u32; 2]>,
-                        this: &ComponentContextInner<'r>,
-                        scope: &rayon::Scope<'s>,
-                        component: &'r ComponentData,
+                        deferred: &mut Vec<(SmallVec<[u32; 2]>, RunId)>,
                         run_id: &mut RunId,
                     ) {
                         let Some(next) = remaining.checked_sub(1) else {
-                            this.spawn_next(
-                                component,
-                                InputKind::Multiple(path.clone()),
-                                run_id.clone(),
-                                scope,
-                            );
+                            deferred.push((path.clone(), run_id.clone()));
+                            // this.spawn_next(
+                            //     component,
+                            //     InputKind::Multiple(path.clone()),
+                            //     run_id.clone(),
+                            //     scope,
+                            // );
                             return;
                         };
                         for (n, opt) in inputs.iter_mut().enumerate() {
@@ -658,10 +751,9 @@ impl<'r> ComponentContextInner<'r> {
                             if tree.remaining_inputs > 0 {
                                 continue;
                             }
-                            tree.prev_done = true;
                             path.push(n as _);
-                            run_id.0.push(tree.iter);
-                            maybe_run(next, &mut tree.next, path, this, scope, component, run_id);
+                            run_id.0.push(tree.branch_id);
+                            maybe_run(next, &mut tree.next, path, deferred, run_id);
                             path.pop();
                             run_id.0.pop();
                         }
@@ -669,17 +761,19 @@ impl<'r> ComponentContextInner<'r> {
                     insert_arg(
                         &run_id.0,
                         tree_shape,
-                        0,
                         index.1 as _,
                         &mut lock.inputs,
+                        broadcast.is_none(),
                         data.clone(),
                         SmallVec::new(),
-                        true,
-                        self,
-                        scope,
-                        next_comp,
+                        &mut deferred,
+                        broadcast.is_none(),
                         next_id.clone(),
                     );
+                    drop(lock);
+                    for (path, run_id) in deferred.drain(..) {
+                        self.spawn_next(next_comp, InputKind::Multiple(path), run_id, scope);
+                    }
                 }
             }
         }
@@ -700,18 +794,16 @@ impl<'r> ComponentContextInner<'r> {
         let runner = self.runner;
         let callback = self.callback.clone();
         let context = self.context.clone();
-        scope.spawn(move |scope| {
-            ComponentContextInner {
-                input,
-                runner,
-                component,
-                callback,
-                context,
-                run_id,
-                branch_count: Mutex::new(LiteMap::new()),
-            }
-            .run(scope);
-        });
+        ComponentContextInner {
+            input,
+            runner,
+            component,
+            callback,
+            context,
+            run_id,
+            branch_count: Mutex::new(LiteMap::new()),
+        }
+        .spawn(scope);
     }
 
     /// Mark this component as finished and cleans up resources.
@@ -721,70 +813,53 @@ impl<'r> ComponentContextInner<'r> {
     ///
     /// This happens automatically when the context is dropped,
     /// but can be called explicitly for more precise control.
-    pub fn finish<'s>(&mut self, signal: Option<&rayon::Scope<'s>>)
+    pub fn finish<'s>(&mut self, scope: &rayon::Scope<'s>)
     where
         'r: 's,
     {
-        let _guard = tracing::info_span!("finish");
+        let _guard = tracing::error_span!("finish");
         if self.finished() {
             tracing::warn!("finish() was called twice for a component");
             return;
         }
-        if let Some(scope) = signal {
-            self.submit_impl("$finish", UNIT_ARC.clone(), scope);
-        }
-        let mut propagate = false;
+        self.submit_impl("$finish", UNIT_ARC.clone(), scope);
         match (&self.component.input_mode, &self.input) {
-            (InputMode::Single { refs, .. }, InputKind::Single(_)) => {
-                let mut lock = refs.lock().unwrap();
-                propagate = true;
-                for (n, (k, v)) in lock.iter_mut().enumerate() {
-                    if self.run_id.0.starts_with(k) {
-                        if let Some(v2) = v.get().checked_sub(1).and_then(NonZero::new) {
-                            *v = v2;
-                            propagate = false;
-                        } else {
-                            lock.swap_remove(n);
-                        }
-                        break;
-                    }
-                }
-            }
+            (InputMode::Single { .. }, InputKind::Single(_)) => {}
             (InputMode::Multiple { mutable, .. }, InputKind::Multiple(path)) => {
                 fn cleanup(
                     inputs: &mut Vec<Option<InputTree>>,
                     remaining: &mut u32,
                     mut path: &[u32],
-                ) -> (bool, bool) {
+                ) -> bool {
                     let Some(&idx) = path.split_off_first() else {
                         *remaining = 0;
-                        return (true, false);
+                        return true;
                     };
                     let idx = idx as usize;
                     let Some(tree) = inputs.get_mut(idx).and_then(Option::as_mut) else {
-                        return (false, false);
+                        return false;
                     };
-                    let (unwind, propagate) =
-                        cleanup(&mut tree.next, &mut tree.remaining_finish, path);
+                    let unwind = cleanup(&mut tree.next, &mut tree.remaining_finish, path);
                     if !unwind
                         || tree.remaining_finish != 0
                         || tree.next.iter().any(Option::is_some)
                     {
-                        return (false, propagate);
+                        return false;
                     }
                     inputs[idx] = None;
                     while inputs.pop_if(|x| x.is_none()).is_some() {}
-                    (true, true)
+                    true
                 }
                 let fst = path[0] as usize;
-                let mut lock = mutable.lock().unwrap();
-                let unwind;
-                let mut remaining = u32::MAX;
-                (unwind, propagate) = cleanup(&mut lock.inputs, &mut remaining, path);
-                if unwind && fst < lock.first {
-                    lock.first = fst;
+                if let Ok(mut lock) = mutable.lock() {
+                    let mut remaining = u32::MAX;
+                    let unwind = cleanup(&mut lock.inputs, &mut remaining, path);
+                    if unwind && fst < lock.first {
+                        lock.first = fst;
+                    }
                 }
             }
+            (InputMode::Multiple { .. }, InputKind::Single(_)) => {} // already cleaned up
             _ => {
                 tracing::error!(
                     id = %self.comp_id(),
@@ -792,10 +867,15 @@ impl<'r> ComponentContextInner<'r> {
                 );
             }
         }
-        if propagate {
-            self.runner
-                .propagate(self.component, &self.run_id.0, &tracing::Span::current());
-        }
+        self.runner.post_propagate(
+            self.component,
+            &self.run_id.0,
+            true,
+            &tracing::Span::current(),
+            &self.context,
+            &self.callback,
+            scope,
+        );
         self.input = InputKind::Empty;
         if let Some(callback) = self.callback.take() {
             tracing::trace!(
@@ -815,20 +895,22 @@ impl<'r> ComponentContextInner<'r> {
 
     /// Create a tracing span for this component execution.
     pub fn tracing_span(&self) -> tracing::Span {
-        tracing::info_span!("run", name = &**self.name(), run = %self.run_id, component = %self.comp_id())
+        tracing::error_span!("run", name = &**self.name(), run = %self.run_id, component = %self.comp_id())
     }
 
     /// Run the component with tracing instrumentation.
-    pub(super) fn run<'s>(self, scope: &rayon::Scope<'s>)
+    pub(super) fn spawn<'s>(self, scope: &rayon::Scope<'s>)
     where
         'r: 's,
     {
-        self.tracing_span().in_scope(|| {
-            self.component.component.run(ComponentContext {
-                inner: self,
-                scope,
-                signal: true,
-            })
+        self.runner
+            .pre_propagate(self.component, &self.run_id.0, &tracing::Span::current());
+        scope.spawn(move |scope| {
+            self.tracing_span().in_scope(|| {
+                self.component
+                    .component
+                    .run(ComponentContext { inner: self, scope })
+            });
         });
     }
 }
@@ -844,11 +926,10 @@ impl<'r> ComponentContextInner<'r> {
 pub struct ComponentContext<'a, 's, 'r: 's> {
     pub inner: ComponentContextInner<'r>,
     pub scope: &'a rayon::Scope<'s>,
-    pub signal: bool,
 }
 impl<'s, 'r: 's> Drop for ComponentContext<'_, 's, 'r> {
     fn drop(&mut self) {
-        self.finish_signal(self.signal);
+        self.finish();
     }
 }
 impl<'r> Deref for ComponentContext<'_, '_, 'r> {
@@ -865,9 +946,9 @@ impl DerefMut for ComponentContext<'_, '_, '_> {
 
 impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
     /// Get the inner context, scope, and signal flag without calling the [`Drop`] implementation
-    pub fn explode(self) -> (ComponentContextInner<'r>, &'a rayon::Scope<'s>, bool) {
+    pub fn explode(self) -> (ComponentContextInner<'r>, &'a rayon::Scope<'s>) {
         let this = ManuallyDrop::new(self);
-        unsafe { (std::ptr::read(&this.inner), this.scope, this.signal) }
+        unsafe { (std::ptr::read(&this.inner), this.scope) }
     }
     /// Publish a result on a given channel.
     #[inline(always)]
@@ -881,28 +962,16 @@ impl<'a, 's, 'r: 's> ComponentContext<'a, 's, 'r> {
         self.inner.submit_if_listening(channel, create, self.scope);
     }
 
-    /// Finish this component and send a finish signal.
+    /// Finish this component.
     #[inline(always)]
     pub fn finish(&mut self) {
-        self.inner.finish(Some(self.scope));
-    }
-
-    /// Finish this component and maybe send a finish singal.
-    #[inline(always)]
-    pub fn finish_signal(&mut self, signal: bool) {
-        self.inner.finish(signal.then_some(self.scope));
+        self.inner.finish(self.scope);
     }
 
     /// Defer an operation to run later on the thread pool.
     pub fn defer(self, op: impl FnOnce(ComponentContext<'_, 's, 'r>) + Send + Sync + 'r) {
-        let (inner, scope, signal) = self.explode();
-        scope.spawn(move |scope| {
-            op(ComponentContext {
-                inner,
-                scope,
-                signal,
-            })
-        });
+        let (inner, scope) = self.explode();
+        scope.spawn(move |scope| op(ComponentContext { inner, scope }));
     }
 }
 
@@ -918,150 +987,337 @@ impl PipelineRunner {
                 / size_of::<ComponentData>(),
         )
     }
-    /// Clean up the state for a finished component
-    fn propagate(&self, component: &ComponentData, run_id: &[u32], parent: &tracing::Span) {
+    fn pre_propagate(&self, component: &ComponentData, run_id: &[u32], parent: &tracing::Span) {
         let _guard =
-            tracing::info_span!(parent: parent, "propagate", name = &*component.name, id = %self.component_id(component)).entered();
-        let mut buf = Vec::new();
+            tracing::error_span!(parent: parent, "pre_propagate", name = &*component.name, id = %self.component_id(component)).entered();
         for (id, index, _) in component.dependents.values().flatten() {
             let next = &self.components[id.index()];
-            match &next.input_mode {
-                InputMode::Single { refs, .. } => {
-                    {
-                        let mut lock = refs.lock().unwrap();
-                        buf.extend(
-                            lock.extract_if(.., |(k, v)| {
-                                run_id.starts_with(k)
-                                    && v.get()
-                                        .checked_sub(1)
-                                        .and_then(NonZero::new)
-                                        .inspect(|v2| *v = *v2)
-                                        .is_none()
-                            })
-                            .collect::<Vec<_>>(),
+            let _guard =
+                tracing::error_span!("next", name = &*next.name, id = %id, ?index).entered();
+            if let InputMode::Multiple {
+                ref mutable,
+                broadcast,
+                ref tree_shape,
+                ..
+            } = next.input_mode
+            {
+                fn insert(
+                    remaining: &mut u32,
+                    inputs: &mut Vec<Option<InputTree>>,
+                    idx: usize,
+                    target: usize,
+                    run_id: &[u32],
+                    tree_shape: &[u32],
+                ) {
+                    let i = run_id[idx];
+                    let sum = tree_shape[idx];
+                    let size = sum - tree_shape.get(1).unwrap_or(&0);
+                    if idx < target {
+                        let mut empty = None;
+                        for (n, opt) in inputs.iter_mut().enumerate() {
+                            let Some(tree) = opt else { continue };
+                            if i != tree.branch_id {
+                                empty = Some(n);
+                                continue;
+                            }
+                            insert(
+                                &mut tree.remaining_finish,
+                                &mut tree.next,
+                                idx + 1,
+                                target,
+                                run_id,
+                                tree_shape,
+                            );
+                            return;
+                        }
+                        let new = InputTree {
+                            vals: smallvec::smallvec![PLACEHOLDER_DATA.clone(); size as _],
+                            next: Vec::new(),
+                            branch_id: i,
+                            remaining_inputs: size,
+                            remaining_finish: sum,
+                        };
+                        let tree = if let Some(n) = empty {
+                            inputs[n] = Some(new);
+                            inputs[n].as_mut().unwrap()
+                        } else {
+                            inputs.push(Some(new));
+                            inputs.last_mut().unwrap().as_mut().unwrap()
+                        };
+                        insert(
+                            &mut tree.remaining_finish,
+                            &mut tree.next,
+                            idx + 1,
+                            target,
+                            run_id,
+                            tree_shape,
                         );
-                    }
-                    for (k, _) in buf.drain(..) {
-                        self.propagate(next, &k, parent);
+                    } else {
+                        *remaining += 1;
                     }
                 }
-                InputMode::Multiple { mutable, .. } => {
-                    #[allow(clippy::too_many_arguments)]
-                    fn cleanup(
+                let Ok(mut lock) = mutable.lock() else {
+                    continue;
+                };
+                let mut remaining = 0;
+                insert(
+                    &mut remaining,
+                    &mut lock.inputs,
+                    0,
+                    run_id.len() - 1,
+                    run_id,
+                    tree_shape,
+                );
+                if broadcast.is_some() {
+                    continue;
+                }
+            }
+            self.pre_propagate(next, run_id, parent);
+        }
+    }
+    /// Clean up the state for a finished component
+    #[allow(clippy::too_many_arguments)]
+    fn post_propagate<'s, 'r: 's>(
+        &'r self,
+        component: &'r ComponentData,
+        run_id: &[u32],
+        can_extra: bool,
+        parent: &tracing::Span,
+        context: &Context<'r>,
+        callback: &Option<Callback<'r>>,
+        scope: &rayon::Scope<'s>,
+    ) {
+        let _guard =
+            tracing::error_span!(parent: parent, "post_propagate", name = &*component.name, id = %self.component_id(component)).entered();
+        for (id, index, push) in component.dependents.values().flatten() {
+            let next = &self.components[id.index()];
+            let _guard =
+                tracing::error_span!("next", name = &*next.name, id = %id, ?index).entered();
+            match &next.input_mode {
+                InputMode::Single { .. } => {}
+                InputMode::Multiple {
+                    mutable, broadcast, ..
+                } => {
+                    fn tree_complete(tree: &InputTree) -> bool {
+                        tree.remaining_finish == 0
+                            && tree
+                                .next
+                                .iter()
+                                .all(|opt| opt.as_ref().is_none_or(tree_complete))
+                    }
+                    fn cleanup<'s, 'r: 's>(
                         remaining: &mut u32,
                         inputs: &mut Vec<Option<InputTree>>,
                         idx: usize,
                         target: usize,
+                        extra: usize,
                         run_id: &[u32],
-                        runner: &PipelineRunner,
-                        component: &ComponentData,
-                        parent: &tracing::Span,
+                        runner: &'r PipelineRunner,
+                        component: &'r ComponentData,
+                        broadcast: Option<u32>,
+                        context: &Context<'r>,
+                        callback: &Option<Callback<'r>>,
+                        scope: &rayon::Scope<'s>,
                     ) -> bool {
                         let i = run_id.get(idx).copied();
                         let mut all = true;
                         if idx < target {
                             for opt in &mut *inputs {
                                 let Some(tree) = opt else { continue };
-                                if i.is_some_and(|i| i != tree.iter) {
+                                if i.is_some_and(|i| i != tree.branch_id) {
                                     continue;
                                 }
-                                if !cleanup(
+                                if idx + extra >= target {
+                                    tree.remaining_finish -= 1;
+                                    if idx + extra == target {
+                                        *remaining -= 1;
+                                    }
+                                }
+                                let popped = cleanup(
                                     &mut tree.remaining_finish,
                                     &mut tree.next,
                                     idx + 1,
                                     target,
+                                    extra,
                                     run_id,
                                     runner,
                                     component,
-                                    parent,
-                                ) || tree.remaining_finish > 0
-                                    || tree.next.iter().any(Option::is_some)
+                                    broadcast,
+                                    context,
+                                    callback,
+                                    scope,
+                                );
+                                if !popped
+                                    || tree.remaining_finish > 0
+                                    || (broadcast.is_none()
+                                        && tree.next.iter().any(Option::is_some))
                                 {
                                     all = false;
                                     continue;
                                 }
-                                *opt = None;
+                                if let Some(to) = broadcast {
+                                    match idx.cmp(&(to as usize)) {
+                                        std::cmp::Ordering::Less => {
+                                            if tree_complete(tree) {
+                                                *opt = None
+                                            } else {
+                                                all = false
+                                            }
+                                        }
+                                        std::cmp::Ordering::Equal => {
+                                            if tree_complete(tree) {
+                                                let ctx = ComponentContextInner {
+                                                    runner,
+                                                    component,
+                                                    input: InputKind::Single(Arc::new(
+                                                        opt.take().unwrap(),
+                                                    )),
+                                                    callback: callback.clone(),
+                                                    context: context.clone(),
+                                                    branch_count: Mutex::new(LiteMap::new()),
+                                                    run_id: RunId(
+                                                        run_id[..(to as usize + 1)].into(),
+                                                    ),
+                                                };
+                                                ctx.spawn(scope);
+                                            } else {
+                                                all = false;
+                                            }
+                                        }
+                                        std::cmp::Ordering::Greater => {}
+                                    }
+                                } else {
+                                    *opt = None;
+                                }
                             }
                         } else {
-                            *remaining -= 1;
-                            if *remaining > 0 {
-                                return false;
-                            }
+                            // *remaining = remaining.saturating_sub(1);
+                            // *remaining -= 1;
+                            // if *remaining > 0 {
+                            //     return false;
+                            // }
                             for opt in &mut *inputs {
                                 let Some(tree) = opt else { continue };
-                                if i.is_some_and(|i| i != tree.iter) {
+                                if i.is_some_and(|i| i != tree.branch_id) {
                                     continue;
                                 }
+                                tree.remaining_finish -= 1;
+                                if extra == 0 {
+                                    *remaining -= 1;
+                                }
                                 if tree.remaining_finish > 0
-                                    || tree.next.iter().any(Option::is_some)
+                                    || (broadcast.is_none()
+                                        && tree.next.iter().any(Option::is_some))
                                 {
                                     all = false;
                                     continue;
                                 }
                                 let mut all_children = true;
-                                let mut any = false;
-                                let mut run_id = run_id.to_vec();
                                 for opt in &mut tree.next {
                                     let Some(input) = opt else { continue };
-                                    let rem = dft(input, &mut run_id, runner, component, parent);
-                                    if rem {
-                                        *opt = None;
-                                        any = true;
+                                    let popped = dft(input, broadcast.is_none());
+                                    if popped {
+                                        if broadcast.is_none() {
+                                            *opt = None;
+                                        }
                                     } else {
                                         all_children = false;
+                                        all = false;
+                                        if broadcast.is_none() {
+                                            break;
+                                        }
                                     }
                                 }
-                                if !any {
-                                    *opt = None;
+                                if all_children {
+                                    if let Some(to) = broadcast {
+                                        match idx.cmp(&(to as usize)) {
+                                            std::cmp::Ordering::Less => {
+                                                if tree_complete(tree) {
+                                                    *opt = None
+                                                } else {
+                                                    all = false
+                                                }
+                                            }
+                                            std::cmp::Ordering::Equal => {
+                                                if tree_complete(tree) {
+                                                    let ctx = ComponentContextInner {
+                                                        runner,
+                                                        component,
+                                                        input: InputKind::Single(Arc::new(
+                                                            opt.take().unwrap(),
+                                                        )),
+                                                        callback: callback.clone(),
+                                                        context: context.clone(),
+                                                        branch_count: Mutex::new(LiteMap::new()),
+                                                        run_id: RunId(
+                                                            run_id[..(to as usize + 1)].into(),
+                                                        ),
+                                                    };
+                                                    ctx.spawn(scope);
+                                                } else {
+                                                    all = false;
+                                                }
+                                            }
+                                            std::cmp::Ordering::Greater => {}
+                                        }
+                                    } else {
+                                        *opt = None;
+                                    }
                                 }
-                                all &= all_children;
                             }
                         }
                         while inputs.pop_if(|x| x.is_none()).is_some() {}
                         all
                     }
-                    fn dft(
-                        input: &mut InputTree,
-                        run_id: &mut Vec<u32>,
-                        runner: &PipelineRunner,
-                        component: &ComponentData,
-                        parent: &tracing::Span,
-                    ) -> bool {
+                    fn dft<'s, 'r: 's>(input: &mut InputTree, broadcast: bool) -> bool {
                         if input.remaining_finish > 0 {
                             return false;
                         }
-                        run_id.push(input.iter);
                         let mut all = true;
-                        let mut any = false;
                         for opt in &mut input.next {
                             let Some(next) = opt else { continue };
-                            let rem = dft(next, run_id, runner, component, parent);
-                            if rem {
-                                *opt = None;
-                                any = true;
+                            let popped = dft(next, broadcast);
+                            if popped {
+                                if broadcast {
+                                    *opt = None;
+                                }
                             } else {
                                 all = false;
                             }
                         }
-                        if !any {
-                            runner.propagate(component, run_id, parent);
-                        }
-                        run_id.pop();
                         all
                     }
-                    let mut lock = mutable.lock().unwrap();
+                    let Ok(mut lock) = mutable.lock() else {
+                        continue;
+                    };
                     let mut remaining = u32::MAX;
+                    let extra = if can_extra {
+                        id.flag() as usize + push.is_some() as usize
+                    } else {
+                        0
+                    };
+                    let target = (run_id.len() + extra - 1).min(index.0 as _);
                     cleanup(
                         &mut remaining,
                         &mut lock.inputs,
                         0,
-                        index.0 as _,
+                        target,
+                        target.saturating_sub(run_id.len() - 1),
                         run_id,
                         self,
                         next,
-                        parent,
+                        *broadcast,
+                        context,
+                        callback,
+                        scope,
                     );
+                    if broadcast.is_some() {
+                        continue; // skip the propagation
+                    }
                 }
+            }
+            if id.flag() {
+                self.post_propagate(next, run_id, false, parent, context, callback, scope);
             }
         }
     }
@@ -1070,19 +1326,16 @@ impl PipelineRunner {
     /// This should return `Ok(())` when no pipelines are currently running. If inputs are leaked,
     /// error-level logs will be emitted describing the state.
     pub fn assert_clean(&self) -> Result<(), LeakedInputs> {
-        let _guard = tracing::info_span!("assert_clean");
+        let _guard = tracing::error_span!("assert_clean");
         let mut res = Ok(());
         for (n, comp) in self.components.iter().enumerate() {
             match &comp.input_mode {
-                InputMode::Single { refs, .. } => {
-                    let lock = refs.lock().unwrap();
-                    if !lock.is_empty() {
-                        tracing::error!(id = %RunnerComponentId::new(n), name = &*comp.name, inputs = ?lock, "leaked single-input component");
-                        res = Err(LeakedInputs);
-                    }
-                }
+                InputMode::Single { .. } => {}
                 InputMode::Multiple { mutable, .. } => {
-                    let lock = mutable.lock().unwrap();
+                    let lock = mutable.lock().unwrap_or_else(|err| {
+                        tracing::error!(id = %RunnerComponentId::new(n), name = &*comp.name, "poisoned component lock");
+                        err.into_inner()
+                    });
                     if lock.inputs.iter().any(Option::is_some) {
                         tracing::error!(id = %RunnerComponentId::new(n), name = &*comp.name, inputs = ?lock.inputs, "leaked multi-input component");
                         res = Err(LeakedInputs);
