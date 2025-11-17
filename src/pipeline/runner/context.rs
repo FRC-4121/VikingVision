@@ -817,7 +817,7 @@ impl<'r> ComponentContextInner<'r> {
     where
         'r: 's,
     {
-        let _guard = tracing::info_span!("finish");
+        let _guard = tracing::error_span!("finish");
         if self.finished() {
             tracing::warn!("finish() was called twice for a component");
             return;
@@ -895,7 +895,7 @@ impl<'r> ComponentContextInner<'r> {
 
     /// Create a tracing span for this component execution.
     pub fn tracing_span(&self) -> tracing::Span {
-        tracing::info_span!("run", name = &**self.name(), run = %self.run_id, component = %self.comp_id())
+        tracing::error_span!("run", name = &**self.name(), run = %self.run_id, component = %self.comp_id())
     }
 
     /// Run the component with tracing instrumentation.
@@ -989,11 +989,11 @@ impl PipelineRunner {
     }
     fn pre_propagate(&self, component: &ComponentData, run_id: &[u32], parent: &tracing::Span) {
         let _guard =
-            tracing::info_span!(parent: parent, "pre_propagate", name = &*component.name, id = %self.component_id(component)).entered();
+            tracing::error_span!(parent: parent, "pre_propagate", name = &*component.name, id = %self.component_id(component)).entered();
         for (id, index, _) in component.dependents.values().flatten() {
             let next = &self.components[id.index()];
             let _guard =
-                tracing::info_span!("next", name = &*next.name, id = %id, ?index).entered();
+                tracing::error_span!("next", name = &*next.name, id = %id, ?index).entered();
             if let InputMode::Multiple {
                 ref mutable,
                 broadcast,
@@ -1088,11 +1088,11 @@ impl PipelineRunner {
         scope: &rayon::Scope<'s>,
     ) {
         let _guard =
-            tracing::info_span!(parent: parent, "post_propagate", name = &*component.name, id = %self.component_id(component)).entered();
+            tracing::error_span!(parent: parent, "post_propagate", name = &*component.name, id = %self.component_id(component)).entered();
         for (id, index, push) in component.dependents.values().flatten() {
             let next = &self.components[id.index()];
             let _guard =
-                tracing::info_span!("next", name = &*next.name, id = %id, ?index).entered();
+                tracing::error_span!("next", name = &*next.name, id = %id, ?index).entered();
             match &next.input_mode {
                 InputMode::Single { .. } => {}
                 InputMode::Multiple {
@@ -1119,8 +1119,6 @@ impl PipelineRunner {
                         callback: &Option<Callback<'r>>,
                         scope: &rayon::Scope<'s>,
                     ) -> bool {
-                        let _guard = tracing::info_span!("cleanup").entered();
-
                         let i = run_id.get(idx).copied();
                         let mut all = true;
                         if idx < target {
@@ -1328,7 +1326,7 @@ impl PipelineRunner {
     /// This should return `Ok(())` when no pipelines are currently running. If inputs are leaked,
     /// error-level logs will be emitted describing the state.
     pub fn assert_clean(&self) -> Result<(), LeakedInputs> {
-        let _guard = tracing::info_span!("assert_clean");
+        let _guard = tracing::error_span!("assert_clean");
         let mut res = Ok(());
         for (n, comp) in self.components.iter().enumerate() {
             match &comp.input_mode {
