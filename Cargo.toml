@@ -23,7 +23,6 @@ litemap = "0.8.0"
 polonius-the-crab = "0.4.2"
 rayon.workspace = true
 serde.workspace = true
-serde-content = "0.1.2"
 smallvec = { version = "1.15.1", features = ["const_new", "drain_filter"] }
 smol_str = { version = "0.3.2", features = ["serde"] }
 supply = "0.3.1"

@@ -3,7 +3,7 @@ use std::any::TypeId;
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 
 pub type DeserializeFn<T> = fn(&mut dyn erased_serde::Deserializer) -> erased_serde::Result<T>;
@@ -168,12 +168,12 @@ impl<'de, T> DeserializeSeed<'de> for &Registry<T> {
     }
 }
 struct PartialMapAccess<'de, A> {
-    value: Option<serde_content::Value<'de>>,
-    kv: std::vec::IntoIter<(Cow<'de, str>, serde_content::Value<'de>)>,
+    value: Option<crate::content::Content<'de>>,
+    kv: std::vec::IntoIter<(Cow<'de, str>, crate::content::Content<'de>)>,
     remaining: A,
 }
 impl<'de, A: MapAccess<'de>> MapAccess<'de> for PartialMapAccess<'de, A> {
-    type Error = PartialMapAccessError<A::Error>;
+    type Error = A::Error;
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
     where
         K: DeserializeSeed<'de>,
@@ -184,9 +184,7 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for PartialMapAccess<'de, A> {
                 .map(Some)
         } else {
             self.value = None;
-            self.remaining
-                .next_key_seed(seed)
-                .map_err(PartialMapAccessError::Underlying)
+            self.remaining.next_key_seed(seed)
         }
     }
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
@@ -195,11 +193,8 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for PartialMapAccess<'de, A> {
     {
         if let Some(v) = self.value.take() {
             seed.deserialize(v.into_deserializer())
-                .map_err(PartialMapAccessError::Content)
         } else if self.kv.len() == 0 {
-            self.remaining
-                .next_value_seed(seed)
-                .map_err(PartialMapAccessError::Underlying)
+            self.remaining.next_value_seed(seed)
         } else {
             panic!("Called next_value before next_key")
         }
@@ -217,45 +212,11 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for PartialMapAccess<'de, A> {
         if let Some((k, v)) = self.kv.next() {
             Ok(Some((
                 kseed.deserialize(value::CowStrDeserializer::new(k))?,
-                vseed
-                    .deserialize(v.into_deserializer())
-                    .map_err(PartialMapAccessError::Content)?,
+                vseed.deserialize(v.into_deserializer())?,
             )))
         } else {
-            self.remaining
-                .next_entry_seed(kseed, vseed)
-                .map_err(PartialMapAccessError::Underlying)
+            self.remaining.next_entry_seed(kseed, vseed)
         }
-    }
-}
-#[derive(Clone)]
-enum PartialMapAccessError<E> {
-    Underlying(E),
-    Content(serde_content::Error),
-}
-impl<E: Debug> Debug for PartialMapAccessError<E> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Underlying(e) => e.fmt(f),
-            Self::Content(e) => Debug::fmt(e, f),
-        }
-    }
-}
-impl<E: Display> Display for PartialMapAccessError<E> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Underlying(e) => e.fmt(f),
-            Self::Content(e) => Display::fmt(e, f),
-        }
-    }
-}
-impl<E: StdError> StdError for PartialMapAccessError<E> {}
-impl<E: Error> Error for PartialMapAccessError<E> {
-    fn custom<T>(msg: T) -> Self
-    where
-        T: fmt::Display,
-    {
-        Self::Underlying(E::custom(msg))
     }
 }
 

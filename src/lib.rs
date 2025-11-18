@@ -9,3 +9,5 @@ pub mod registry;
 pub mod serialized;
 pub mod utils;
 pub mod vision;
+
+mod content;
