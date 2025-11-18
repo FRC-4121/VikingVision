@@ -309,3 +309,5 @@ impl ComponentFactory for FfmpegFactory {
         ))
     }
 }
+
+crate::impl_register!([dyn ComponentFactory]; "ffmpeg" => FfmpegFactory);

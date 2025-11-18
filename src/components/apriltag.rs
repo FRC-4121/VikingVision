@@ -134,3 +134,12 @@ impl ComponentFactory for DetectPoseComponent {
         Box::new(self.clone())
     }
 }
+
+/// A [`Register`](crate::registry::Register) implementation for all of the apriltag components
+pub struct AprilTagComponents;
+crate::impl_register!(
+    in AprilTagComponents;
+    [dyn ComponentFactory];
+    "apriltag" => AprilTagFactory,
+    "april-pose" => DetectPoseComponent
+);

@@ -273,3 +273,5 @@ impl ComponentFactory for GroupFactory {
         Box::new(GroupComponent::new(self.clone().into()))
     }
 }
+
+crate::impl_register!([dyn ComponentFactory]; "group" => GroupFactory);

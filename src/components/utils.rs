@@ -436,3 +436,15 @@ impl<T: Data + Clone> Component for BroadcastVec<T> {
         }
     }
 }
+
+/// A [`Register`](crate::registry::Register) implementation for all of the miscellaneous utility components
+pub struct UtilComponents;
+
+crate::impl_register!(
+    [dyn ComponentFactory];
+    "debug" => DebugFactory,
+    "wrap-mutex" => WrapMutexFactory,
+    "clone" => CloneFactory,
+    "canvas" => CanvasFactory,
+    "fps" => FpsFactory,
+);

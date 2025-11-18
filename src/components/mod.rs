@@ -35,6 +35,7 @@ impl From<GraphComponentId> for ComponentIdentifier {
 }
 
 pub mod prelude {
+    pub use super::BuiltinComponents;
     #[cfg(feature = "apriltag")]
     pub use super::apriltag::{AprilTagComponent, DetectPoseComponent};
     pub use super::collect::{CollectVecComponent, SelectLastComponent};
@@ -48,3 +49,10 @@ pub mod prelude {
         BlobComponent, ColorFilterComponent, ColorSpaceComponent, PercentileFilterComponent,
     };
 }
+
+/// A [`Register`](crate::registry::Register) implementation for all of the built-in components
+pub struct BuiltinComponents;
+#[cfg(feature = "apriltag")]
+crate::impl_register_bundle!(BuiltinComponents: apriltag::AprilTagComponents, collect::CollectComponents, draw::DrawFactory, ffmpeg::FfmpegFactory, group::GroupFactory, utils::UtilComponents, vision::VisionComponents);
+#[cfg(not(feature = "apriltag"))]
+crate::impl_register_bundle!(BuiltinComponents: collect::CollectComponents, draw::DrawFactory, ffmpeg::FfmpegFactory, group::GroupFactory, utils::UtilComponents, vision::VisionComponents);

@@ -164,3 +164,7 @@ impl ComponentFactory for SelectLastComponent {
         Box::new(*self)
     }
 }
+
+/// A [`Register`](crate::registry::Register) implementation for all of the collecting components
+pub struct CollectComponents;
+crate::impl_register!(in CollectComponents; [dyn ComponentFactory]; "collect-vec" => CollectVecFactory, "select-last" => SelectLastComponent);

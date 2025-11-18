@@ -425,3 +425,19 @@ impl ComponentFactory for MedianFilterFactory {
         })
     }
 }
+
+/// A [`Register`](crate::registry::Register) implementation for all of the vision components
+pub struct VisionComponents;
+
+crate::impl_register!(
+    in VisionComponents;
+    [dyn ComponentFactory];
+    "colorspace" => ColorSpaceComponent,
+    "filter" => ColorFilterComponent,
+    "blob" => BlobComponent,
+    "box-blur" => BoxBlurComponent,
+    "percent-filter" => PercentileFilterComponent,
+    "dilate" => DilateFactory,
+    "erode" => ErodeFactory,
+    "median-filter" => MedianFilterFactory,
+);

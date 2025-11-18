@@ -184,15 +184,33 @@ macro_rules! impl_register {
         )*
         $crate::impl_register!($([$($exp)*])*; $($tag => $this),*);
     };
-    ([gen <$($generics:tt),* $(,)?> $dyntrait:ty $(where $($wc:tt)*)?] $([$($exp:tt)*])*; $tag:expr => $this:ty $(, $tags:expr => $thises:ty)* $(,)? $(; @remaining $($tags2:expr => $this2:ty)*)?) => {
+    ([gen <$($generics:tt),* $(,)?> $dyntrait:ty $(where $($wc:tt)*)?] $([$($exp:tt)*])*; $tag:expr => $this:ty $(, $tags:expr => $these:ty)* $(,)? $(; @remaining $($tags2:expr => $this2:ty)*)?) => {
         impl<$($generics),*> $crate::registry::Register<Box<$dyntrait>> for $this (where $($wc)*)? {
             fn register(registry: &mut $crate::registry::Registry<Box<$dyntrait>>) {
                 registry.lookup.insert($tag, |deserializer| erased_serde::deserialize::<Self>(deserializer).map(|b| Box::new(b) as _));
             }
         }
-        $crate::impl_register!([gen <$($generics),*> $dyntrait $(where $($wc)*)?] $([$($exp)*])*; $($tags => $thises),*; @remaining $tag => $this);
+        $crate::impl_register!([gen <$($generics),*> $dyntrait $(where $($wc)*)?] $([$($exp)*])*; $($tags => $these),*; @remaining $tag => $this);
     };
-    (gen [$($ign:tt)*] $([$($exp:tt)*])*;; @remaining $($tags:expr => $thises:ty)*) => {
-        $crate::impl_register!($([$($exp)*])*; $($tags => $thises),*);
+    (gen [$($ign:tt)*] $([$($exp:tt)*])*;; @remaining $($tags:expr => $these:ty)*) => {
+        $crate::impl_register!($([$($exp)*])*; $($tags => $these),*);
+    };
+    (in $bundle:ty; $([$($exp:tt)*])*; $($tag:expr => $this:ty),* $(,)?) => {
+        $crate::impl_register_bundle!($bundle: $($this),*);
+        $crate::impl_register!($([$($exp)*])*; $($tag => $this),*);
+    };
+}
+
+/// Create a "bundle" implementation for [`Register`] that calls the implementations for contained types
+#[macro_export]
+macro_rules! impl_register_bundle {
+    ($bundle:ty: $($component:ty),* $(,)?) => {
+        impl<T> $crate::registry::Register<T> for $bundle where $($component: $crate::registry::Register<T>),* {
+            fn register(registry: &mut $crate::registry::Registry<T>) {
+                $(
+                    <$component>::register(registry);
+                )*
+            }
+        }
     };
 }

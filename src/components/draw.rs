@@ -109,3 +109,5 @@ impl TryFrom<DrawShim> for DrawFactory {
         })
     }
 }
+
+crate::impl_register!([dyn ComponentFactory]; "draw" => DrawFactory);
