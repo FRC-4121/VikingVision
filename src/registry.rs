@@ -18,10 +18,38 @@ impl<T> Registry<T> {
         }
     }
 }
+impl<T: DefaultDiscriminant> Default for Registry<T> {
+    fn default() -> Self {
+        Self::new(T::default_discriminant())
+    }
+}
 
 pub trait Register<T> {
     fn register(registry: &mut Registry<T>);
+    fn registry_with_field(field: &'static str) -> Registry<T> {
+        let mut registry = Registry::new(field);
+        Self::register(&mut registry);
+        registry
+    }
 }
+pub trait RegisterExt<T> {
+    fn registry() -> Registry<T>;
+}
+impl<T: DefaultDiscriminant, R: Register<T>> RegisterExt<T> for R {
+    fn registry() -> Registry<T> {
+        R::registry_with_field(T::default_discriminant())
+    }
+}
+
+pub trait DefaultDiscriminant {
+    fn default_discriminant() -> &'static str;
+}
+impl<T: DefaultDiscriminant + ?Sized> DefaultDiscriminant for Box<T> {
+    fn default_discriminant() -> &'static str {
+        T::default_discriminant()
+    }
+}
+
 impl<'de, T> Visitor<'de> for &Registry<T> {
     type Value = T;
     fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
