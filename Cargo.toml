@@ -16,12 +16,14 @@ autoexamples = false
 [dependencies]
 apriltag-sys = { path = "apriltag-sys", optional = true }
 disqualified = "1.0.0"
+erased-serde = "0.4.9"
 humantime-serde = "1.1.1"
 libc = { version = "0.2.176", optional = true }
 litemap = "0.8.0"
 polonius-the-crab = "0.4.2"
 rayon.workspace = true
 serde.workspace = true
+serde-content = "0.1.2"
 smallvec = { version = "1.15.1", features = ["const_new", "drain_filter"] }
 smol_str = { version = "0.3.2", features = ["serde"] }
 supply = "0.3.1"
