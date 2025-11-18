@@ -74,7 +74,6 @@ pub struct CollectVecFactory {
     #[serde(skip)]
     pub factory: fn() -> Box<dyn Component>,
 }
-#[typetag::serde(name = "collect-vec")]
 impl ComponentFactory for CollectVecFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         (self.factory)()
@@ -158,7 +157,6 @@ impl Component for SelectLastComponent {
         }
     }
 }
-#[typetag::serde(name = "select-last")]
 impl ComponentFactory for SelectLastComponent {
     fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)

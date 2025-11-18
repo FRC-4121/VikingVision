@@ -1,9 +1,16 @@
 use serde::de::*;
+use std::any::TypeId;
 use std::borrow::Cow;
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Display, Formatter};
+use std::marker::PhantomData;
 
 pub type DeserializeFn<T> = fn(&mut dyn erased_serde::Deserializer) -> erased_serde::Result<T>;
+
+thread_local! {
+    static REGISTRIES: UnsafeCell<HashMap<TypeId, *const Registry<()>>> = UnsafeCell::default();
+}
 
 #[derive(Debug, Clone)]
 pub struct Registry<T> {
@@ -16,6 +23,59 @@ impl<T> Registry<T> {
             field,
             lookup: HashMap::new(),
         }
+    }
+    /// Ascribe a type to this registry
+    ///
+    /// This is a no-op and only used to guide type inference
+    #[inline(always)]
+    pub fn ascribe(self, _: PhantomData<T>) -> Self {
+        self
+    }
+}
+impl<T: 'static> Registry<T> {
+    /// Insert a registry into the dynamic scope and call a function with it available.
+    ///
+    /// This uses thread-local variables, so calls to other threads won't work.
+    pub fn in_scope<R, F: FnOnce() -> R>(&self, f: F) -> R {
+        let old = REGISTRIES.with(|r| unsafe {
+            (*r.get()).insert(
+                TypeId::of::<Self>(),
+                self as *const Self as *const Registry<()>,
+            )
+        });
+        struct DropGuard(TypeId, Option<*const Registry<()>>);
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                REGISTRIES.with(|r| unsafe {
+                    let r = &mut *r.get();
+                    if let Some(old) = self.1 {
+                        r.insert(self.0, old);
+                    } else {
+                        r.remove(&self.0);
+                    }
+                })
+            }
+        }
+        let _guard = DropGuard(TypeId::of::<Self>(), old);
+        f()
+    }
+    /// Like [`Self::from_scope`], but doesn't panic without a registry.
+    pub fn try_from_scope<R, F: FnOnce(&Self) -> R>(f: F) -> Option<R> {
+        REGISTRIES
+            .try_with(|r| unsafe {
+                let r = (*r.get()).get(&TypeId::of::<Self>());
+                r.map(|reg| f(&*(*reg as *const Self)))
+            })
+            .ok()
+            .flatten()
+    }
+    /// Get a previously inserted [`Registry`] from within the closure passed to [`Self::in_scope`].
+    ///
+    /// This panics if a registry isn't available.
+    pub fn from_scope<R, F: FnOnce(&Self) -> R>(f: F) -> R {
+        Self::try_from_scope(f).expect(
+            "A registry of the correct type must be in scope from a call to Registry::in_scope!",
+        )
     }
 }
 impl<T: DefaultDiscriminant> Default for Registry<T> {
@@ -212,7 +272,7 @@ macro_rules! impl_register {
         )*
         $crate::impl_register!($([$($exp)*])*; $($tag => $this),*);
     };
-    ([gen <$($generics:tt),* $(,)?> $dyntrait:ty $(where $($wc:tt)*)?] $([$($exp:tt)*])*; $tag:expr => $this:ty $(, $tags:expr => $these:ty)* $(,)? $(; @remaining $($tags2:expr => $this2:ty)*)?) => {
+    ([gen <$($generics:ident),* $(,)?> $dyntrait:ty $(where $($wc:tt)*)?] $([$($exp:tt)*])*; $tag:expr => $this:ty $(, $tags:expr => $these:ty)* $(,)? $(; @remaining $($tags2:expr => $this2:ty)*)?) => {
         impl<$($generics),*> $crate::registry::Register<Box<$dyntrait>> for $this (where $($wc)*)? {
             fn register(registry: &mut $crate::registry::Registry<Box<$dyntrait>>) {
                 registry.lookup.insert($tag, |deserializer| erased_serde::deserialize::<Self>(deserializer).map(|b| Box::new(b) as _));
@@ -240,5 +300,23 @@ macro_rules! impl_register_bundle {
                 )*
             }
         }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_deserialize_via_registry {
+    (<$($generics:ident),* $(,)?> $self:ty $(where $($wc:tt)*)? $(as $field:expr)?) => {
+        impl<'de, $($generics)*> serde::Deserialize<'de> for $self $(where $($wc)*)? {
+            fn deserialize<D>(deserializer: D) -> Result<$self, D::Error> where D: serde::Deserializer<'de> {
+                $crate::registry::Registry::<$self>::from_scope(|registry| serde::de::DeserializeSeed::deserialize(registry, deserializer))
+            }
+        }
+        $(
+            impl $crate::registry::DefaultDiscriminant for $self {
+                fn default_discriminant() -> &'static str {
+                    $field
+                }
+            }
+        )?
     };
 }

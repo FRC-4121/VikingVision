@@ -66,7 +66,6 @@ pub struct AprilTagFactory {
     #[serde(flatten)]
     pub config: apriltag::DetectorConfig,
 }
-#[typetag::serde(name = "apriltag")]
 impl ComponentFactory for AprilTagFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(AprilTagComponent {
@@ -128,7 +127,6 @@ impl Component for DetectPoseComponent {
         context.submit("", detection.estimate_pose(params));
     }
 }
-#[typetag::serde(name = "april-pose")]
 impl ComponentFactory for DetectPoseComponent {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(self.clone())

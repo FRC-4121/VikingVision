@@ -74,7 +74,6 @@ pub struct DrawFactory {
     #[serde(skip)]
     pub factory: fn(Color) -> Box<dyn Component>,
 }
-#[typetag::serde(name = "draw")]
 impl ComponentFactory for DrawFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         (self.factory)(self.color)

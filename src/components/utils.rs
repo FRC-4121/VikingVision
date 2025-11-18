@@ -34,7 +34,6 @@ impl Component for DebugComponent {
 /// A factory to build a [`DebugComponent`].
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DebugFactory {}
-#[typetag::serde(name = "debug")]
 impl ComponentFactory for DebugFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(DebugComponent)
@@ -108,7 +107,6 @@ impl Component for CloneComponent {
 pub struct CloneFactory {
     pub name: String,
 }
-#[typetag::serde(name = "clone")]
 impl ComponentFactory for CloneFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(CloneComponent::new(self.name.clone().into()))
@@ -151,7 +149,6 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
 /// Convenience component factory to make a `WrapMutexComponent<Buffer>`
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CanvasFactory;
-#[typetag::serde(name = "canvas")]
 impl ComponentFactory for CanvasFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(WrapMutexComponent::<Buffer>::new())
@@ -176,7 +173,6 @@ pub struct WrapMutexFactory {
     #[serde(skip)]
     pub factory: fn() -> Box<dyn Component>,
 }
-#[typetag::serde(name = "wrap-mutex")]
 impl ComponentFactory for WrapMutexFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         (self.factory)()
@@ -397,7 +393,6 @@ pub struct FpsFactory {
     )]
     pub duration: Duration,
 }
-#[typetag::serde(name = "fps")]
 impl ComponentFactory for FpsFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(FpsComponent::with_max_duration(self.duration))
@@ -441,6 +436,7 @@ impl<T: Data + Clone> Component for BroadcastVec<T> {
 pub struct UtilComponents;
 
 crate::impl_register!(
+    in UtilComponents;
     [dyn ComponentFactory];
     "debug" => DebugFactory,
     "wrap-mutex" => WrapMutexFactory,

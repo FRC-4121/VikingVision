@@ -56,3 +56,14 @@ pub struct BuiltinComponents;
 crate::impl_register_bundle!(BuiltinComponents: apriltag::AprilTagComponents, collect::CollectComponents, draw::DrawFactory, ffmpeg::FfmpegFactory, group::GroupFactory, utils::UtilComponents, vision::VisionComponents);
 #[cfg(not(feature = "apriltag"))]
 crate::impl_register_bundle!(BuiltinComponents: collect::CollectComponents, draw::DrawFactory, ffmpeg::FfmpegFactory, group::GroupFactory, utils::UtilComponents, vision::VisionComponents);
+
+#[allow(
+    dead_code,
+    unconditional_recursion,
+    clippy::extra_unused_type_parameters
+)]
+fn assert_builtins_are_factory<
+    T: crate::registry::Register<Box<dyn crate::pipeline::component::ComponentFactory>>,
+>() {
+    assert_builtins_are_factory::<BuiltinComponents>();
+}

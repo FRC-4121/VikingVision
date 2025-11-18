@@ -3,6 +3,10 @@ use crate::pipeline::serialized::{ComponentChannel, SerializedGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use crate::components::BuiltinComponents;
+pub use crate::pipeline::component::ComponentFactory;
+pub use crate::registry::{Register, RegisterExt, Registry};
+
 fn default_running() -> usize {
     rayon::current_num_threads().div_ceil(2)
 }

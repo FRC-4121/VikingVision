@@ -2,6 +2,7 @@ use clap::{Parser, ValueEnum};
 use std::fmt::{self, Display, Formatter};
 use std::fs::File;
 use std::io::IsTerminal;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::process::exit;
 use tracing::{debug, error, error_span, info};
@@ -10,6 +11,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use viking_vision::camera::Camera;
 use viking_vision::pipeline::prelude::*;
+use viking_vision::serialized::*;
 
 #[cfg(not(windows))]
 fn env_allows_color() -> bool {
@@ -167,7 +169,10 @@ fn main() {
             exit(2);
         }
     };
-    let mut config = match toml::from_slice::<viking_vision::serialized::ConfigFile>(&config_file) {
+    let mut config = match BuiltinComponents::registry()
+        .ascribe(PhantomData::<Box<dyn ComponentFactory>>)
+        .in_scope(|| toml::from_slice::<ConfigFile>(&config_file))
+    {
         Ok(config) => {
             info!(
                 cameras = config.cameras.len(),

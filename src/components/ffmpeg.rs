@@ -299,7 +299,6 @@ impl TryFrom<FfmpegShim> for FfmpegFactory {
         })
     }
 }
-#[typetag::serde(name = "ffmpeg")]
 impl ComponentFactory for FfmpegFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(FfmpegComponent::new(
