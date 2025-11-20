@@ -266,7 +266,14 @@ macro_rules! impl_register_bundle {
 
 #[macro_export]
 macro_rules! impl_deserialize_via_registry {
-    (<$($generics:ident),* $(,)?> $self:ty $(where $($wc:tt)*)? $(as $field:expr)?) => {
+    (<$($generics:ident),* $(,)?> $self:ty where $($wc:tt)*) => {
+        impl<'de, $($generics)*> serde::Deserialize<'de> for $self where $($wc)* {
+            fn deserialize<D>(deserializer: D) -> Result<$self, D::Error> where D: serde::Deserializer<'de> {
+                $crate::registry::Registry::<$self>::from_scope(|registry| serde::de::DeserializeSeed::deserialize(registry, deserializer))
+            }
+        }
+    };
+    (<$($generics:ident),* $(,)?> $self:ty $([where $($wc:tt)*])? $(as $field:expr)?) => {
         impl<'de, $($generics)*> serde::Deserialize<'de> for $self $(where $($wc)*)? {
             fn deserialize<D>(deserializer: D) -> Result<$self, D::Error> where D: serde::Deserializer<'de> {
                 $crate::registry::Registry::<$self>::from_scope(|registry| serde::de::DeserializeSeed::deserialize(registry, deserializer))
