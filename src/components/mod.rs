@@ -6,6 +6,7 @@ pub mod collect;
 pub mod draw;
 pub mod ffmpeg;
 pub mod group;
+pub mod ntable;
 pub mod utils;
 pub mod vision;
 
