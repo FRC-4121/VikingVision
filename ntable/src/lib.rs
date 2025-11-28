@@ -1,0 +1,302 @@
+use futures_util::{SinkExt, StreamExt};
+use smol_str::SmolStr;
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, SystemTime};
+use tokio::sync::mpsc;
+use tracing::Instrument;
+use triomphe::Arc;
+
+mod protocol;
+pub mod team;
+pub mod value;
+
+#[derive(Debug)]
+enum Topic {
+    String(SmolStr),
+    Uid(u32),
+}
+
+#[derive(Debug)]
+struct PublishMessage {
+    topic: Topic,
+    timestamp: u64,
+    datatype: value::DataType,
+    type_str: &'static str,
+    data: Vec<u8>,
+    cache: Option<Arc<AtomicU32>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NtHandle {
+    pub_tx: mpsc::UnboundedSender<PublishMessage>,
+}
+impl NtHandle {
+    pub fn set_erased(
+        &self,
+        topic: impl Into<SmolStr>,
+        datatype: value::DataType,
+        type_str: &'static str,
+        data: Vec<u8>,
+    ) {
+        let now = SystemTime::now();
+        let offset = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .as_ref()
+            .map_or(0, Duration::as_millis);
+        let _ = self.pub_tx.send(PublishMessage {
+            topic: Topic::String(topic.into()),
+            timestamp: offset as _,
+            datatype,
+            type_str,
+            data,
+            cache: None,
+        });
+    }
+    pub fn set<T: value::GenericType>(&self, topic: impl Into<SmolStr>, val: T) {
+        let mut buf = Vec::new();
+        val.serialize_rmp(&mut buf);
+        self.set_erased(topic.into(), val.data_type(), val.type_string(), buf);
+    }
+    pub fn generic_publish(&self, topic: impl Into<SmolStr>) -> GenericPublisher {
+        GenericPublisher {
+            pub_tx: self.pub_tx.clone(),
+            topic: topic.into(),
+            cache: Arc::new(AtomicU32::new(0)),
+        }
+    }
+    pub fn publish<T: value::ConcreteType>(&self, topic: impl Into<SmolStr>) -> Publisher<T> {
+        Publisher {
+            inner: self.generic_publish(topic.into()),
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// A typeless publisher.
+#[derive(Debug, Clone)]
+pub struct GenericPublisher {
+    pub_tx: mpsc::UnboundedSender<PublishMessage>,
+    topic: SmolStr,
+    cache: Arc<AtomicU32>,
+}
+impl GenericPublisher {
+    pub fn set_erased(&self, datatype: value::DataType, type_str: &'static str, data: Vec<u8>) {
+        let now = SystemTime::now();
+        let offset = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .as_ref()
+            .map_or(0, Duration::as_millis);
+        let cached = self.cache.load(Ordering::Relaxed);
+        let (topic, cache) = if cached == 0 {
+            (Topic::String(self.topic.clone()), Some(self.cache.clone()))
+        } else {
+            (Topic::Uid(cached), None)
+        };
+        let _ = self.pub_tx.send(PublishMessage {
+            topic,
+            timestamp: offset as _,
+            datatype,
+            type_str,
+            data,
+            cache,
+        });
+    }
+    pub fn set<T: value::GenericType>(&self, val: T) {
+        let mut buf = Vec::new();
+        val.serialize_rmp(&mut buf);
+        self.set_erased(val.data_type(), val.type_string(), buf);
+    }
+}
+
+pub struct Publisher<T> {
+    inner: GenericPublisher,
+    _marker: PhantomData<fn(T)>,
+}
+impl<T: value::ConcreteType> Publisher<T> {
+    pub fn set(&self, val: &T) {
+        let mut buf = Vec::new();
+        val.serialize_rmp(&mut buf);
+        self.inner.set_erased(
+            <T as value::ConcreteType>::data_type(),
+            <T as value::ConcreteType>::type_string(),
+            buf,
+        );
+    }
+}
+
+#[derive(Debug)]
+pub struct NtClient {
+    pub identity: String,
+    pub port: u16,
+    handle: NtHandle,
+    pub_rx: mpsc::UnboundedReceiver<PublishMessage>,
+    pubuids: HashMap<SmolStr, u32>,
+    last_pubuid: u32,
+    time_offset: i64,
+}
+impl NtClient {
+    pub fn new(identity: String) -> Self {
+        let (pub_tx, pub_rx) = mpsc::unbounded_channel();
+        Self {
+            identity,
+            port: 5810,
+            pub_rx,
+            handle: NtHandle { pub_tx },
+            pubuids: HashMap::new(),
+            last_pubuid: 0,
+            time_offset: 0,
+        }
+    }
+    pub fn handle(&self) -> &NtHandle {
+        &self.handle
+    }
+    /// Connect to the given host, and reconnect on errors.
+    ///
+    /// This should never fail.
+    pub async fn reconnect<H: Display>(&mut self, host: H) {
+        use std::fmt::Write;
+        let mut msg = "ws://".to_string();
+        let _ = write!(msg, "{host}");
+        let end = msg.len();
+        let _ = write!(msg, ":{}/nt/{}", self.port, self.identity);
+        let span = tracing::error_span!(
+            "connect",
+            host = &msg[5..end],
+            identity = self.identity,
+            port = self.port
+        );
+        let uri: tungstenite::http::Uri = msg.try_into().expect("Invalid URI");
+        tracing::info!(parent: &span, %uri, "resolved URI");
+        let req = tungstenite::ClientRequestBuilder::new(uri)
+            .with_sub_protocol("v4.1.networktables.first.wpi.edu");
+        loop {
+            let _ = self.connect_req(req.clone()).instrument(span.clone()).await;
+        }
+    }
+    /// Connect to the given host.
+    ///
+    /// This future finishes when the connection is lost.
+    pub async fn connect<H: Display>(&mut self, host: H) -> tungstenite::Result<()> {
+        use std::fmt::Write;
+        let mut msg = "ws://".to_string();
+        let _ = write!(msg, "{host}");
+        let end = msg.len();
+        let _ = write!(msg, ":{}/nt/{}", self.port, self.identity);
+        let span = tracing::error_span!(
+            "connect",
+            host = &msg[5..end],
+            identity = self.identity,
+            port = self.port
+        );
+        let uri: tungstenite::http::Uri = msg.try_into().expect("Invalid URI");
+        tracing::info!(parent: &span, %uri, "resolved URI");
+        let req = tungstenite::ClientRequestBuilder::new(uri)
+            .with_sub_protocol("v4.1.networktables.first.wpi.edu");
+        self.connect_req(req).instrument(span).await
+    }
+    async fn connect_req(
+        &mut self,
+        req: tungstenite::ClientRequestBuilder,
+    ) -> tungstenite::Result<()> {
+        let (ws, _resp) = tokio_tungstenite::connect_async(req)
+            .await
+            .inspect_err(|err| tracing::error!(%err, "failed to connect"))?;
+        let (mut ws_tx, _ws_rx) = ws.split();
+        // let read_loop = async move {
+        //     while let Some(msg) = ws_rx.next().await {
+        //         let msg = msg?;
+        //         if matches!(msg, tungstenite::Message::Pong(_)) {
+        //             continue;
+        //         }
+        //         tracing::debug!(?msg, "got server message");
+        //     }
+        //     Ok::<_, tungstenite::Error>(())
+        // };
+        let write_loop = async move {
+            let mut string = Vec::new();
+            let mut buf = Vec::with_capacity(8);
+            buf.push(0x94);
+            let mut messages = Vec::new();
+            let mut outgoing = Vec::new();
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_millis(100),
+                    self.pub_rx.recv_many(&mut messages, 128),
+                )
+                .await
+                {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        for msg in messages.drain(..) {
+                            buf.truncate(1);
+                            let pubuid = match msg.topic {
+                                Topic::Uid(id) => id,
+                                Topic::String(topic) => {
+                                    let default = |key: &SmolStr| {
+                                        self.last_pubuid += 1;
+                                        string.clear();
+                                        let _ = serde_json::to_writer(
+                                            &mut string,
+                                            &[protocol::ClientToServerMessage::Publish {
+                                                name: key,
+                                                pubuid: self.last_pubuid,
+                                                r#type: msg.type_str,
+                                                properties: protocol::EmptyMap,
+                                            }],
+                                        );
+                                        tracing::debug!(name = &**key, pubuid = self.last_pubuid, type = msg.type_str, "publishing new topic");
+                                        outgoing.push(tungstenite::Message::Text(unsafe {
+                                            tungstenite::Utf8Bytes::from_bytes_unchecked(
+                                                tungstenite::Bytes::copy_from_slice(&string),
+                                            )
+                                        }));
+                                        self.last_pubuid
+                                    };
+                                    let id = *self.pubuids.entry(topic).or_insert_with_key(default);
+                                    if let Some(cache) = msg.cache {
+                                        cache.store(id, Ordering::Relaxed);
+                                    }
+                                    id
+                                }
+                            };
+                            let _ = rmp::encode::write_uint(&mut buf, pubuid as _);
+                            let _ = rmp::encode::write_uint(
+                                &mut buf,
+                                msg.timestamp.strict_add_signed(self.time_offset),
+                            );
+                            buf.push(msg.datatype as _);
+                            buf.extend_from_slice(&msg.data);
+                            outgoing.push(tungstenite::Message::Binary(
+                                tungstenite::Bytes::copy_from_slice(&buf),
+                            ));
+                        }
+                        for msg in outgoing.drain(..) {
+                            ws_tx.feed(msg).await.inspect_err(
+                                |err| tracing::error!(%err, "failed to feed message"),
+                            )?;
+                        }
+                        ws_tx
+                            .flush()
+                            .await
+                            .inspect_err(|err| tracing::error!(%err, "failed to flush messages"))?;
+                    }
+                    Err(_) => {
+                        ws_tx
+                            .send(tungstenite::Message::Ping((&[] as &[u8]).into()))
+                            .await
+                            .inspect_err(|err| tracing::error!(%err, "failed to send heartbeat"))?;
+                    }
+                }
+            }
+            Ok::<_, tungstenite::Error>(())
+        };
+        // tokio::select! {
+        //     res = read_loop => res,
+        //     res = write_loop => res,
+        // }
+        write_loop.await
+    }
+}
