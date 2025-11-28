@@ -1,27 +1,23 @@
 #![cfg(feature = "ntable")]
 
 use crate::pipeline::prelude::*;
-use nt_client::ClientHandle;
-use nt_client::publish::GenericPublisher;
+use ntable::{GenericPublisher, NtHandle};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
-use tokio::runtime::*;
 use tokio::sync::Mutex;
-use tracing::Instrument;
 
 thread_local! {
-    static CLIENT_HANDLE: Cell<*const ClientHandle> = const { Cell::new(std::ptr::null()) };
+    static CLIENT_HANDLE: Cell<*const NtHandle> = const { Cell::new(std::ptr::null()) };
 }
 
 /// Call a given closure with a client handle available for the scope of a closure.
-pub fn handle_in_scope<R, F: FnOnce() -> R>(handle: &ClientHandle, f: F) -> R {
-    struct DropGuard(*const ClientHandle);
+pub fn handle_in_scope<R, F: FnOnce() -> R>(handle: &NtHandle, f: F) -> R {
+    struct DropGuard(*const NtHandle);
     impl Drop for DropGuard {
         fn drop(&mut self) {
             CLIENT_HANDLE.set(self.0);
@@ -31,22 +27,20 @@ pub fn handle_in_scope<R, F: FnOnce() -> R>(handle: &ClientHandle, f: F) -> R {
     f()
 }
 /// Access the client handle passed to [`handle_in_scope`] from inside the closure body.
-pub fn with_handle<R, F: FnOnce(&ClientHandle) -> R>(f: F) -> R {
+pub fn with_handle<R, F: FnOnce(&NtHandle) -> R>(f: F) -> R {
     f(unsafe { &*CLIENT_HANDLE.get() })
 }
 /// Shorthand for [`with_handle(Clone::clone)`](with_handle) to clone the current client handle.
 #[inline(always)]
-pub fn cloned_handle() -> ClientHandle {
+pub fn cloned_handle() -> NtHandle {
     with_handle(Clone::clone)
 }
 
 /// A component that publishes to a network table.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NtPrimitiveComponent {
-    #[serde(skip, default = "Handle::current")]
-    pub tokio_handle: Handle,
     #[serde(skip, default = "cloned_handle")]
-    pub nt_handle: ClientHandle,
+    pub nt_handle: NtHandle,
     /// Prefix of topics for the network table.
     ///
     /// Defaults to an empty string.
@@ -60,46 +54,9 @@ pub struct NtPrimitiveComponent {
     #[serde(skip)]
     pub publishers: Arc<Mutex<HashMap<String, GenericPublisher>>>,
 }
-impl NtPrimitiveComponent {
-    fn spawn_publish<T: nt_client::data::r#type::NetworkTableData + Send + 'static>(
-        &self,
-        chan: String,
-        value: T,
-    ) {
-        let nt = self.nt_handle.clone();
-        let pubs = self.publishers.clone();
-        let span = tracing::error_span!("publish", chan);
-        let fut = async move {
-            let mut lock = pubs.lock().await;
-            let p = match lock.entry(chan) {
-                Entry::Occupied(e) => e.into_mut(),
-                Entry::Vacant(e) => {
-                    let topic = nt.topic(e.key());
-                    let _ = topic.subscribe(Default::default()).await;
-                    let res = topic
-                        .generic_publish(T::data_type(), Default::default())
-                        .await;
-                    match res {
-                        Ok(p) => e.insert(p),
-                        Err(err) => {
-                            tracing::error!(%err, "failed to create a publisher");
-                            return;
-                        }
-                    }
-                }
-            };
-            if let Err(err) = p.set(value).await {
-                tracing::error!(%err, "failed to publish");
-            }
-        }
-        .instrument(span);
-        self.tokio_handle.spawn(fut);
-    }
-}
 impl Default for NtPrimitiveComponent {
     fn default() -> Self {
         Self {
-            tokio_handle: Handle::current(),
             nt_handle: cloned_handle(),
             prefix: SmolStr::new_static(""),
             remapping: HashMap::new(),
@@ -161,7 +118,7 @@ impl Component for NtPrimitiveComponent {
                         $(
                             if tid == $name {
                                 let v = va.downcast_ref::<$type>().unwrap().clone() as $nt;
-                                self.spawn_publish(ch, v);
+                                self.nt_handle.set(ch, v);
                                 continue;
                             }
                         )*
@@ -199,11 +156,11 @@ impl Component for NtPrimitiveComponent {
             for (chan, arr) in row {
                 match arr {
                     InProgressArray::Unset => {}
-                    InProgressArray::Bool(v) => self.spawn_publish(chan, v),
-                    InProgressArray::Int(v) => self.spawn_publish(chan, v),
-                    InProgressArray::Float(v) => self.spawn_publish(chan, v),
-                    InProgressArray::Double(v) => self.spawn_publish(chan, v),
-                    InProgressArray::String(v) => self.spawn_publish(chan, v),
+                    InProgressArray::Bool(v) => self.nt_handle.set(chan, v),
+                    InProgressArray::Int(v) => self.nt_handle.set(chan, v),
+                    InProgressArray::Float(v) => self.nt_handle.set(chan, v),
+                    InProgressArray::Double(v) => self.nt_handle.set(chan, v),
+                    InProgressArray::String(v) => self.nt_handle.set(chan, v),
                 }
             }
         }
