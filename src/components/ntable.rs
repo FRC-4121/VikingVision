@@ -28,7 +28,13 @@ pub fn handle_in_scope<R, F: FnOnce() -> R>(handle: &NtHandle, f: F) -> R {
 }
 /// Access the client handle passed to [`handle_in_scope`] from inside the closure body.
 pub fn with_handle<R, F: FnOnce(&NtHandle) -> R>(f: F) -> R {
-    f(unsafe { &*CLIENT_HANDLE.get() })
+    if let Some(client) =
+        unsafe { CLIENT_HANDLE.get().as_ref() }.or_else(|| ntable::GLOBAL_HANDLE.get())
+    {
+        f(client)
+    } else {
+        panic!("No client handle available, either thread-local or global!")
+    }
 }
 /// Shorthand for [`with_handle(Clone::clone)`](with_handle) to clone the current client handle.
 #[inline(always)]

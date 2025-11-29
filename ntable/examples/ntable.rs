@@ -18,6 +18,6 @@ async fn main() {
     };
     tokio::select! {
         _ = counter_loop => (),
-        res = client.connect("localhost") => res.unwrap()
+        res = client.connect("localhost", false) => res.unwrap()
     }
 }

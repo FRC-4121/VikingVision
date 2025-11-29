@@ -3,6 +3,7 @@ use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
@@ -153,10 +154,14 @@ impl NtClient {
     pub fn handle(&self) -> &NtHandle {
         &self.handle
     }
-    /// Connect to the given host, and reconnect on errors.
+    /// Connect to the given host.
     ///
-    /// This should never fail.
-    pub async fn reconnect<H: Display>(&mut self, host: H) {
+    /// If the connection is dropped and `reconnect` is set to true, it reconnects on failure.
+    pub async fn connect<H: Display>(
+        &mut self,
+        host: H,
+        reconnect: bool,
+    ) -> tungstenite::Result<()> {
         use std::fmt::Write;
         let mut msg = "ws://".to_string();
         let _ = write!(msg, "{host}");
@@ -173,29 +178,11 @@ impl NtClient {
         let req = tungstenite::ClientRequestBuilder::new(uri)
             .with_sub_protocol("v4.1.networktables.first.wpi.edu");
         loop {
-            let _ = self.connect_req(req.clone()).instrument(span.clone()).await;
+            let res = self.connect_req(req.clone()).instrument(span.clone()).await;
+            if !reconnect {
+                return res;
+            }
         }
-    }
-    /// Connect to the given host.
-    ///
-    /// This future finishes when the connection is lost.
-    pub async fn connect<H: Display>(&mut self, host: H) -> tungstenite::Result<()> {
-        use std::fmt::Write;
-        let mut msg = "ws://".to_string();
-        let _ = write!(msg, "{host}");
-        let end = msg.len();
-        let _ = write!(msg, ":{}/nt/{}", self.port, self.identity);
-        let span = tracing::error_span!(
-            "connect",
-            host = &msg[5..end],
-            identity = self.identity,
-            port = self.port
-        );
-        let uri: tungstenite::http::Uri = msg.try_into().expect("Invalid URI");
-        tracing::info!(parent: &span, %uri, "resolved URI");
-        let req = tungstenite::ClientRequestBuilder::new(uri)
-            .with_sub_protocol("v4.1.networktables.first.wpi.edu");
-        self.connect_req(req).instrument(span).await
     }
     async fn connect_req(
         &mut self,
@@ -299,4 +286,40 @@ impl NtClient {
         // }
         write_loop.await
     }
+    /// Make this client the global client, if none is already set.
+    pub fn and_make_global(self) -> Self {
+        let _ = GLOBAL_HANDLE.get_or_init(|| self.handle.clone());
+        self
+    }
+    /// Connect to a host with this client, either on the current tokio scope or in a new thread if none is available.
+    ///
+    /// This shouldn't fail; any errors are because of OS failures to create threads or a runtime.
+    pub fn try_spawn<H: Display + Send + 'static>(mut self, host: H) -> std::io::Result<()> {
+        let fut = async move {
+            let _ = self.connect(host, true).await;
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(fut);
+            }
+            Err(_) => {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                std::thread::Builder::new()
+                    .name("nt-client-worker".to_string())
+                    .spawn(move || rt.block_on(fut))?;
+            }
+        }
+        Ok(())
+    }
+    /// Connect to a host in the background, panicking on failure.
+    ///
+    /// See [`try_spawn_client`] for more details.
+    pub fn spawn<H: Display + Send + 'static>(self, host: H) {
+        self.try_spawn(host).expect("Failed to spawn client");
+    }
 }
+
+/// A globally accessible handle for a client.
+pub static GLOBAL_HANDLE: OnceLock<NtHandle> = OnceLock::new();
