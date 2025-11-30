@@ -17,10 +17,10 @@ autoexamples = false
 apriltag-sys = { path = "apriltag-sys", optional = true }
 disqualified = "1.0.0"
 humantime-serde = "1.1.1"
-libc = { version = "0.2.176", optional = true }
-litemap = "0.8.0"
+libc = { version = "0.2", optional = true }
+litemap = "0.8.1"
 ntable = { path = "./ntable", optional = true }
-polonius-the-crab = "0.4.2"
+polonius-the-crab = "0.5.0"
 rayon.workspace = true
 serde.workspace = true
 smallvec = { version = "1.15.1", features = ["const_new", "drain_filter"] }
@@ -31,7 +31,7 @@ time.workspace = true
 tracing.workspace = true
 triomphe.workspace = true
 ty-tag = "0.1.1"
-typetag = "0.2.20"
+typetag = "0.2.21"
 v4l = { workspace = true, optional = true }
 zune-jpeg = "0.4.14"
 zune-png = "0.4.10"
@@ -47,13 +47,14 @@ v4l = ["dep:v4l"]
 ntable = ["dep:ntable"]
 
 [workspace.dependencies]
-eframe = { version = "0.33.0", features = ["persistence"] }
+eframe = { version = "0.33.2", features = ["persistence"] }
 rayon = "1.11.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
 smol_str = "0.3.4"
 time = { version = "0.3.44", features = ["formatting", "local-offset"] }
-toml = "0.9.7"
-tracing = "0.1.41"
+toml = "0.9.8"
+tracing = "0.1.43"
 tracing-subscriber = "0.3.20"
 triomphe = "0.1.15"
 v4l = "0.14.0"
