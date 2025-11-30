@@ -139,7 +139,7 @@ pub struct NtClient {
     handle: NtHandle,
     pub_rx: mpsc::UnboundedReceiver<PublishMessage>,
     pubuids: HashMap<SmolStr, u32>,
-    last_pubuid: u32,
+    types: Vec<&'static str>,
     time_offset: i64,
 }
 impl NtClient {
@@ -152,7 +152,7 @@ impl NtClient {
             pub_rx,
             handle: NtHandle { pub_tx },
             pubuids: HashMap::new(),
-            last_pubuid: 0,
+            types: Vec::new(),
             time_offset: 0,
         }
     }
@@ -187,6 +187,7 @@ impl NtClient {
             if !reconnect {
                 return res;
             }
+            tokio::time::sleep(Duration::from_millis(100)).await; // hopefully long enough for whatever issue there was to disappear
         }
     }
     async fn connect_req(
@@ -197,6 +198,32 @@ impl NtClient {
             .await
             .inspect_err(|err| tracing::error!(%err, "failed to connect"))?;
         let (mut ws_tx, _ws_rx) = ws.split();
+        if !self.types.is_empty() {
+            let mut msg = Vec::with_capacity(1 + 42 * self.types.len()); // 24 bytes for field names, 8 for quotes, 4 for colons, 4 for commas (including trailing), 2 for braces = a minimum of 42 bytes/entry, +2 because of the surrounding brackets, -1 because no trailing comma
+            msg.push(b'[');
+            for (name, &pubuid) in &self.pubuids {
+                let r#type = self.types[pubuid as usize - 1];
+                let _ = serde_json::to_writer(
+                    &mut msg,
+                    &protocol::ClientToServerMessage::Publish {
+                        name,
+                        pubuid,
+                        r#type,
+                        properties: protocol::EmptyMap,
+                    },
+                );
+                msg.push(b',');
+            }
+            *msg.last_mut().unwrap() = b']';
+            ws_tx
+                .send(tungstenite::Message::Text(unsafe {
+                    tungstenite::Utf8Bytes::from_bytes_unchecked(
+                        tungstenite::Bytes::copy_from_slice(&msg),
+                    )
+                }))
+                .await
+                .inspect_err(|err| tracing::error!(%err, "failed to re-announce topics"))?;
+        }
         // let read_loop = async move {
         //     while let Some(msg) = ws_rx.next().await {
         //         let msg = msg?;
@@ -228,24 +255,25 @@ impl NtClient {
                                 Topic::Uid(id) => id,
                                 Topic::String(topic) => {
                                     let default = |key: &SmolStr| {
-                                        self.last_pubuid += 1;
+                                        self.types.push(msg.type_str);
+                                        let pubuid = self.types.len() as u32;
                                         string.clear();
                                         let _ = serde_json::to_writer(
                                             &mut string,
                                             &[protocol::ClientToServerMessage::Publish {
                                                 name: key,
-                                                pubuid: self.last_pubuid,
+                                                pubuid,
                                                 r#type: msg.type_str,
                                                 properties: protocol::EmptyMap,
                                             }],
                                         );
-                                        tracing::debug!(name = &**key, pubuid = self.last_pubuid, type = msg.type_str, "publishing new topic");
+                                        tracing::debug!(name = &**key, pubuid, type = msg.type_str, "publishing new topic");
                                         outgoing.push(tungstenite::Message::Text(unsafe {
                                             tungstenite::Utf8Bytes::from_bytes_unchecked(
                                                 tungstenite::Bytes::copy_from_slice(&string),
                                             )
                                         }));
-                                        self.last_pubuid
+                                        pubuid
                                     };
                                     let id = *self.pubuids.entry(topic).or_insert_with_key(default);
                                     if let Some(cache) = msg.cache {
@@ -254,6 +282,16 @@ impl NtClient {
                                     id
                                 }
                             };
+                            let exp_type = self.types[pubuid as usize - 1];
+                            if msg.type_str != exp_type {
+                                tracing::warn!(
+                                    pubuid,
+                                    old = exp_type,
+                                    new = msg.type_str,
+                                    "message type changed"
+                                );
+                                continue;
+                            }
                             let _ = rmp::encode::write_uint(&mut buf, pubuid as _);
                             let _ = rmp::encode::write_uint(
                                 &mut buf,
