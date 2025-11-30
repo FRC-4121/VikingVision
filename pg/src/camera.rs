@@ -33,14 +33,12 @@ fn enum_cams() -> Vec<PathBuf> {
 #[cfg(feature = "v4l")]
 pub fn path_index(path: &Path) -> Option<usize> {
     let name = path.file_name()?.to_str()?;
-    if let Ok(dev) = path.strip_prefix("/dev/") {
-        if dev.parent().is_none_or(|p| p == Path::new("")) {
-            if let Some(idx_str) = name.strip_prefix("video") {
-                if let Ok(idx) = idx_str.parse() {
-                    return Some(idx);
-                }
-            }
-        }
+    if let Ok(dev) = path.strip_prefix("/dev/")
+        && dev.parent().is_none_or(|p| p == Path::new(""))
+        && let Some(idx_str) = name.strip_prefix("video")
+        && let Ok(idx) = idx_str.parse()
+    {
+        return Some(idx);
     }
     None
 }
@@ -131,6 +129,7 @@ pub fn show_cams(cams: &mut Vec<CameraData>) -> impl FnOnce(&mut egui::Ui) {
                         ui.code(path.display().to_string());
                     });
                     row.col(|ui| {
+                        #[allow(clippy::collapsible_if)]
                         if ui.button("Add").clicked() {
                             if let Some(handle) = spawn_from_v4l_path(path) {
                                 let mut name =
@@ -270,14 +269,14 @@ pub fn show_camera(
                         if ui.color_edit_button_srgb(&mut opts.color).changed() {
                             opts.recolor = true;
                         }
-                        if opts.reshape || opts.recolor {
-                            if let Ident::Mono(id) = data.state.ident {
-                                for m in monochrome {
-                                    if m.id == id {
-                                        m.width = opts.width;
-                                        m.height = opts.height;
-                                        m.color = opts.color;
-                                    }
+                        if (opts.reshape || opts.recolor)
+                            && let Ident::Mono(id) = data.state.ident
+                        {
+                            for m in monochrome {
+                                if m.id == id {
+                                    m.width = opts.width;
+                                    m.height = opts.height;
+                                    m.color = opts.color;
                                 }
                             }
                         }
@@ -615,10 +614,8 @@ impl Worker<Context> for CameraWorker {
                             }
                         }
                         opts.fourcc = capture.fourcc();
-                        if changed {
-                            if let Err(err) = capture.config_device() {
-                                error!(%err, "failed to set format");
-                            }
+                        if changed && let Err(err) = capture.config_device() {
+                            error!(%err, "failed to set format");
                         }
                     }
                 } else {

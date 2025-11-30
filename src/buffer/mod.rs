@@ -575,18 +575,18 @@ impl<'a> Buffer<'a> {
             self.data = Cow::Owned(data);
             return;
         }
-        if let Cow::Owned(data) = &mut self.data {
-            if data.capacity() >= src.data.len() {
-                if data.len() >= src.data.len() {
-                    data.truncate(src.data.len());
-                    data.copy_from_slice(&src.data);
-                } else {
-                    let (head, tail) = src.data.split_at(data.len());
-                    data.copy_from_slice(head);
-                    data.extend_from_slice(tail);
-                }
-                return;
+        if let Cow::Owned(data) = &mut self.data
+            && data.capacity() >= src.data.len()
+        {
+            if data.len() >= src.data.len() {
+                data.truncate(src.data.len());
+                data.copy_from_slice(&src.data);
+            } else {
+                let (head, tail) = src.data.split_at(data.len());
+                data.copy_from_slice(head);
+                data.extend_from_slice(tail);
             }
+            return;
         }
         match &mut self.data {
             Cow::Borrowed(_) => self.data = Cow::Owned(src.data.to_vec()),
