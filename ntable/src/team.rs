@@ -16,7 +16,7 @@ impl TeamNumber {
         (self.0 / 100) as u8
     }
     pub const fn lower(self) -> u8 {
-        self.0 as u8 % 100
+        (self.0 % 100) as u8
     }
     pub const fn to_ipv4(self) -> Ipv4Team {
         Ipv4Team(self)

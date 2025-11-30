@@ -46,7 +46,7 @@ impl NtHandle {
         let offset = now
             .duration_since(SystemTime::UNIX_EPOCH)
             .as_ref()
-            .map_or(0, Duration::as_millis);
+            .map_or(0, Duration::as_micros);
         let _ = self.pub_tx.send(PublishMessage {
             topic: Topic::String(topic.into()),
             timestamp: offset as _,
@@ -89,7 +89,7 @@ impl GenericPublisher {
         let offset = now
             .duration_since(SystemTime::UNIX_EPOCH)
             .as_ref()
-            .map_or(0, Duration::as_millis);
+            .map_or(0, Duration::as_micros);
         let cached = self.cache.load(Ordering::Relaxed);
         let (topic, cache) = if cached == 0 {
             (Topic::String(self.topic.clone()), Some(self.cache.clone()))
