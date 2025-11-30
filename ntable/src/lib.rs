@@ -132,6 +132,10 @@ impl<T: value::ConcreteType> Publisher<T> {
 pub struct NtClient {
     pub identity: String,
     pub port: u16,
+    /// How often to send a keepalive ping.
+    ///
+    /// The default is 500ms
+    pub keepalive: Duration,
     handle: NtHandle,
     pub_rx: mpsc::UnboundedReceiver<PublishMessage>,
     pubuids: HashMap<SmolStr, u32>,
@@ -144,6 +148,7 @@ impl NtClient {
         Self {
             identity,
             port: 5810,
+            keepalive: Duration::from_millis(500),
             pub_rx,
             handle: NtHandle { pub_tx },
             pubuids: HashMap::new(),

@@ -22,6 +22,31 @@ impl TeamNumber {
         Ipv4Team(self)
     }
 }
+impl serde::Serialize for TeamNumber {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u16(self.0)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TeamNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{Error, Unexpected};
+        u16::deserialize(deserializer).and_then(|team| {
+            Self::new(team).ok_or_else(|| {
+                D::Error::invalid_value(
+                    Unexpected::Unsigned(team as _),
+                    &"a team number from 0..=25599",
+                )
+            })
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ipv4Team(TeamNumber);
 impl Display for Ipv4Team {

@@ -1,15 +1,15 @@
 #![cfg(feature = "ntable")]
 
+use crate::pipeline::PipelineId;
+use crate::pipeline::PipelineName;
 use crate::pipeline::prelude::*;
-use ntable::{GenericPublisher, NtHandle};
+use ntable::NtHandle;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::fmt::{self, Debug, Formatter};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::fmt::Display;
 
 thread_local! {
     static CLIENT_HANDLE: Cell<*const NtHandle> = const { Cell::new(std::ptr::null()) };
@@ -27,38 +27,74 @@ pub fn handle_in_scope<R, F: FnOnce() -> R>(handle: &NtHandle, f: F) -> R {
     f()
 }
 /// Access the client handle passed to [`handle_in_scope`] from inside the closure body.
-pub fn with_handle<R, F: FnOnce(&NtHandle) -> R>(f: F) -> R {
-    if let Some(client) =
-        unsafe { CLIENT_HANDLE.get().as_ref() }.or_else(|| ntable::GLOBAL_HANDLE.get())
-    {
-        f(client)
-    } else {
-        panic!("No client handle available, either thread-local or global!")
-    }
+pub fn with_handle<R, F: FnOnce(&NtHandle) -> R>(f: F) -> Option<R> {
+    unsafe { CLIENT_HANDLE.get().as_ref() }
+        .or_else(|| ntable::GLOBAL_HANDLE.get())
+        .map(f)
 }
 /// Shorthand for [`with_handle(Clone::clone)`](with_handle) to clone the current client handle.
 #[inline(always)]
-pub fn cloned_handle() -> NtHandle {
+pub fn cloned_handle() -> Option<NtHandle> {
     with_handle(Clone::clone)
 }
 
+fn add_to_vec(out: &mut Vec<u8>, src: &str, id: &dyn Display, name: &dyn Display) {
+    use std::io::Write;
+    let mut it = src.as_bytes().iter();
+    while let Some(&ch) = it.next() {
+        if ch == b'%' {
+            match it.next() {
+                Some(&b'%') => out.push(b'%'),
+                Some(&b'i') => {
+                    let _ = write!(out, "{id}");
+                }
+                Some(&b'N') => {
+                    let _ = write!(out, "{name}");
+                }
+                Some(_) => {
+                    let mid = src.len() - it.len();
+                    let start = mid - 1;
+                    let end = src.ceil_char_boundary(mid);
+                    tracing::error!(spec = &src[start..end], "invalid format specifier");
+                }
+                None => {
+                    tracing::error!(src, "expected a format specifier after '%' in string");
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+}
+
+/// Format a prefix and channel as a String, replacing any known format codes.
+///
+/// Only `%i`, `%N`, and `%%` are known, for the pipeline ID, pipeline name, and literal `%`, respectively.
+fn format_channel(prefix: &str, chan: &str, id: &dyn Display, name: &dyn Display) -> String {
+    let mut out = Vec::with_capacity(prefix.len() + chan.len());
+    if !prefix.starts_with('/') {
+        out.push(b'/');
+    }
+    add_to_vec(&mut out, prefix, id, name);
+    if !prefix.ends_with('/') {
+        out.push(b'/');
+    }
+    add_to_vec(&mut out, chan, id, name);
+    unsafe { String::from_utf8_unchecked(out) }
+}
+
 /// A component that publishes to a network table.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NtPrimitiveComponent {
-    #[serde(skip, default = "cloned_handle")]
-    pub nt_handle: NtHandle,
+    pub nt_handle: Option<NtHandle>,
     /// Prefix of topics for the network table.
     ///
     /// Defaults to an empty string.
-    #[serde(default)]
     pub prefix: SmolStr,
     /// Remapping of input channels to NT paths.
     ///
     /// If a topic isn't in the remapping table, it publishes to the same
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub remapping: HashMap<SmolStr, SmolStr>,
-    #[serde(skip)]
-    pub publishers: Arc<Mutex<HashMap<String, GenericPublisher>>>,
 }
 impl Default for NtPrimitiveComponent {
     fn default() -> Self {
@@ -66,13 +102,7 @@ impl Default for NtPrimitiveComponent {
             nt_handle: cloned_handle(),
             prefix: SmolStr::new_static(""),
             remapping: HashMap::new(),
-            publishers: Arc::default(),
         }
-    }
-}
-impl Debug for NtPrimitiveComponent {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NtPublishComponent").finish_non_exhaustive()
     }
 }
 impl Component for NtPrimitiveComponent {
@@ -93,6 +123,17 @@ impl Component for NtPrimitiveComponent {
         let Some(inputs) = context.input_indices() else {
             return;
         };
+        let Some(handle) = &self.nt_handle else {
+            return;
+        };
+        let id = context.context.request::<PipelineId>();
+        let id = id.as_ref().map_or(&"anon" as _, |v| v as &dyn Display);
+        let name = context
+            .context
+            .request::<PipelineName>()
+            .map(|n| n.0)
+            .unwrap_or(id);
+
         macro_rules! define_ids {
             ($($type:ty => $name:ident as $nt:ty,)*) => {
                 $(const $name: TypeId = TypeId::of::<$type>();)*
@@ -116,7 +157,7 @@ impl Component for NtPrimitiveComponent {
                     }
                 }
                 for (chan, idx) in inputs {
-                    let ch = self.prefix.to_string() + self.remapping.get(chan).unwrap_or(chan);
+                    let ch = format_channel(&self.prefix, self.remapping.get(chan).unwrap_or(chan), id, name);
                     if idx.0 == 0 {
                         let v = &tree.vals[idx.1 as usize];
                         let va = &**v as &dyn Any;
@@ -124,7 +165,7 @@ impl Component for NtPrimitiveComponent {
                         $(
                             if tid == $name {
                                 let v = va.downcast_ref::<$type>().unwrap().clone() as $nt;
-                                self.nt_handle.set(ch, v);
+                                handle.set(ch, v);
                                 continue;
                             }
                         )*
@@ -162,13 +203,18 @@ impl Component for NtPrimitiveComponent {
             for (chan, arr) in row {
                 match arr {
                     InProgressArray::Unset => {}
-                    InProgressArray::Bool(v) => self.nt_handle.set(chan, v),
-                    InProgressArray::Int(v) => self.nt_handle.set(chan, v),
-                    InProgressArray::Float(v) => self.nt_handle.set(chan, v),
-                    InProgressArray::Double(v) => self.nt_handle.set(chan, v),
-                    InProgressArray::String(v) => self.nt_handle.set(chan, v),
+                    InProgressArray::Bool(v) => handle.set(chan, v),
+                    InProgressArray::Int(v) => handle.set(chan, v),
+                    InProgressArray::Float(v) => handle.set(chan, v),
+                    InProgressArray::Double(v) => handle.set(chan, v),
+                    InProgressArray::String(v) => handle.set(chan, v),
                 }
             }
+        }
+    }
+    fn initialize(&self, _graph: &mut PipelineGraph, _self_id: GraphComponentId) {
+        if self.nt_handle.is_none() {
+            tracing::error!("attempted to initialize a NT component without a handle");
         }
     }
 }
@@ -286,3 +332,28 @@ impl_atip!(
     f64, Double, "double";
     String, String, "string";
 );
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NtPrimitiveFactory {
+    /// Prefix of topics for the network table.
+    ///
+    /// Defaults to an empty string.
+    #[serde(default)]
+    pub prefix: SmolStr,
+    /// Remapping of input channels to NT paths.
+    ///
+    /// If a topic isn't in the remapping table, it publishes to the same
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub remapping: HashMap<SmolStr, SmolStr>,
+}
+
+#[typetag::serde(name = "ntable")]
+impl ComponentFactory for NtPrimitiveFactory {
+    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(NtPrimitiveComponent {
+            nt_handle: cloned_handle(),
+            prefix: self.prefix.clone(),
+            remapping: self.remapping.clone(),
+        })
+    }
+}
