@@ -62,6 +62,9 @@ impl<A> LogErr for TypeMismatch<A> {
 /// }
 /// ```
 pub trait Data: Any + Send + Sync {
+    fn type_name(&self) -> &'static str {
+        std::any::type_name_of_val(self)
+    }
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Display::fmt(&disqualified::ShortName::of::<Self>(), f)
     }

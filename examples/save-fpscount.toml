@@ -1,3 +1,7 @@
+[ntable]
+host = "localhost"
+identity = "testing"
+
 [camera.video]
 type = "v4l"
 path = "/dev/video32" # the webcam for my laptop, the first 16 are something weird with my camera
@@ -6,6 +10,14 @@ height = 480
 fourcc = "YUYV"
 fps = 30
 # output = "fps"
+outputs = ["fps", "save", "nt"]
+
+[camera.mono]
+type = "frame"
+width = 640
+height = 480
+color.format = "rgb"
+color.bytes = [255, 255, 0]
 outputs = ["fps", "save"]
 
 [component.fps]
@@ -20,3 +32,11 @@ input = "fps.pretty"
 type = "ffmpeg"
 fps = 30
 args = ["-c:v", "libx264", "-crf", "23", "vv_%N_%Y%m%d_%H%M%S.mp4"]
+
+[component.nt]
+type = "ntable"
+prefix = "%N/fps"
+input.pretty = "fps.pretty"
+input.fps = "fps.fps"
+input.min = "fps.min"
+input.max = "fps.max"
