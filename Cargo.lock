@@ -4259,7 +4259,6 @@ dependencies = [
  "supply",
  "thiserror 2.0.17",
  "time",
- "tokio",
  "tracing",
  "tracing-subscriber",
  "triomphe",
