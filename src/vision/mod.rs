@@ -1,5 +1,7 @@
 //! Vision algorithms and utilities
 
+use std::cell::Cell;
+
 use crate::broadcast::{Broadcast2, ParBroadcast2, par_broadcast2};
 use crate::buffer::{Buffer, PixelFormat};
 use rayon::prelude::*;
@@ -149,54 +151,100 @@ pub fn percentile_filter(
     );
 }
 
+#[repr(transparent)]
+struct AssertSync<T>(T);
+unsafe impl<T> Send for AssertSync<T> {}
+unsafe impl<T> Sync for AssertSync<T> {}
+
 /// Box blur an image.
 ///
 /// The width and height must be odd numbers.
-/// The output buffer will have the same dimensions and format as the input buffer.
-pub fn box_blur(src: Buffer<'_>, dst: &mut Buffer<'_>, width: usize, height: usize) {
+/// This blurs the image in-place, with an auxiliary buffer.
+pub fn box_blur(img: &mut Buffer<'_>, aux: &mut Buffer<'_>, width: usize, height: usize) {
     assert_ne!(
-        src.format,
+        img.format,
         PixelFormat::YUYV,
         "Box blurring isn't implemented for YUYV images"
     );
     assert!(width & 1 == 1, "Window width must be an odd number");
     assert!(height & 1 == 1, "Window height must be an odd number");
-    dst.width = src.width;
-    dst.height = src.height;
-    dst.format = src.format;
-    let data = dst.resize_data();
-    if width == 1 && height == 1 {
-        data.copy_from_slice(&src.data);
-    }
-    if src.width == 0 || src.height == 0 {
+    if width <= 1 && height <= 1 {
         return;
     }
-    let pxlen = src.format.pixel_size();
-    let buf_len = width * height;
-    let buf_width = src.width as usize;
-    let buf_height = src.height as usize;
-    let half_width = width / 2;
-    let half_height = height / 2;
-    data.par_chunks_mut(pxlen).enumerate().for_each_init(
-        || vec![Vec::with_capacity(buf_len); pxlen],
-        |bufs, (n, px)| {
-            bufs.iter_mut().for_each(Vec::clear);
-            let y = n / buf_width;
-            let x = n % buf_width;
-            for y in y.saturating_sub(half_height)..=std::cmp::min(y + half_height, buf_height - 1)
-            {
-                for x in x.saturating_sub(half_width)..=std::cmp::min(x + half_width, buf_width - 1)
-                {
-                    for (buf, &val) in bufs.iter_mut().zip(src.pixel(x as _, y as _).unwrap()) {
-                        buf.push(val);
+    aux.width = img.width;
+    aux.height = img.height;
+    aux.format = img.format;
+    let pxlen = img.format.pixel_size();
+    let buf_width = img.width as usize;
+    let buf_height = img.height as usize;
+    let src = img.resize_data();
+    let dst = aux.resize_data();
+    let xmul = pxlen;
+    let ymul = buf_width * pxlen;
+    if height > 1 {
+        let half = height / 2;
+        {
+            let dst = unsafe { std::mem::transmute::<&[u8], &[AssertSync<Cell<u8>>]>(dst) };
+            (0..buf_width).into_par_iter().for_each_init(
+                || [0; 200],
+                |buf, x| {
+                    for y in 0..buf_height {
+                        let px_start = y * ymul + x * xmul;
+                        let px_end = px_start + pxlen;
+                        let px = unsafe { dst.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let min = y.saturating_sub(half);
+                        let max = y.saturating_add(half + 1).min(buf_height);
+                        buf[..pxlen].fill(0);
+                        for y2 in min..max {
+                            let px_start = y2 * ymul + x * xmul;
+                            let px_end = px_start + pxlen;
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                            for (sum, chan) in buf.iter_mut().zip(px) {
+                                *sum += *chan as usize;
+                            }
+                        }
+                        let size = max - min;
+                        for (sum, chan) in buf.iter().zip(px) {
+                            chan.0.set((sum / size) as u8);
+                        }
                     }
-                }
-            }
-            for (buf, val) in bufs.iter_mut().zip(px) {
-                *val = (buf.iter().map(|i| *i as usize).sum::<usize>() / buf.len()) as u8;
-            }
-        },
-    );
+                },
+            );
+        }
+        std::mem::swap(src, dst);
+    }
+    if width > 1 {
+        let half = width / 2;
+        {
+            let dst = unsafe { std::mem::transmute::<&[u8], &[AssertSync<Cell<u8>>]>(dst) };
+            (0..buf_height).into_par_iter().for_each_init(
+                || [0; 200],
+                |buf, y| {
+                    for x in 0..buf_width {
+                        let px_start = y * ymul + x * xmul;
+                        let px_end = px_start + pxlen;
+                        let px = unsafe { dst.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let min = x.saturating_sub(half);
+                        let max = x.saturating_add(half + 1).min(buf_width);
+                        buf[..pxlen].fill(0);
+                        for x2 in min..max {
+                            let px_start = y * ymul + x2 * xmul;
+                            let px_end = px_start + pxlen;
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                            for (sum, chan) in buf.iter_mut().zip(px) {
+                                *sum += *chan as usize;
+                            }
+                        }
+                        let size = max - min;
+                        for (sum, chan) in buf.iter().zip(px) {
+                            chan.0.set((sum / size) as u8);
+                        }
+                    }
+                },
+            );
+        }
+        std::mem::swap(src, dst);
+    }
 }
 
 /// A [`Broadcast2`] implementor that reorders the channels of an image

@@ -113,8 +113,14 @@ impl DerivedFrame {
                 width,
                 height,
             } => {
-                from.convert_inplace(format);
-                box_blur(from, &mut self.frame, width * 2 + 1, height * 2 + 1);
+                self.frame.format = format;
+                from.convert_into(&mut self.frame);
+                box_blur(
+                    &mut self.frame,
+                    &mut Buffer::empty_rgb(),
+                    width * 2 + 1,
+                    height * 2 + 1,
+                );
             }
             Transform::PercentileFilter {
                 format,

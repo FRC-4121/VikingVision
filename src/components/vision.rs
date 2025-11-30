@@ -315,9 +315,9 @@ impl Component for BoxBlurComponent {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
-        let mut dst = Buffer::empty_rgb();
-        box_blur(img.borrow(), &mut dst, self.width, self.height);
-        context.submit("", dst);
+        let mut img = img.clone_static();
+        box_blur(&mut img, &mut Buffer::empty_rgb(), self.width, self.height);
+        context.submit("", img);
     }
 }
 #[typetag::serde(name = "box-blur")]
