@@ -187,6 +187,10 @@ fn main() {
         }
     };
 
+    if let Some(nt) = config.ntable {
+        nt.init();
+    }
+
     if let Some(filter) = &args.filter {
         info!(filter, "filtering cameras with regex");
         match matchers::Pattern::new(filter) {

@@ -150,7 +150,7 @@ impl PipelineRunner {
         &self,
         component: C,
         input: I,
-    ) -> Result<ComponentArgs, PackArgsError<C::Error>> {
+    ) -> Result<ComponentArgs, PackArgsError<'_, C::Error>> {
         let component = component
             .resolve(self)
             .map_err(PackArgsError::NoComponent)?;
@@ -173,14 +173,14 @@ impl PipelineRunner {
                         + idx.1) as usize;
                     packed[resolved] = input.get(name).ok_or(PackArgsError::MissingInput(name))?;
                 }
-                if let Some(expected) = input.expected_len() {
-                    if expected != len {
-                        tracing::warn!(
-                            expected,
-                            read = len,
-                            "number of args for the component doesn't match the number of args for the component"
-                        );
-                    }
+                if let Some(expected) = input.expected_len()
+                    && expected != len
+                {
+                    tracing::warn!(
+                        expected,
+                        read = len,
+                        "number of args for the component doesn't match the number of args for the component"
+                    );
                 }
                 Ok(ComponentArgs(packed))
             }

@@ -208,14 +208,23 @@ struct BlurShim {
     height: usize,
 }
 
+#[derive(Deserialize)]
+struct GaussianShim {
+    sigma: f32,
+    width: usize,
+    height: usize,
+}
+
 #[derive(Debug, Error)]
-enum FromFilterError {
+enum FromShimError {
     #[error("window width must be odd")]
     EvenWidth,
     #[error("window height must be odd")]
     EvenHeight,
     #[error("pixel index must be less than the window size")]
     IndexOob,
+    #[error("sigma must be positive")]
+    NonPositiveSigma,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -226,20 +235,20 @@ pub struct PercentileFilterComponent {
     pub index: usize,
 }
 impl TryFrom<FilterShim> for PercentileFilterComponent {
-    type Error = FromFilterError;
+    type Error = FromShimError;
 
     fn try_from(value: FilterShim) -> Result<Self, Self::Error> {
         if value.width & 1 == 0 {
-            return Err(FromFilterError::EvenWidth);
+            return Err(FromShimError::EvenWidth);
         }
         if value.height & 1 == 0 {
-            return Err(FromFilterError::EvenHeight);
+            return Err(FromShimError::EvenHeight);
         }
         let Some(len) = value.width.checked_mul(value.height) else {
-            return Err(FromFilterError::IndexOob);
+            return Err(FromShimError::IndexOob);
         };
         if value.index >= len {
-            return Err(FromFilterError::IndexOob);
+            return Err(FromShimError::IndexOob);
         }
         Ok(Self {
             width: value.width,
@@ -281,14 +290,14 @@ pub struct BoxBlurComponent {
     pub height: usize,
 }
 impl TryFrom<BlurShim> for BoxBlurComponent {
-    type Error = FromFilterError;
+    type Error = FromShimError;
 
     fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
         if value.width & 1 == 0 {
-            return Err(FromFilterError::EvenWidth);
+            return Err(FromShimError::EvenWidth);
         }
         if value.height & 1 == 0 {
-            return Err(FromFilterError::EvenHeight);
+            return Err(FromShimError::EvenHeight);
         }
         Ok(Self {
             width: value.width,
@@ -311,12 +320,72 @@ impl Component for BoxBlurComponent {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
-        let mut dst = Buffer::empty_rgb();
-        box_blur(img.borrow(), &mut dst, self.width, self.height);
-        context.submit("", dst);
+        let mut img = img.clone_static();
+        box_blur(&mut img, &mut Buffer::empty_rgb(), self.width, self.height);
+        context.submit("", img);
     }
 }
 impl ComponentFactory for BoxBlurComponent {
+    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(*self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "GaussianShim")]
+pub struct GaussianBlurComponent {
+    pub sigma: f32,
+    pub width: usize,
+    pub height: usize,
+}
+impl TryFrom<GaussianShim> for GaussianBlurComponent {
+    type Error = FromShimError;
+
+    fn try_from(value: GaussianShim) -> Result<Self, Self::Error> {
+        if value.width & 1 == 0 {
+            return Err(FromShimError::EvenWidth);
+        }
+        if value.height & 1 == 0 {
+            return Err(FromShimError::EvenHeight);
+        }
+        if value.sigma <= 0.0 {
+            return Err(FromShimError::NonPositiveSigma);
+        }
+        Ok(Self {
+            sigma: value.sigma,
+            width: value.width,
+            height: value.height,
+        })
+    }
+}
+impl Component for GaussianBlurComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
+            OutputKind::Single
+        } else {
+            OutputKind::None
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
+            return;
+        };
+        let mut img = img.clone_static();
+        gaussian_blur(
+            &mut img,
+            &mut Buffer::empty_rgb(),
+            self.sigma,
+            self.width,
+            self.height,
+        );
+        context.submit("", img);
+    }
+}
+#[typetag::serde(name = "gaussian-blur")]
+impl ComponentFactory for GaussianBlurComponent {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
     }
@@ -329,14 +398,14 @@ pub struct DilateFactory {
     pub height: usize,
 }
 impl TryFrom<BlurShim> for DilateFactory {
-    type Error = FromFilterError;
+    type Error = FromShimError;
 
     fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
         if value.width & 1 == 0 {
-            return Err(FromFilterError::EvenWidth);
+            return Err(FromShimError::EvenWidth);
         }
         if value.height & 1 == 0 {
-            return Err(FromFilterError::EvenHeight);
+            return Err(FromShimError::EvenHeight);
         }
         Ok(Self {
             width: value.width,
@@ -361,14 +430,14 @@ pub struct ErodeFactory {
     pub height: usize,
 }
 impl TryFrom<BlurShim> for ErodeFactory {
-    type Error = FromFilterError;
+    type Error = FromShimError;
 
     fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
         if value.width & 1 == 0 {
-            return Err(FromFilterError::EvenWidth);
+            return Err(FromShimError::EvenWidth);
         }
         if value.height & 1 == 0 {
-            return Err(FromFilterError::EvenHeight);
+            return Err(FromShimError::EvenHeight);
         }
         Ok(Self {
             width: value.width,
@@ -393,14 +462,14 @@ pub struct MedianFilterFactory {
     pub height: usize,
 }
 impl TryFrom<BlurShim> for MedianFilterFactory {
-    type Error = FromFilterError;
+    type Error = FromShimError;
 
     fn try_from(value: BlurShim) -> Result<Self, Self::Error> {
         if value.width & 1 == 0 {
-            return Err(FromFilterError::EvenWidth);
+            return Err(FromShimError::EvenWidth);
         }
         if value.height & 1 == 0 {
-            return Err(FromFilterError::EvenHeight);
+            return Err(FromShimError::EvenHeight);
         }
         Ok(Self {
             width: value.width,

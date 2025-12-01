@@ -6,6 +6,7 @@ pub mod collect;
 pub mod draw;
 pub mod ffmpeg;
 pub mod group;
+pub mod ntable;
 pub mod utils;
 pub mod vision;
 
@@ -42,11 +43,14 @@ pub mod prelude {
     pub use super::draw::DrawComponent;
     pub use super::ffmpeg::FfmpegComponent;
     pub use super::group::GroupComponent;
+    #[cfg(feature = "ntable")]
+    pub use super::ntable::NtPrimitiveComponent;
     pub use super::utils::{
         ChannelComponent, CloneComponent, DebugComponent, FpsComponent, WrapMutexComponent,
     };
     pub use super::vision::{
-        BlobComponent, ColorFilterComponent, ColorSpaceComponent, PercentileFilterComponent,
+        BlobComponent, ColorFilterComponent, ColorSpaceComponent, GaussianBlurComponent,
+        PercentileFilterComponent,
     };
 }
 

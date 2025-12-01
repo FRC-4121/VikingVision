@@ -146,10 +146,10 @@ impl App for VikingVision {
             use std::task::*;
             if let Poll::Ready(opt) = fut.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
                 self.image_pick_future = None;
-                if let Some(handle) = opt {
-                    if let Some(cam) = camera::open_from_img_path(handle.path().to_path_buf()) {
-                        self.cameras.push(cam);
-                    }
+                if let Some(handle) = opt
+                    && let Some(cam) = camera::open_from_img_path(handle.path().to_path_buf())
+                {
+                    self.cameras.push(cam);
                 }
             }
         }
