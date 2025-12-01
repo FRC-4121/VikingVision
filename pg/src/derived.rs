@@ -33,6 +33,12 @@ enum Transform {
         width: usize,
         height: usize,
     },
+    GaussianBlur {
+        format: PixelFormat,
+        sigma: f32,
+        width: usize,
+        height: usize,
+    },
     PercentileFilter {
         format: PixelFormat,
         width: usize,
@@ -113,8 +119,30 @@ impl DerivedFrame {
                 width,
                 height,
             } => {
-                from.convert_inplace(format);
-                box_blur(from, &mut self.frame, width * 2 + 1, height * 2 + 1);
+                self.frame.format = format;
+                from.convert_into(&mut self.frame);
+                box_blur(
+                    &mut self.frame,
+                    &mut Buffer::empty_rgb(),
+                    width * 2 + 1,
+                    height * 2 + 1,
+                );
+            }
+            Transform::GaussianBlur {
+                format,
+                sigma,
+                width,
+                height,
+            } => {
+                self.frame.format = format;
+                from.convert_into(&mut self.frame);
+                gaussian_blur(
+                    &mut self.frame,
+                    &mut Buffer::empty_rgb(),
+                    sigma,
+                    width * 2 + 1,
+                    height * 2 + 1,
+                );
             }
             Transform::PercentileFilter {
                 format,
@@ -223,6 +251,16 @@ impl DerivedFrame {
                 let h = height * 2 + 1;
                 let _ = write!(self.title, "Box Blur: {format}, {w}x{h}");
             }
+            Transform::GaussianBlur {
+                format,
+                sigma,
+                width,
+                height,
+            } => {
+                let w = width * 2 + 1;
+                let h = height * 2 + 1;
+                let _ = write!(self.title, "Gaussian Blur: {format}, {sigma}, {w}x{h}");
+            }
             Transform::PercentileFilter {
                 format,
                 width,
@@ -231,8 +269,11 @@ impl DerivedFrame {
             } => {
                 let w = width * 2 + 1;
                 let h = height * 2 + 1;
-                let p = pixel * 100 / w / h;
-                let _ = write!(self.title, "Percentile Filter: {format}, {w}x{h}, {p}%");
+                let p = (pixel * 100).checked_div(w * h - 1);
+                let _ = write!(self.title, "Percentile Filter: {format}, {w}x{h}");
+                if let Some(p) = p {
+                    let _ = write!(self.title, ", {p}%");
+                }
             }
             Transform::Blobs { .. } => {
                 self.title.push_str("Blobs");
@@ -301,6 +342,20 @@ pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<D
                 DerivedFrame::new(
                     Transform::BoxBlur {
                         format: PixelFormat::RGB,
+                        width: 0,
+                        height: 0,
+                    },
+                    id,
+                )
+                .with_updated_title(title),
+            );
+        }
+        if ui.button("Gaussian Blur").clicked() {
+            next.push(
+                DerivedFrame::new(
+                    Transform::GaussianBlur {
+                        format: PixelFormat::RGB,
+                        sigma: 2.0,
                         width: 0,
                         height: 0,
                     },
@@ -565,6 +620,41 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         height,
                     } => {
                         changed = color_space_dropdown(ui, 0, format, false);
+                        changed |= ui
+                            .add(
+                                egui::Slider::from_get_set(1.0..=13.0, |old| {
+                                    if let Some(v) = old {
+                                        *width = (v * 0.5).max(0.0) as _;
+                                    }
+                                    (*width * 2 + 1) as _
+                                })
+                                .integer()
+                                .text("Width"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::from_get_set(1.0..=13.0, |old| {
+                                    if let Some(v) = old {
+                                        *height = (v * 0.5).max(0.0) as _;
+                                    }
+                                    (*height * 2 + 1) as _
+                                })
+                                .integer()
+                                .text("Height"),
+                            )
+                            .changed();
+                    }
+                    Transform::GaussianBlur {
+                        format,
+                        sigma,
+                        width,
+                        height,
+                    } => {
+                        changed = color_space_dropdown(ui, 0, format, false);
+                        changed |= ui
+                            .add(egui::Slider::new(sigma, 0.0..=10.0).text("Sigma"))
+                            .changed();
                         changed |= ui
                             .add(
                                 egui::Slider::from_get_set(1.0..=13.0, |old| {
