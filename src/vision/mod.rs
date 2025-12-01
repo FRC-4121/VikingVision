@@ -249,7 +249,7 @@ pub fn box_blur(img: &mut Buffer<'_>, aux: &mut Buffer<'_>, width: usize, height
 
 const GAUSSIAN_SCALE: f32 = 26145.082; // 65536/sqrt(2pi)
 
-/// Box blur an image.
+/// Gaussian blur an image.
 ///
 /// The width and height must be odd numbers.
 /// This blurs the image in-place, with an auxiliary buffer.
@@ -270,6 +270,9 @@ pub fn gaussian_blur(
     if width <= 1 && height <= 1 {
         return;
     }
+    if sigma <= 0.0 {
+        return;
+    }
     aux.width = img.width;
     aux.height = img.height;
     aux.format = img.format;
@@ -284,7 +287,7 @@ pub fn gaussian_blur(
     let half_width = width / 2;
     let half_height = height / 2;
     let coeffs = (0..=half_width.max(half_height))
-        .map(|v| (std::f32::consts::E.powf((v as f32).powi(-2)) * scale) as usize)
+        .map(|v| ((-((v as f32).powi(2)) / (2.0 * sigma * sigma)).exp() * scale) as usize)
         .collect::<Vec<_>>();
     let cums = coeffs
         .iter()
@@ -314,7 +317,7 @@ pub fn gaussian_blur(
                             *sum += *chan as usize * c;
                         }
                     }
-                    let total = cums[max - y - 1] + cums[y - min];
+                    let total = cums[max - y - 1] + cums[y - min] - cums[0];
                     for (sum, chan) in buf.iter().zip(px) {
                         chan.0.set((sum / total) as u8);
                     }
