@@ -191,14 +191,14 @@ pub fn box_blur(img: &mut Buffer<'_>, aux: &mut Buffer<'_>, width: usize, height
                     for y in 0..buf_height {
                         let px_start = y * ymul + x * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { dst.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let px = unsafe { dst.get_unchecked(px_start..px_end) }; // already bounds checked
                         let min = y.saturating_sub(half);
                         let max = y.saturating_add(half + 1).min(buf_height);
                         buf[..pxlen].fill(0);
                         for y2 in min..max {
                             let px_start = y2 * ymul + x * xmul;
                             let px_end = px_start + pxlen;
-                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
                             for (sum, chan) in buf.iter_mut().zip(px) {
                                 *sum += *chan as usize;
                             }
@@ -223,14 +223,14 @@ pub fn box_blur(img: &mut Buffer<'_>, aux: &mut Buffer<'_>, width: usize, height
                     for x in 0..buf_width {
                         let px_start = y * ymul + x * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { dst.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let px = unsafe { dst.get_unchecked(px_start..px_end) }; // already bounds checked
                         let min = x.saturating_sub(half);
                         let max = x.saturating_add(half + 1).min(buf_width);
                         buf[..pxlen].fill(0);
                         for x2 in min..max {
                             let px_start = y * ymul + x2 * xmul;
                             let px_end = px_start + pxlen;
-                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
                             for (sum, chan) in buf.iter_mut().zip(px) {
                                 *sum += *chan as usize;
                             }
@@ -304,14 +304,14 @@ pub fn gaussian_blur(
                 for y in 0..buf_height {
                     let px_start = y * ymul + x * xmul;
                     let px_end = px_start + pxlen;
-                    let px = unsafe { dst_cells.get_unchecked(px_start..px_end) }; // already bouds checked
+                    let px = unsafe { dst_cells.get_unchecked(px_start..px_end) }; // already bounds checked
                     let min = y.saturating_sub(half_height);
                     let max = y.saturating_add(half_height + 1).min(buf_height);
                     buf[..pxlen].fill(0);
                     for y2 in min..max {
                         let px_start = y2 * ymul + x * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
                         let c = coeffs[y2.abs_diff(y)];
                         for (sum, chan) in buf.iter_mut().zip(px) {
                             *sum += *chan as usize * c;
@@ -334,14 +334,14 @@ pub fn gaussian_blur(
                 for x in 0..buf_width {
                     let px_start = y * ymul + x * xmul;
                     let px_end = px_start + pxlen;
-                    let px = unsafe { dst_cells.get_unchecked(px_start..px_end) }; // already bouds checked
+                    let px = unsafe { dst_cells.get_unchecked(px_start..px_end) }; // already bounds checked
                     let min = x.saturating_sub(half_width);
                     let max = x.saturating_add(half_width + 1).min(buf_width);
                     buf[..pxlen].fill(0);
                     for x2 in min..max {
                         let px_start = y * ymul + x2 * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
                         let c = coeffs[x2.abs_diff(x)];
                         for (sum, chan) in buf.iter_mut().zip(px) {
                             *sum += *chan as usize * c;
