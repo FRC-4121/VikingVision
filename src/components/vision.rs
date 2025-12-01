@@ -384,7 +384,6 @@ impl Component for GaussianBlurComponent {
         context.submit("", img);
     }
 }
-#[typetag::serde(name = "gaussian-blur")]
 impl ComponentFactory for GaussianBlurComponent {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
@@ -497,6 +496,7 @@ crate::impl_register!(
     "filter" => ColorFilterComponent,
     "blob" => BlobComponent,
     "box-blur" => BoxBlurComponent,
+    "gaussian-blur" => GaussianBlurComponent,
     "percent-filter" => PercentileFilterComponent,
     "dilate" => DilateFactory,
     "erode" => ErodeFactory,

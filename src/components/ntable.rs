@@ -347,7 +347,6 @@ pub struct NtPrimitiveFactory {
     pub remapping: HashMap<SmolStr, SmolStr>,
 }
 
-#[typetag::serde(name = "ntable")]
 impl ComponentFactory for NtPrimitiveFactory {
     fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(NtPrimitiveComponent {
@@ -357,3 +356,11 @@ impl ComponentFactory for NtPrimitiveFactory {
         })
     }
 }
+
+/// A [`Register`](crate::registry::Register) implementation for all of the network table components
+pub struct NtComponents;
+crate::impl_register!(
+    in NtComponents;
+    [dyn ComponentFactory];
+    "ntable" => NtPrimitiveFactory,
+);

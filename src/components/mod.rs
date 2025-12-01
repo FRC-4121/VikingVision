@@ -10,6 +10,23 @@ pub mod ntable;
 pub mod utils;
 pub mod vision;
 
+#[cfg(not(feature = "apriltag"))]
+pub mod apriltag {
+    /// A [`Register`](crate::registry::Register) implementation for all of the apriltag components
+    pub struct AprilTagComponents;
+    impl<T> crate::registry::Register<T> for AprilTagComponents {
+        fn register(_registry: &mut crate::registry::Registry<T>) {}
+    }
+}
+#[cfg(not(feature = "ntable"))]
+pub mod apriltag {
+    /// A [`Register`](crate::registry::Register) implementation for all of the network table components
+    pub struct NtComponents;
+    impl<T> crate::registry::Register<T> for NtComponents {
+        fn register(_registry: &mut crate::registry::Registry<T>) {}
+    }
+}
+
 /// An identifier for a component.
 ///
 /// Loading from a name is likely more useful for serialization, but these components should be easily
@@ -56,11 +73,19 @@ pub mod prelude {
 
 /// A [`Register`](crate::registry::Register) implementation for all of the built-in components
 pub struct BuiltinComponents;
-#[cfg(feature = "apriltag")]
-crate::impl_register_bundle!(BuiltinComponents: apriltag::AprilTagComponents, collect::CollectComponents, draw::DrawFactory, ffmpeg::FfmpegFactory, group::GroupFactory, utils::UtilComponents, vision::VisionComponents);
-#[cfg(not(feature = "apriltag"))]
-crate::impl_register_bundle!(BuiltinComponents: collect::CollectComponents, draw::DrawFactory, ffmpeg::FfmpegFactory, group::GroupFactory, utils::UtilComponents, vision::VisionComponents);
+crate::impl_register_bundle!(
+    BuiltinComponents:
+    apriltag::AprilTagComponents,
+    collect::CollectComponents,
+    draw::DrawFactory,
+    ffmpeg::FfmpegFactory,
+    group::GroupFactory,
+    ntable::NtComponents,
+    utils::UtilComponents,
+    vision::VisionComponents
+);
 
+/// A compile-time check to make sure I have a working registry
 #[allow(
     dead_code,
     unconditional_recursion,
