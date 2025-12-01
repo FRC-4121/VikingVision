@@ -269,8 +269,11 @@ impl DerivedFrame {
             } => {
                 let w = width * 2 + 1;
                 let h = height * 2 + 1;
-                let p = pixel * 100 / w / h;
-                let _ = write!(self.title, "Percentile Filter: {format}, {w}x{h}, {p}%");
+                let p = (pixel * 100).checked_div(w * h - 1);
+                let _ = write!(self.title, "Percentile Filter: {format}, {w}x{h}");
+                if let Some(p) = p {
+                    let _ = write!(self.title, ", {p}%");
+                }
             }
             Transform::Blobs { .. } => {
                 self.title.push_str("Blobs");
