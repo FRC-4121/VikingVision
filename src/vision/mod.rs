@@ -140,12 +140,12 @@ pub fn percentile_filter(
                 }
             }
             for (buf, val) in bufs.iter_mut().zip(px) {
-                buf.sort_unstable();
-                if buf.len() == buf_len {
-                    *val = buf[index];
+                let idx = if buf.len() == buf_len {
+                    index
                 } else {
-                    *val = buf[index * buf.len() / buf_len];
-                }
+                    index * buf.len() / buf_len
+                };
+                *val = *buf.select_nth_unstable(idx).1;
             }
         },
     );
