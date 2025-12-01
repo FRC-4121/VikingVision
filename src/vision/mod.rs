@@ -247,6 +247,114 @@ pub fn box_blur(img: &mut Buffer<'_>, aux: &mut Buffer<'_>, width: usize, height
     }
 }
 
+const GAUSSIAN_SCALE: f32 = 26145.082; // 65536/sqrt(2pi)
+
+/// Box blur an image.
+///
+/// The width and height must be odd numbers.
+/// This blurs the image in-place, with an auxiliary buffer.
+pub fn gaussian_blur(
+    img: &mut Buffer<'_>,
+    aux: &mut Buffer<'_>,
+    sigma: f32,
+    width: usize,
+    height: usize,
+) {
+    assert_ne!(
+        img.format,
+        PixelFormat::YUYV,
+        "Gaussian blurring isn't implemented for YUYV images"
+    );
+    assert!(width & 1 == 1, "Window width must be an odd number");
+    assert!(height & 1 == 1, "Window height must be an odd number");
+    if width <= 1 && height <= 1 {
+        return;
+    }
+    aux.width = img.width;
+    aux.height = img.height;
+    aux.format = img.format;
+    let pxlen = img.format.pixel_size();
+    let buf_width = img.width as usize;
+    let buf_height = img.height as usize;
+    let src = img.resize_data();
+    let dst = aux.resize_data();
+    let xmul = pxlen;
+    let ymul = buf_width * pxlen;
+    let scale = GAUSSIAN_SCALE / sigma;
+    let half_width = width / 2;
+    let half_height = height / 2;
+    let coeffs = (0..=half_width.max(half_height))
+        .map(|v| (std::f32::consts::E.powf((v as f32).powi(-2)) * scale) as usize)
+        .collect::<Vec<_>>();
+    let cums = coeffs
+        .iter()
+        .scan(0, |acc, x| {
+            *acc += x;
+            Some(*acc)
+        })
+        .collect::<Vec<_>>();
+    if height > 1 {
+        let dst_cells = unsafe { std::mem::transmute::<&[u8], &[AssertSync<Cell<u8>>]>(dst) };
+        (0..buf_width).into_par_iter().for_each_init(
+            || [0; 200],
+            |buf, x| {
+                for y in 0..buf_height {
+                    let px_start = y * ymul + x * xmul;
+                    let px_end = px_start + pxlen;
+                    let px = unsafe { dst_cells.get_unchecked(px_start..px_end) }; // already bouds checked
+                    let min = y.saturating_sub(half_height);
+                    let max = y.saturating_add(half_height + 1).min(buf_height);
+                    buf[..pxlen].fill(0);
+                    for y2 in min..max {
+                        let px_start = y2 * ymul + x * xmul;
+                        let px_end = px_start + pxlen;
+                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let c = coeffs[y2.abs_diff(y)];
+                        for (sum, chan) in buf.iter_mut().zip(px) {
+                            *sum += *chan as usize * c;
+                        }
+                    }
+                    let total = cums[max - y - 1] + cums[y - min];
+                    for (sum, chan) in buf.iter().zip(px) {
+                        chan.0.set((sum / total) as u8);
+                    }
+                }
+            },
+        );
+        std::mem::swap(src, dst);
+    }
+    if width > 1 {
+        let dst_cells = unsafe { std::mem::transmute::<&[u8], &[AssertSync<Cell<u8>>]>(dst) };
+        (0..buf_height).into_par_iter().for_each_init(
+            || [0; 200],
+            |buf, y| {
+                for x in 0..buf_width {
+                    let px_start = y * ymul + x * xmul;
+                    let px_end = px_start + pxlen;
+                    let px = unsafe { dst_cells.get_unchecked(px_start..px_end) }; // already bouds checked
+                    let min = x.saturating_sub(half_width);
+                    let max = x.saturating_add(half_width + 1).min(buf_width);
+                    buf[..pxlen].fill(0);
+                    for x2 in min..max {
+                        let px_start = y * ymul + x2 * xmul;
+                        let px_end = px_start + pxlen;
+                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bouds checked
+                        let c = coeffs[x2.abs_diff(x)];
+                        for (sum, chan) in buf.iter_mut().zip(px) {
+                            *sum += *chan as usize * c;
+                        }
+                    }
+                    let total = cums[max - x - 1] + cums[x - min] - cums[0];
+                    for (sum, chan) in buf.iter().zip(px) {
+                        chan.0.set((sum / total) as u8);
+                    }
+                }
+            },
+        );
+        std::mem::swap(src, dst);
+    }
+}
+
 /// A [`Broadcast2`] implementor that reorders the channels of an image
 #[derive(Debug, Clone, Copy)]
 pub struct Swizzle<'a> {
