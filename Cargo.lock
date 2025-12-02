@@ -3941,13 +3941,14 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.23.6"
+version = "0.23.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3effe7c0e86fdff4f69cdd2ccc1b96f933e24811c5441d44904e8683e27184b"
+checksum = "6485ef6d0d9b5d0ec17244ff7eb05310113c3f316f2d14200d4de56b3cb98f8d"
 dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 
@@ -4285,6 +4286,12 @@ dependencies = [
 [[package]]
 name = "vv-gui"
 version = "0.1.0"
+dependencies = [
+ "eframe",
+ "toml_edit",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "vv-pg"
