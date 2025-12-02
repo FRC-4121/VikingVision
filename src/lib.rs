@@ -7,6 +7,7 @@ pub mod draw;
 pub mod pipeline;
 pub mod registry;
 pub mod serialized;
+pub mod tasks;
 pub mod utils;
 pub mod vision;
 
