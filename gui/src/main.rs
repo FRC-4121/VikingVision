@@ -1,35 +1,16 @@
 use eframe::{App, CreationContext, egui};
 use std::error::Error;
 use std::io;
-use std::path::PathBuf;
+
+mod editor;
 
 struct VikingVision {
-    contents: String,
-    loaded: PathBuf,
-    document: Result<toml_edit::DocumentMut, toml_edit::TomlError>,
-    contents_persisted: bool,
-    path_persisted: bool,
+    editor: editor::EditorState,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext) -> io::Result<Self> {
-        let mut contents = String::new();
-        let mut loaded = PathBuf::new();
-        if let Some(storage) = ctx.storage {
-            if let Some(c) = storage.get_string("file_contents") {
-                contents = c;
-            }
-            if let Some(l) = storage.get_string("file_path") {
-                loaded = l.into();
-            }
-        }
-        let document = contents.parse();
-        Ok(Self {
-            contents,
-            loaded,
-            document,
-            contents_persisted: true,
-            path_persisted: true,
-        })
+        let editor = editor::EditorState::load(ctx.storage);
+        Ok(Self { editor })
     }
     fn new_boxed(ctx: &CreationContext) -> Result<Box<dyn App>, Box<dyn Error + Send + Sync>> {
         Self::new(ctx)
@@ -38,16 +19,11 @@ impl VikingVision {
     }
 }
 impl App for VikingVision {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {}
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        egui::SidePanel::left("editor").show(ctx, |ui| self.editor.render(ui));
+    }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        if !self.contents_persisted {
-            self.contents_persisted = true;
-            storage.set_string("file_contents", self.contents.clone());
-        }
-        if !self.path_persisted {
-            self.path_persisted = true;
-            storage.set_string("file_path", self.loaded.display().to_string());
-        }
+        self.editor.save(storage);
     }
 }
 
