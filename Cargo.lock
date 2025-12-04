@@ -4291,6 +4291,7 @@ dependencies = [
  "rfd",
  "time",
  "toml_edit",
+ "toml_parser",
  "tracing",
  "tracing-subscriber",
 ]
