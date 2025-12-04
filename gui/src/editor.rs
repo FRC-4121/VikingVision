@@ -3,10 +3,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, prelude::*};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
-
-pub type DocumentResult = Result<toml_edit::DocumentMut, toml_edit::TomlError>;
+use toml_parser::ParseError;
 
 fn opts() -> OpenOptions {
     let mut opts = OpenOptions::new();
@@ -15,7 +13,6 @@ fn opts() -> OpenOptions {
 }
 
 pub struct EditorState {
-    pub document: DocumentResult,
     contents: String,
     loaded: PathBuf,
     file: Option<File>,
@@ -27,7 +24,6 @@ pub struct EditorState {
     path_persisted: bool,
     show_confirm_open: bool,
     last_saved: Option<time::Time>,
-    cache: Option<CachedLayouts>,
 }
 impl EditorState {
     pub fn load(storage: Option<&dyn eframe::Storage>) -> Self {
@@ -83,9 +79,7 @@ impl EditorState {
                 }
             }
         }
-        let document = contents.parse();
         EditorState {
-            document,
             contents,
             loaded,
             file,
@@ -97,7 +91,6 @@ impl EditorState {
             path_persisted: true,
             show_confirm_open: false,
             last_saved,
-            cache: None,
         }
     }
     pub fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -134,7 +127,6 @@ impl EditorState {
                             self.saved = true;
                             self.last_saved = Some(now());
                             self.path_persisted = false;
-                            self.cache = None;
                         }
                     }
                     Err(err) => {
@@ -171,7 +163,6 @@ impl EditorState {
                             self.last_saved = Some(now());
                             self.path_persisted = false;
                             self.contents_persisted = false;
-                            self.cache = None;
                             self.contents = buf;
                         }
                     }
@@ -321,10 +312,9 @@ impl EditorState {
         //             );
         //         });
         // }
-        if toml_editor(&mut self.contents, &mut self.document, &mut self.cache, ui).changed() {
+        if toml_editor(&mut self.contents, &mut Vec::new(), ui).changed() {
             self.contents_persisted = false;
             self.saved = false;
-            self.document = self.contents.parse();
         }
     }
 }
@@ -339,12 +329,21 @@ fn now() -> time::Time {
         .unwrap_or_else(time::OffsetDateTime::now_utc)
         .time()
 }
-fn toml_editor(
-    buf: &mut String,
-    document: &mut DocumentResult,
-    cache: &mut Option<CachedLayouts>,
-    ui: &mut egui::Ui,
-) -> egui::Response {
+fn maybe_underline(font: &egui::FontId, color: egui::Color32, error: bool) -> egui::TextFormat {
+    let mut format = egui::TextFormat::simple(font.clone(), color);
+    if error {
+        format.underline = egui::Stroke::new(1.0, egui::Color32::RED);
+    }
+    format
+}
+/// Arbitrarily change the lifetime of a mutable reference
+///
+/// # Safety
+/// The resulting reference must follow Rust's referencing rules
+const unsafe fn unbind_lifetime<'dst, T: ?Sized>(x: &mut T) -> &'dst mut T {
+    unsafe { std::mem::transmute(x) }
+}
+fn toml_editor(buf: &mut String, errs: &mut Vec<ParseError>, ui: &mut egui::Ui) -> egui::Response {
     let available = ui.available_rect_before_wrap();
     let where_to_put_background = ui.painter().add(egui::Shape::Noop);
     let sao = egui::ScrollArea::vertical().show(ui, |ui| {
@@ -354,8 +353,7 @@ fn toml_editor(
             available.size(),
             TomlEditorInner {
                 buf,
-                document,
-                cache,
+                errs,
                 width: available.width(),
             },
         )
@@ -378,160 +376,165 @@ fn toml_editor(
     ui.painter().set(where_to_put_background, shape);
     sao.inner
 }
-struct CachedLayouts {
-    galley: Arc<egui::Galley>,
-    err_rect: Option<egui::Rect>,
-}
 struct TomlEditorInner<'a> {
     buf: &'a mut String,
-    document: &'a mut DocumentResult,
-    cache: &'a mut Option<CachedLayouts>,
+    errs: &'a mut Vec<ParseError>,
     width: f32,
 }
 impl egui::Widget for TomlEditorInner<'_> {
     #[allow(clippy::field_reassign_with_default)]
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let mut err_rects = Vec::new();
         let res = egui::TextEdit::multiline(self.buf)
             .code_editor()
             .frame(false)
             .layouter(&mut |ui, buf, _| {
-                *self.cache = None;
-                self.cache
-                    .get_or_insert_with(|| {
-                        use toml_parser::lexer::TokenKind as Tk;
-                        let mono = &ui.style().text_styles[&egui::TextStyle::Monospace];
-                        let buf = buf.as_str();
-                        let err_span = self
-                            .document
-                            .as_ref()
-                            .err()
-                            .map(|err| err.span().unwrap_or(0..buf.len()));
-                        let lexer = toml_parser::Source::new(buf).lex();
-                        let mut layout = egui::text::LayoutJob::default();
-                        layout.text = buf.to_string();
-                        layout.wrap = egui::text::TextWrapping::wrap_at_width(self.width);
-                        let mut white_start = 0;
-                        for tok in lexer {
-                            let span = tok.span();
-                            let color = match tok.kind() {
-                                Tk::Atom => Some(
-                                    if buf.as_bytes()[span.start()..span.end()]
-                                        .iter()
-                                        .all(u8::is_ascii_digit)
-                                    {
-                                        egui::Color32::YELLOW
-                                    } else {
-                                        egui::Color32::LIGHT_GREEN
-                                    },
-                                ),
-                                Tk::BasicString
-                                | Tk::LiteralString
-                                | Tk::MlBasicString
-                                | Tk::MlLiteralString => Some(egui::Color32::LIGHT_BLUE),
-                                Tk::Comment => Some(egui::Color32::DARK_GRAY),
-                                _ => None,
-                            };
-                            if let Some(color) = color {
-                                if white_start < span.start() {
-                                    layout.sections.push(egui::text::LayoutSection {
-                                        leading_space: 0.0,
-                                        byte_range: white_start..span.start(),
-                                        format: egui::TextFormat::simple(
-                                            mono.clone(),
-                                            egui::Color32::WHITE,
-                                        ),
-                                    });
-                                    white_start = span.end();
-                                }
-                                layout.sections.push(egui::text::LayoutSection {
-                                    leading_space: 0.0,
-                                    byte_range: span.start()..span.end(),
-                                    format: egui::TextFormat::simple(mono.clone(), color),
-                                });
-                            }
-                        }
-                        if white_start < buf.len() {
+                use toml_parser::lexer::TokenKind as Tk;
+                let mono = &ui.style().text_styles[&egui::TextStyle::Monospace];
+                let buf = buf.as_str();
+                let source = toml_parser::Source::new(buf);
+                let tokens = source.lex().collect::<Vec<_>>();
+                let mut layout = egui::text::LayoutJob::default();
+                layout.text = buf.to_string();
+                layout.wrap = egui::text::TextWrapping::wrap_at_width(self.width);
+                let mut white_start = 0;
+                toml_parser::parser::parse_document(
+                    &tokens,
+                    &mut toml_parser::parser::ValidateWhitespace::new(&mut (), source),
+                    self.errs,
+                );
+                self.errs.sort_unstable_by_key(|k| k.context());
+                let all_errs = self.errs.iter().any(|e| e.context().is_none());
+                let mut err_slice = self.errs.as_mut_slice();
+                for tok in &tokens {
+                    let span = tok.span();
+                    let mut color = match tok.kind() {
+                        Tk::Atom => Some(
+                            if buf.as_bytes()[span.start()..span.end()]
+                                .iter()
+                                .all(u8::is_ascii_digit)
+                            {
+                                egui::Color32::YELLOW
+                            } else {
+                                egui::Color32::LIGHT_GREEN
+                            },
+                        ),
+                        Tk::BasicString
+                        | Tk::LiteralString
+                        | Tk::MlBasicString
+                        | Tk::MlLiteralString => Some(egui::Color32::LIGHT_BLUE),
+                        Tk::Comment => Some(egui::Color32::DARK_GRAY),
+                        _ => None,
+                    };
+
+                    let mut is_err = false;
+                    if let Some((head, tail)) =
+                        unsafe { unbind_lifetime(err_slice).split_first_mut() } // Rust doesn't like this control flow, but the only place we store the reference is in err_slice
+                        && let Some(err_span) = head.context()
+                        && span.end() > err_span.start()
+                        && span.start() <= err_span.end()
+                    {
+                        *head = std::mem::replace(head, ParseError::new("placeholder!"))
+                            .with_context(span);
+                        err_slice = tail;
+                        is_err = true;
+                    }
+                    if is_err && !all_errs && color.is_none() {
+                        color = Some(egui::Color32::WHITE);
+                    }
+                    if let Some(color) = color {
+                        if white_start < span.start() {
                             layout.sections.push(egui::text::LayoutSection {
                                 leading_space: 0.0,
-                                byte_range: white_start..buf.len(),
-                                format: egui::TextFormat::simple(
-                                    mono.clone(),
-                                    egui::Color32::WHITE,
-                                ),
+                                byte_range: white_start..span.start(),
+                                format: maybe_underline(mono, egui::Color32::WHITE, all_errs),
                             });
                         }
-                        let mut err_start = 0;
-                        let mut err_end = 0;
-                        if let Some(span) = &err_span {
-                            for section in &mut layout.sections {
-                                let range = section.byte_range.clone();
-                                if range.end < span.start {
-                                    continue;
-                                }
-                                if range.start >= span.end {
-                                    break;
-                                }
-                                section.format.underline =
-                                    egui::Stroke::new(1.0, egui::Color32::RED);
-                                if err_start == 0 {
-                                    err_start = range.start;
-                                }
-                                err_end = range.end;
-                            }
-                        }
-                        let galley = ui.fonts_mut(|f| f.layout_job(layout));
-                        let err_rect = (err_start < err_end)
-                            .then(|| {
-                                let mut indices = buf.char_indices().map(|x| x.0);
-                                let mut rect: Option<egui::Rect> = None;
-                                'outer: for row in &galley.rows {
-                                    for (idx, glyph) in indices.by_ref().zip(&row.glyphs) {
-                                        if idx < err_start {
-                                            continue;
-                                        }
-                                        if idx >= err_end {
-                                            break 'outer;
-                                        }
-                                        let r = glyph.logical_rect().translate(row.pos.to_vec2());
-                                        if let Some(rect) = &mut rect {
-                                            *rect = rect.union(r);
-                                        } else {
-                                            rect = Some(r);
-                                        }
-                                    }
-                                }
-                                rect
-                            })
-                            .flatten();
-                        CachedLayouts { galley, err_rect }
-                    })
-                    .galley
-                    .clone()
+                        layout.sections.push(egui::text::LayoutSection {
+                            leading_space: 0.0,
+                            byte_range: span.start()..span.end(),
+                            format: maybe_underline(mono, color, is_err || all_errs),
+                        });
+                        white_start = span.end();
+                    }
+                }
+                if white_start < buf.len() {
+                    layout.sections.push(egui::text::LayoutSection {
+                        leading_space: 0.0,
+                        byte_range: white_start..buf.len(),
+                        format: maybe_underline(mono, egui::Color32::WHITE, all_errs),
+                    });
+                }
+                ui.fonts_mut(|f| f.layout_job(layout))
             })
             .show(ui);
-        if let Some(CachedLayouts {
-            err_rect: Some(rect),
-            ..
-        }) = self.cache
-            && let Err(err) = self.document
-        {
-            let rect = rect.translate(res.galley_pos.to_vec2());
-            if ui.rect_contains_pointer(rect) {
-                let mut tip = egui::Tooltip::for_widget(&res.response.clone().with_new_rect(rect));
-                tip.popup = tip
-                    .popup
-                    .frame(egui::Frame::popup(ui.style()).fill(ui.style().visuals.extreme_bg_color))
-                    .anchor(rect);
-                tip.show(|ui| {
-                    ui.label(
-                        egui::RichText::new(err.message()).color(ui.style().visuals.error_fg_color),
-                    );
-                });
+        let mut indices = self.buf.char_indices().map(|x| x.0);
+        let split_idx = self
+            .errs
+            .iter()
+            .position(|e| e.context().is_some())
+            .unwrap_or(self.errs.len());
+        err_rects.extend(
+            self.errs
+                .iter()
+                .map(|err| (err.description(), None::<egui::Rect>)),
+        );
+        let (_without_span, mut with_span) = self.errs.split_at(split_idx);
+        let (errs_without_span, mut errs_with_span) = err_rects.split_at_mut(split_idx);
+        let mut overall_rect: Option<egui::Rect> = None;
+        for row in &res.galley.rows {
+            let mut glyphs = row.glyphs.as_slice();
+            if !row.ends_with_newline {
+                glyphs.split_off_last();
+            }
+            for (idx, glyph) in indices.by_ref().zip(glyphs) {
+                let r = glyph.logical_rect().translate(row.pos.to_vec2());
+                if let Some(rect) = &mut overall_rect {
+                    *rect = rect.union(r);
+                } else {
+                    overall_rect = Some(r);
+                }
+                while let (Some((err_head, err_tail)), Some(((_, rect_head), rect_tail))) = unsafe {
+                    (
+                        with_span.split_first(),
+                        unbind_lifetime(errs_with_span).split_first_mut(),
+                    )
+                } {
+                    let span = err_head.context().unwrap();
+                    if idx < span.start() {
+                        break;
+                    }
+                    with_span = err_tail;
+                    errs_with_span = rect_tail;
+                    if idx > span.end() {
+                        continue;
+                    }
+                    if let Some(rect) = rect_head {
+                        *rect = rect.union(r);
+                    } else {
+                        *rect_head = Some(r);
+                    }
+                }
             }
         }
-        if res.response.changed() {
-            *self.document = self.buf.parse();
-            *self.cache = None;
+        if let Some(overall_rect) = overall_rect {
+            for err in errs_without_span {
+                err.1 = Some(overall_rect);
+            }
+        }
+        let err = err_rects.iter().find_map(|&(msg, rect)| {
+            let rect = rect?.translate(res.galley_pos.to_vec2());
+            ui.rect_contains_pointer(rect).then_some((msg, rect))
+        });
+        if let Some((msg, rect)) = err {
+            let mut tip = egui::Tooltip::for_widget(&res.response.clone().with_new_rect(rect));
+            tip.popup = tip
+                .popup
+                .frame(egui::Frame::popup(ui.style()).fill(ui.style().visuals.extreme_bg_color))
+                .anchor(rect);
+            tip.show(|ui| {
+                ui.label(egui::RichText::new(msg).color(ui.style().visuals.error_fg_color));
+            });
         }
         res.response
     }

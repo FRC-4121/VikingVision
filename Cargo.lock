@@ -3948,7 +3948,6 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
- "toml_writer",
  "winnow",
 ]
 
@@ -4290,7 +4289,6 @@ dependencies = [
  "eframe",
  "rfd",
  "time",
- "toml_edit",
  "toml_parser",
  "tracing",
  "tracing-subscriber",
