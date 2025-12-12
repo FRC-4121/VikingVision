@@ -13,6 +13,12 @@ fn opts() -> OpenOptions {
     opts
 }
 
+#[derive(Clone, Copy)]
+enum ConfirmReason {
+    New,
+    Open,
+}
+
 pub struct EditorState {
     contents: String,
     loaded: PathBuf,
@@ -23,7 +29,7 @@ pub struct EditorState {
     saved: bool,
     contents_persisted: bool,
     path_persisted: bool,
-    show_confirm_open: bool,
+    show_confirm: Option<ConfirmReason>,
     events: log::LoggedEvents,
     last_saved: Option<time::Time>,
 }
@@ -91,7 +97,7 @@ impl EditorState {
             open_fut: None,
             contents_persisted: true,
             path_persisted: true,
-            show_confirm_open: false,
+            show_confirm: None,
             events: log::LoggedEvents::new(),
             last_saved,
         }
@@ -104,6 +110,126 @@ impl EditorState {
         if !self.path_persisted {
             self.path_persisted = true;
             storage.set_string("file_path", self.loaded.display().to_string());
+        }
+    }
+    pub fn file_menu(&mut self, ui: &mut egui::Ui) {
+        let (open_pressed, save_pressed, save_as_pressed, new_pressed) = ui.input_mut(|input| {
+            let sa = input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::S,
+            ));
+            let s = input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::S,
+            ));
+            let o = input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::O,
+            ));
+            let n = input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::N,
+            ));
+            (o, s, sa, n)
+        });
+        let [open_clicked, save_clicked, save_as_clicked, new_clicked] = ui
+            .menu_button("File", |ui| {
+                [
+                    ui.button("New").clicked(),
+                    ui.button("Open").clicked(),
+                    ui.button("Save").clicked(),
+                    ui.button("Save As").clicked(),
+                ]
+            })
+            .inner
+            .unwrap_or([false; 4]);
+        let mut open_file = false;
+        if open_clicked || open_pressed {
+            if self.saved || self.file.is_none() {
+                open_file = true;
+            } else {
+                self.show_confirm = Some(ConfirmReason::Open);
+            }
+        }
+        let mut new_file = false;
+        if new_clicked || new_pressed {
+            if self.saved || self.file.is_none() {
+                new_file = true;
+            } else {
+                self.show_confirm = Some(ConfirmReason::New);
+            }
+        }
+        if let Some(reason) = self.show_confirm {
+            egui::Modal::new(egui::Id::new("unsaved-changes")).show(ui.ctx(), |ui| {
+                ui.label("The currently open file has unsaved changes.");
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        if let Some(file) = &mut self.file {
+                            self.last_saved = Some(now());
+                            self.saved = true;
+                            if let Err(err) = write_to_file(file, self.contents.as_bytes()) {
+                                tracing::error!(%err, "error saving to file");
+                                self.file_err = Some(err);
+                            }
+                        }
+                        match reason {
+                            ConfirmReason::New => new_file = true,
+                            ConfirmReason::Open => open_file = true,
+                        }
+                        self.show_confirm = None;
+                    }
+                    if ui.button("Don't Save").clicked() {
+                        match reason {
+                            ConfirmReason::New => new_file = true,
+                            ConfirmReason::Open => open_file = true,
+                        }
+                        self.show_confirm = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.show_confirm = None;
+                    }
+                })
+            });
+        }
+        if open_file {
+            self.open_fut = Some(Box::pin(
+                rfd::AsyncFileDialog::new()
+                    .add_filter("TOML", &["toml"])
+                    .set_can_create_directories(true)
+                    .pick_file(),
+            ));
+        }
+        if new_file {
+            self.contents.clear();
+            self.contents_persisted = false;
+            self.loaded.clear();
+            self.path_persisted = false;
+            self.file = None;
+        }
+        if save_clicked || save_pressed {
+            if let Some(file) = &mut self.file {
+                if let Err(err) = write_to_file(file, self.contents.as_bytes()) {
+                    tracing::error!(%err, "error saving to file");
+                    self.file_err = Some(err);
+                }
+                self.last_saved = Some(now());
+                self.saved = true;
+            } else {
+                self.save_fut = Some(Box::pin(
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("TOML", &["toml"])
+                        .set_can_create_directories(true)
+                        .save_file(),
+                ));
+            }
+        }
+        if save_as_clicked || save_as_pressed {
+            self.save_fut = Some(Box::pin(
+                rfd::AsyncFileDialog::new()
+                    .add_filter("TOML", &["toml"])
+                    .set_can_create_directories(true)
+                    .save_file(),
+            ));
         }
     }
     pub fn parse_events(&mut self, ui: &mut egui::Ui) {
@@ -128,6 +254,54 @@ impl EditorState {
         });
     }
     pub fn in_left(&mut self, visit: &mut dyn for<'i> Visitor<'i>, ui: &mut egui::Ui) {
+        ui.heading("Editor");
+        if self.loaded.as_os_str().is_empty() {
+            ui.label("No file open");
+        } else {
+            ui.label(format!("Opened: {}", self.loaded.display()));
+        }
+        ui.label(format!("Saved: {}", self.saved));
+        ui.label(self.last_saved.map_or_else(
+            || "Last saved: never".to_string(),
+            |time| {
+                format!(
+                    "Last saved: {}:{:02}:{:02}",
+                    time.hour(),
+                    time.minute(),
+                    time.second()
+                )
+            },
+        ));
+        if let Some(err) = &self.file_err {
+            let mut clear = false;
+            egui::Frame::new()
+                .fill(ui.style().visuals.extreme_bg_color)
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(err.to_string())
+                            .monospace()
+                            .color(ui.style().visuals.error_fg_color),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        clear = ui.button("X").clicked();
+                    })
+                });
+            if clear {
+                self.file_err = None;
+            }
+        }
+        self.events.clear();
+        let editor = TomlEditorInner {
+            buf: &mut self.contents,
+            visit: &mut log::LoggingVisitor(&mut self.events, visit),
+        };
+        if editor_frame(ui, editor).changed() {
+            self.contents_persisted = false;
+            self.saved = false;
+        }
+    }
+    pub fn poll_futures(&mut self) {
         let mut cx = Context::from_waker(Waker::noop());
         if let Some(fut) = &mut self.save_fut
             && let Poll::Ready(handle) = fut.as_mut().poll(&mut cx)
@@ -199,139 +373,6 @@ impl EditorState {
                     }
                 }
             }
-        }
-        ui.heading("Editor");
-        if self.loaded.as_os_str().is_empty() {
-            ui.label("No file open");
-        } else {
-            ui.label(format!("Opened: {}", self.loaded.display()));
-        }
-        let (open_clicked, save_clicked, save_as_clicked) = ui.input_mut(|input| {
-            let sa = input.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::S,
-            ));
-            let s = input.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND,
-                egui::Key::S,
-            ));
-            let o = input.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND,
-                egui::Key::O,
-            ));
-            (o, s, sa)
-        });
-        ui.horizontal(|ui| {
-            let open_button = ui.button("Open");
-            let mut open_file = false;
-            if open_button.clicked() || open_clicked {
-                if self.saved || self.file.is_none() {
-                    open_file = true;
-                } else {
-                    self.show_confirm_open = true;
-                }
-            }
-            let mut close = false;
-            egui::Popup::from_response(&open_button)
-                .open_bool(&mut self.show_confirm_open)
-                .show(|ui| {
-                    ui.label("File not saved!");
-                    if ui.button("Save").clicked() {
-                        if let Some(file) = &mut self.file {
-                            self.last_saved = Some(now());
-                            self.saved = true;
-                            if let Err(err) = write_to_file(file, self.contents.as_bytes()) {
-                                tracing::error!(%err, "error saving to file");
-                                self.file_err = Some(err);
-                            }
-                        }
-                        open_file = true;
-                        close = true;
-                    }
-                    if ui.button("Don't Save").clicked() {
-                        open_file = true;
-                        close = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
-                });
-            if close {
-                self.show_confirm_open = false;
-            }
-            if open_file {
-                self.open_fut = Some(Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .add_filter("TOML", &["toml"])
-                        .set_can_create_directories(true)
-                        .pick_file(),
-                ));
-            }
-            if ui.button("Save").clicked() || save_clicked {
-                if let Some(file) = &mut self.file {
-                    if let Err(err) = write_to_file(file, self.contents.as_bytes()) {
-                        tracing::error!(%err, "error saving to file");
-                        self.file_err = Some(err);
-                    }
-                    self.last_saved = Some(now());
-                    self.saved = true;
-                } else {
-                    self.save_fut = Some(Box::pin(
-                        rfd::AsyncFileDialog::new()
-                            .add_filter("TOML", &["toml"])
-                            .set_can_create_directories(true)
-                            .save_file(),
-                    ));
-                }
-            }
-            if ui.button("Save As").clicked() || save_as_clicked {
-                self.save_fut = Some(Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .add_filter("TOML", &["toml"])
-                        .set_can_create_directories(true)
-                        .save_file(),
-                ));
-            }
-        });
-        ui.label(format!("Saved: {}", self.saved));
-        ui.label(self.last_saved.map_or_else(
-            || "Last saved: never".to_string(),
-            |time| {
-                format!(
-                    "Last saved: {}:{:02}:{:02}",
-                    time.hour(),
-                    time.minute(),
-                    time.second()
-                )
-            },
-        ));
-        if let Some(err) = &self.file_err {
-            let mut clear = false;
-            egui::Frame::new()
-                .fill(ui.style().visuals.extreme_bg_color)
-                .corner_radius(4.0)
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(err.to_string())
-                            .monospace()
-                            .color(ui.style().visuals.error_fg_color),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        clear = ui.button("X").clicked();
-                    })
-                });
-            if clear {
-                self.file_err = None;
-            }
-        }
-        self.events.clear();
-        let editor = TomlEditorInner {
-            buf: &mut self.contents,
-            visit: &mut log::LoggingVisitor(&mut self.events, visit),
-        };
-        if editor_frame(ui, editor).changed() {
-            self.contents_persisted = false;
-            self.saved = false;
         }
     }
 }

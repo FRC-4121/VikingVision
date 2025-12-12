@@ -21,13 +21,15 @@ impl VikingVision {
     }
 }
 impl App for VikingVision {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::bottom("toolbar").show(ctx, |ui| {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.editor.poll_futures();
+        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             egui::MenuBar::new()
                 .config(
                     MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
                 )
                 .ui(ui, |ui| {
+                    self.editor.file_menu(ui);
                     ui.menu_button("Debug", |ui| {
                         ui.menu_button("TOML Parsing", |ui| {
                             self.editor.parse_events(ui);
