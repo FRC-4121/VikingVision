@@ -3,6 +3,7 @@ use std::error::Error;
 use std::io;
 
 mod editor;
+mod visit;
 
 struct VikingVision {
     editor: editor::EditorState,
@@ -20,7 +21,12 @@ impl VikingVision {
 }
 impl App for VikingVision {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        egui::SidePanel::left("editor").show(ctx, |ui| self.editor.render(ui));
+        egui::SidePanel::right("options").show(ctx, |ui| {
+            ui.collapsing("NetworkTables", |ui| {});
+            ui.collapsing("Cameras", |ui| {});
+            ui.collapsing("Components", |ui| {});
+        });
+        egui::SidePanel::left("editor").show(ctx, |ui| self.editor.render(&mut (), ui));
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.editor.save(storage);

@@ -1,3 +1,4 @@
+use crate::visit::{Receiver, Visitor, log};
 use eframe::egui;
 use std::fs::{File, OpenOptions};
 use std::io::{self, prelude::*};
@@ -23,6 +24,7 @@ pub struct EditorState {
     contents_persisted: bool,
     path_persisted: bool,
     show_confirm_open: bool,
+    events: log::LoggedEvents,
     last_saved: Option<time::Time>,
 }
 impl EditorState {
@@ -90,6 +92,7 @@ impl EditorState {
             contents_persisted: true,
             path_persisted: true,
             show_confirm_open: false,
+            events: log::LoggedEvents::new(),
             last_saved,
         }
     }
@@ -103,7 +106,7 @@ impl EditorState {
             storage.set_string("file_path", self.loaded.display().to_string());
         }
     }
-    pub fn render(&mut self, ui: &mut egui::Ui) {
+    pub fn render(&mut self, visit: &mut dyn for<'i> Visitor<'i>, ui: &mut egui::Ui) {
         let mut cx = Context::from_waker(Waker::noop());
         if let Some(fut) = &mut self.save_fut
             && let Poll::Ready(handle) = fut.as_mut().poll(&mut cx)
@@ -281,6 +284,30 @@ impl EditorState {
                 )
             },
         ));
+        {
+            let debug = ui.button("Debug Parse Events");
+            egui::Popup::from_toggle_button_response(&debug).show(|ui| {
+                let mut available = ui.available_rect_before_wrap();
+                available.set_height(300.0);
+                available.set_width(300.0);
+                ui.set_max_size(available.size());
+                ui.vertical(|ui| {
+                    ui.label("These are events from parsing:");
+                    let where_to_put_background = ui.painter().add(egui::Shape::Noop);
+                    self.events.show(ui);
+                    let visuals = ui.visuals();
+                    let widget = visuals.noninteractive();
+                    let shape = egui::epaint::RectShape::new(
+                        available,
+                        widget.corner_radius,
+                        visuals.text_edit_bg_color(),
+                        widget.bg_stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                    ui.painter().set(where_to_put_background, shape);
+                });
+            });
+        }
         if let Some(err) = &self.file_err {
             let mut clear = false;
             egui::Frame::new()
@@ -300,19 +327,12 @@ impl EditorState {
                 self.file_err = None;
             }
         }
-        // if let Err(err) = &self.document {
-        //     egui::Frame::new()
-        //         .fill(ui.style().visuals.extreme_bg_color)
-        //         .corner_radius(4.0)
-        //         .show(ui, |ui| {
-        //             ui.label(
-        //                 egui::RichText::new(err.to_string())
-        //                     .monospace()
-        //                     .color(ui.style().visuals.error_fg_color),
-        //             );
-        //         });
-        // }
-        if toml_editor(&mut self.contents, &mut Vec::new(), ui).changed() {
+        self.events.clear();
+        let editor = TomlEditorInner {
+            buf: &mut self.contents,
+            visit: &mut log::LoggingVisitor(&mut self.events, visit),
+        };
+        if editor_frame(ui, editor).changed() {
             self.contents_persisted = false;
             self.saved = false;
         }
@@ -343,25 +363,22 @@ fn maybe_underline(font: &egui::FontId, color: egui::Color32, error: bool) -> eg
 const unsafe fn unbind_lifetime<'dst, T: ?Sized>(x: &mut T) -> &'dst mut T {
     unsafe { std::mem::transmute(x) }
 }
-fn toml_editor(buf: &mut String, errs: &mut Vec<ParseError>, ui: &mut egui::Ui) -> egui::Response {
+
+pub fn editor_frame(ui: &mut egui::Ui, widget: impl egui::Widget) -> egui::Response {
     let available = ui.available_rect_before_wrap();
     let where_to_put_background = ui.painter().add(egui::Shape::Noop);
-    let sao = egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.set_min_size(available.size());
-        ui.set_clip_rect(available);
-        ui.add_sized(
-            available.size(),
-            TomlEditorInner {
-                buf,
-                errs,
-                width: available.width(),
-            },
-        )
-    });
+    let resp = egui::ScrollArea::vertical()
+        .show(ui, |ui| {
+            let available = ui.available_rect_before_wrap();
+            ui.set_min_size(available.size());
+            ui.set_clip_rect(available);
+            ui.add_sized(available.size(), widget)
+        })
+        .inner;
     let visuals = ui.visuals();
-    let widget = ui.style().interact(&sao.inner);
+    let widget = ui.style().interact(&resp);
     let background = visuals.text_edit_bg_color();
-    let stroke = if sao.inner.has_focus() {
+    let stroke = if resp.has_focus() {
         visuals.selection.stroke
     } else {
         widget.bg_stroke
@@ -374,16 +391,17 @@ fn toml_editor(buf: &mut String, errs: &mut Vec<ParseError>, ui: &mut egui::Ui) 
         egui::StrokeKind::Inside,
     );
     ui.painter().set(where_to_put_background, shape);
-    sao.inner
+    resp
 }
-struct TomlEditorInner<'a> {
-    buf: &'a mut String,
-    errs: &'a mut Vec<ParseError>,
-    width: f32,
+
+struct TomlEditorInner<'b, 'v> {
+    buf: &'b mut String,
+    visit: &'v mut dyn for<'i> Visitor<'i>,
 }
-impl egui::Widget for TomlEditorInner<'_> {
+impl egui::Widget for TomlEditorInner<'_, '_> {
     #[allow(clippy::field_reassign_with_default)]
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let mut errs = Vec::new();
         let mut err_rects = Vec::new();
         let res = egui::TextEdit::multiline(self.buf)
             .code_editor()
@@ -396,16 +414,18 @@ impl egui::Widget for TomlEditorInner<'_> {
                 let tokens = source.lex().collect::<Vec<_>>();
                 let mut layout = egui::text::LayoutJob::default();
                 layout.text = buf.to_string();
-                layout.wrap = egui::text::TextWrapping::wrap_at_width(self.width);
+                layout.wrap = egui::text::TextWrapping::wrap_at_width(ui.available_width());
                 let mut white_start = 0;
+                let mut recv = Receiver::new(source, self.visit);
                 toml_parser::parser::parse_document(
                     &tokens,
-                    &mut toml_parser::parser::ValidateWhitespace::new(&mut (), source),
-                    self.errs,
+                    &mut toml_parser::parser::ValidateWhitespace::new(&mut recv, source),
+                    &mut errs,
                 );
-                self.errs.sort_unstable_by_key(|k| k.context());
-                let all_errs = self.errs.iter().any(|e| e.context().is_none());
-                let mut err_slice = self.errs.as_mut_slice();
+                recv.finish(&mut errs);
+                errs.sort_unstable_by_key(|k| k.context());
+                let all_errs = errs.iter().any(|e| e.context().is_none());
+                let mut err_slice = errs.as_mut_slice();
                 for tok in &tokens {
                     let span = tok.span();
                     let mut color = match tok.kind() {
@@ -469,17 +489,15 @@ impl egui::Widget for TomlEditorInner<'_> {
             })
             .show(ui);
         let mut indices = self.buf.char_indices().map(|x| x.0);
-        let split_idx = self
-            .errs
+        let split_idx = errs
             .iter()
             .position(|e| e.context().is_some())
-            .unwrap_or(self.errs.len());
+            .unwrap_or(errs.len());
         err_rects.extend(
-            self.errs
-                .iter()
+            errs.iter()
                 .map(|err| (err.description(), None::<egui::Rect>)),
         );
-        let (_without_span, mut with_span) = self.errs.split_at(split_idx);
+        let (_without_span, mut with_span) = errs.split_at(split_idx);
         let (errs_without_span, mut errs_with_span) = err_rects.split_at_mut(split_idx);
         let mut overall_rect: Option<egui::Rect> = None;
         for row in &res.galley.rows {
