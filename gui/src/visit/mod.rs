@@ -74,12 +74,16 @@ impl<'a, 'i> Receiver<'a, 'i> {
         if let Some(start) = self.outer_table_start.take() {
             let span = start.append(span);
             while let Some(PathElem { kind, .. }) = self.path.last() {
-                if self.path.len() <= self.skip_depth && matches!(kind, PathElemKind::Key) {
-                    let path = RawsIter {
-                        source: self.source,
-                        iter: self.path.iter(),
-                    };
-                    self.visitor.end_table(path, span, error);
+                if self.skip_depth == 0 {
+                    if matches!(kind, PathElemKind::Key) {
+                        let path = RawsIter {
+                            source: self.source,
+                            iter: self.path.iter(),
+                        };
+                        self.visitor.end_table(path, span, error);
+                    }
+                } else if self.path.len() <= self.skip_depth {
+                    self.skip_depth = 0;
                 }
                 self.path.pop();
             }
@@ -89,7 +93,15 @@ impl<'a, 'i> Receiver<'a, 'i> {
         while let Some(PathElem { span: start, .. }) =
             self.path.pop_if(|e| matches!(e.kind, PathElemKind::Key))
         {
-            if self.skip_depth == 0 {
+            if self.skip_depth == 0
+                && matches!(
+                    self.path.last(),
+                    Some(PathElem {
+                        kind: PathElemKind::Key,
+                        ..
+                    })
+                )
+            {
                 let path = RawsIter {
                     source: self.source,
                     iter: self.path.iter(),
@@ -137,13 +149,14 @@ impl EventReceiver for Receiver<'_, '_> {
         }
     }
     fn inline_table_open(&mut self, span: Span, error: &mut dyn ErrorSink) -> bool {
+        let len = self.path.len();
         self.path.push(PathElem {
             span,
             kind: PathElemKind::InlineStart,
         });
         let path = RawsIter {
             source: self.source,
-            iter: self.path.iter(),
+            iter: self.path[..len].iter(),
         };
         if !self.visitor.begin_table(path, error) {
             self.skip_depth = self.path.len();
@@ -177,13 +190,14 @@ impl EventReceiver for Receiver<'_, '_> {
         }
     }
     fn array_open(&mut self, span: Span, error: &mut dyn ErrorSink) -> bool {
+        let len = self.path.len();
         self.path.push(PathElem {
             span,
             kind: PathElemKind::ArrayStart,
         });
         let path = RawsIter {
             source: self.source,
-            iter: self.path.iter(),
+            iter: self.path[..len].iter(),
         };
         if !self.visitor.begin_array(path, error) {
             self.skip_depth = self.path.len();

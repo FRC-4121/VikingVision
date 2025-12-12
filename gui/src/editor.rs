@@ -106,7 +106,28 @@ impl EditorState {
             storage.set_string("file_path", self.loaded.display().to_string());
         }
     }
-    pub fn render(&mut self, visit: &mut dyn for<'i> Visitor<'i>, ui: &mut egui::Ui) {
+    pub fn parse_events(&mut self, ui: &mut egui::Ui) {
+        let mut available = ui.available_rect_before_wrap();
+        available.set_height(300.0);
+        available.set_width(300.0);
+        ui.set_max_size(available.size());
+        ui.vertical(|ui| {
+            ui.label("These are events from parsing:");
+            let where_to_put_background = ui.painter().add(egui::Shape::Noop);
+            self.events.show(ui);
+            let visuals = ui.visuals();
+            let widget = visuals.noninteractive();
+            let shape = egui::epaint::RectShape::new(
+                available,
+                widget.corner_radius,
+                visuals.text_edit_bg_color(),
+                widget.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().set(where_to_put_background, shape);
+        });
+    }
+    pub fn in_left(&mut self, visit: &mut dyn for<'i> Visitor<'i>, ui: &mut egui::Ui) {
         let mut cx = Context::from_waker(Waker::noop());
         if let Some(fut) = &mut self.save_fut
             && let Poll::Ready(handle) = fut.as_mut().poll(&mut cx)
@@ -284,30 +305,6 @@ impl EditorState {
                 )
             },
         ));
-        {
-            let debug = ui.button("Debug Parse Events");
-            egui::Popup::from_toggle_button_response(&debug).show(|ui| {
-                let mut available = ui.available_rect_before_wrap();
-                available.set_height(300.0);
-                available.set_width(300.0);
-                ui.set_max_size(available.size());
-                ui.vertical(|ui| {
-                    ui.label("These are events from parsing:");
-                    let where_to_put_background = ui.painter().add(egui::Shape::Noop);
-                    self.events.show(ui);
-                    let visuals = ui.visuals();
-                    let widget = visuals.noninteractive();
-                    let shape = egui::epaint::RectShape::new(
-                        available,
-                        widget.corner_radius,
-                        visuals.text_edit_bg_color(),
-                        widget.bg_stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                    ui.painter().set(where_to_put_background, shape);
-                });
-            });
-        }
         if let Some(err) = &self.file_err {
             let mut clear = false;
             egui::Frame::new()
@@ -369,7 +366,6 @@ pub fn editor_frame(ui: &mut egui::Ui, widget: impl egui::Widget) -> egui::Respo
     let where_to_put_background = ui.painter().add(egui::Shape::Noop);
     let resp = egui::ScrollArea::vertical()
         .show(ui, |ui| {
-            let available = ui.available_rect_before_wrap();
             ui.set_min_size(available.size());
             ui.set_clip_rect(available);
             ui.add_sized(available.size(), widget)

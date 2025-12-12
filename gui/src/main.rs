@@ -1,3 +1,4 @@
+use eframe::egui::containers::menu::MenuConfig;
 use eframe::{App, CreationContext, egui};
 use std::error::Error;
 use std::io;
@@ -21,12 +22,31 @@ impl VikingVision {
 }
 impl App for VikingVision {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::bottom("toolbar").show(ctx, |ui| {
+            egui::MenuBar::new()
+                .config(
+                    MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                )
+                .ui(ui, |ui| {
+                    ui.menu_button("Debug", |ui| {
+                        ui.menu_button("TOML Parsing", |ui| {
+                            self.editor.parse_events(ui);
+                        });
+                        ui.menu_button("Egui Internals", |ui| {
+                            ui.menu_button("Memory", |ui| ctx.memory_ui(ui));
+                            ui.menu_button("Loaders", |ui| ctx.loaders_ui(ui));
+                            ui.menu_button("Textures", |ui| ctx.texture_ui(ui));
+                            ui.menu_button("Settings", |ui| ctx.settings_ui(ui));
+                        })
+                    });
+                });
+        });
         egui::SidePanel::right("options").show(ctx, |ui| {
             ui.collapsing("NetworkTables", |ui| {});
             ui.collapsing("Cameras", |ui| {});
             ui.collapsing("Components", |ui| {});
         });
-        egui::SidePanel::left("editor").show(ctx, |ui| self.editor.render(&mut (), ui));
+        egui::SidePanel::left("editor").show(ctx, |ui| self.editor.in_left(&mut (), ui));
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.editor.save(storage);
