@@ -1,11 +1,18 @@
 use std::fmt::{self, Debug, Display, Formatter};
+use toml_parser::decoder::{Encoding, ScalarKind};
 use toml_parser::parser::EventReceiver;
 use toml_parser::{ErrorSink, ParseError, Raw, Source, Span};
 
 pub mod log;
 
 pub trait Visitor<'i> {
-    fn accept_scalar(&mut self, path: RawsIter<'_, 'i>, scalar: Raw<'i>, error: &mut dyn ErrorSink);
+    fn accept_scalar(
+        &mut self,
+        path: RawsIter<'_, 'i>,
+        scalar: Raw<'i>,
+        kind: ScalarKind,
+        error: &mut dyn ErrorSink,
+    );
     fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
     fn end_array(&mut self, path: RawsIter<'_, 'i>, span: Span, error: &mut dyn ErrorSink);
     fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
@@ -19,6 +26,7 @@ impl<'i> Visitor<'i> for () {
         &mut self,
         path: RawsIter<'_, 'i>,
         scalar: Raw<'i>,
+        kind: ScalarKind,
         error: &mut dyn ErrorSink,
     ) {
     }
@@ -230,12 +238,12 @@ impl EventReceiver for Receiver<'_, '_> {
             }
         }
     }
-    fn simple_key(
-        &mut self,
-        span: Span,
-        _kind: Option<toml_parser::decoder::Encoding>,
-        error: &mut dyn ErrorSink,
-    ) {
+    fn simple_key(&mut self, span: Span, kind: Option<Encoding>, error: &mut dyn ErrorSink) {
+        let Some(raw) = self.source.input().get(span.start()..span.end()) else {
+            return;
+        };
+        let key = Raw::new_unchecked(raw, kind, span);
+        key.decode_key(&mut (), error);
         self.path.push(PathElem {
             span,
             kind: PathElemKind::Key,
@@ -266,21 +274,18 @@ impl EventReceiver for Receiver<'_, '_> {
             }
         }
     }
-    fn scalar(
-        &mut self,
-        span: Span,
-        _kind: Option<toml_parser::decoder::Encoding>,
-        error: &mut dyn ErrorSink,
-    ) {
-        let Some(scalar) = self.source.get(span) else {
+    fn scalar(&mut self, span: Span, kind: Option<Encoding>, error: &mut dyn ErrorSink) {
+        let Some(raw) = self.source.input().get(span.start()..span.end()) else {
             return;
         };
+        let scalar = Raw::new_unchecked(raw, kind, span);
+        let kind = scalar.decode_scalar(&mut (), error);
         if self.skip_depth == 0 {
             let path = RawsIter {
                 source: self.source,
                 iter: self.path.iter(),
             };
-            self.visitor.accept_scalar(path, scalar, error);
+            self.visitor.accept_scalar(path, scalar, kind, error);
         }
         self.close_keys(span, error);
     }

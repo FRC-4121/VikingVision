@@ -43,11 +43,12 @@ impl<'i> Visitor<'i> for LoggingVisitor<'_> {
         &mut self,
         path: RawsIter<'_, 'i>,
         scalar: Raw<'i>,
+        kind: ScalarKind,
         error: &mut dyn ErrorSink,
     ) {
         let s = scalar.as_str();
         self.0.0.push(LogEntry("scalar", format!("{path} = {s}")));
-        self.1.accept_scalar(path, scalar, error);
+        self.1.accept_scalar(path, scalar, kind, error);
     }
     fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         self.0.0.push(LogEntry("begin_array", path.to_string()));
