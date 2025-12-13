@@ -526,17 +526,12 @@ impl egui::Widget for TomlEditorInner<'_, '_> {
             })
             .show(ui);
         let mut indices = self.buf.char_indices().map(|x| x.0);
-        let split_idx = errs
-            .iter()
-            .position(|e| e.context().is_some())
-            .unwrap_or(errs.len());
         err_rects.extend(
             errs.iter()
                 .map(|err| (err.description(), None::<egui::Rect>)),
         );
-        let (_without_span, mut with_span) = errs.split_at(split_idx);
-        let (errs_without_span, mut errs_with_span) = err_rects.split_at_mut(split_idx);
         let mut overall_rect: Option<egui::Rect> = None;
+        let mut has_full = false;
         for row in &res.galley.rows {
             let mut glyphs = row.glyphs.as_slice();
             if !row.ends_with_newline {
@@ -549,31 +544,23 @@ impl egui::Widget for TomlEditorInner<'_, '_> {
                 } else {
                     overall_rect = Some(r);
                 }
-                while let (Some((err_head, err_tail)), Some(((_, rect_head), rect_tail))) = unsafe {
-                    (
-                        with_span.split_first(),
-                        unbind_lifetime(errs_with_span).split_first_mut(),
-                    )
-                } {
-                    let span = err_head.context().unwrap();
-                    if idx < span.start() {
-                        break;
-                    }
-                    with_span = err_tail;
-                    errs_with_span = rect_tail;
-                    if idx > span.end() {
-                        continue;
-                    }
-                    if let Some(rect) = rect_head {
-                        *rect = rect.union(r);
+                for ((_, rect), err) in err_rects.iter_mut().zip(&errs) {
+                    if let Some(span) = err.context() {
+                        if idx >= span.start() && idx < span.end() {
+                            if let Some(rect) = rect {
+                                *rect = rect.union(r);
+                            } else {
+                                *rect = Some(r);
+                            }
+                        }
                     } else {
-                        *rect_head = Some(r);
+                        has_full = true;
                     }
                 }
             }
         }
-        if let Some(overall_rect) = overall_rect {
-            for err in errs_without_span {
+        if has_full && let Some(overall_rect) = overall_rect {
+            for err in &mut err_rects {
                 err.1 = Some(overall_rect);
             }
         }
