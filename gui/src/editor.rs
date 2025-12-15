@@ -77,7 +77,7 @@ impl EditorState {
                         }
                     }
                     if saved {
-                        last_saved = Some(now());
+                        last_saved = Some(super::now().time());
                     }
                     file = Some(f);
                 }
@@ -165,7 +165,7 @@ impl EditorState {
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
                         if let Some(file) = &mut self.file {
-                            self.last_saved = Some(now());
+                            self.last_saved = Some(super::now().time());
                             self.saved = true;
                             if let Err(err) = write_to_file(file, self.contents.as_bytes()) {
                                 tracing::error!(%err, "error saving to file");
@@ -212,7 +212,7 @@ impl EditorState {
                     tracing::error!(%err, "error saving to file");
                     self.file_err = Some(err);
                 }
-                self.last_saved = Some(now());
+                self.last_saved = Some(super::now().time());
                 self.saved = true;
             } else {
                 self.save_fut = Some(Box::pin(
@@ -323,7 +323,7 @@ impl EditorState {
                             self.file = Some(file);
                             self.file_err = None;
                             self.saved = true;
-                            self.last_saved = Some(now());
+                            self.last_saved = Some(super::now().time());
                             self.path_persisted = false;
                         }
                     }
@@ -358,7 +358,7 @@ impl EditorState {
                             self.file = Some(file);
                             self.file_err = None;
                             self.saved = true;
-                            self.last_saved = Some(now());
+                            self.last_saved = Some(super::now().time());
                             self.path_persisted = false;
                             self.contents_persisted = false;
                             self.contents = buf;
@@ -381,12 +381,7 @@ fn write_to_file(file: &mut File, contents: &[u8]) -> io::Result<()> {
     file.set_len(contents.len() as _)?;
     file.write_all(contents)
 }
-fn now() -> time::Time {
-    time::OffsetDateTime::now_local()
-        .ok()
-        .unwrap_or_else(time::OffsetDateTime::now_utc)
-        .time()
-}
+
 fn maybe_underline(font: &egui::FontId, color: egui::Color32, error: bool) -> egui::TextFormat {
     let mut format = egui::TextFormat::simple(font.clone(), color);
     if error {

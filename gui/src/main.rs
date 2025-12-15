@@ -1,23 +1,27 @@
 use eframe::egui::containers::menu::MenuConfig;
 use eframe::{App, CreationContext, egui};
-use std::error::Error;
 use std::io;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod editor;
+mod trace;
 mod visit;
+
+fn now() -> time::OffsetDateTime {
+    time::OffsetDateTime::now_local()
+        .ok()
+        .unwrap_or_else(time::OffsetDateTime::now_utc)
+}
 
 struct VikingVision {
     editor: editor::EditorState,
+    logs: trace::LogWidget,
 }
 impl VikingVision {
-    fn new(ctx: &CreationContext) -> io::Result<Self> {
+    fn new(ctx: &CreationContext, logs: trace::LogWidget) -> io::Result<Self> {
         let editor = editor::EditorState::load(ctx.storage);
-        Ok(Self { editor })
-    }
-    fn new_boxed(ctx: &CreationContext) -> Result<Box<dyn App>, Box<dyn Error + Send + Sync>> {
-        Self::new(ctx)
-            .map(|a| Box::new(a) as _)
-            .map_err(|e| Box::new(e) as _)
+        Ok(Self { editor, logs })
     }
 }
 impl App for VikingVision {
@@ -44,11 +48,17 @@ impl App for VikingVision {
                 });
         });
         egui::SidePanel::right("options").show(ctx, |ui| {
-            ui.collapsing("NetworkTables", |ui| {});
-            ui.collapsing("Cameras", |ui| {});
-            ui.collapsing("Components", |ui| {});
+            ui.collapsing(egui::RichText::new("NetworkTables").heading(), |ui| {});
+            ui.collapsing(egui::RichText::new("Cameras").heading(), |ui| {});
+            ui.collapsing(egui::RichText::new("Components").heading(), |ui| {});
         });
         egui::SidePanel::left("editor").show(ctx, |ui| self.editor.in_left(&mut (), ui));
+        egui::TopBottomPanel::bottom("logging")
+            .default_height(100.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                self.logs.show(ui);
+            });
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.editor.save(storage);
@@ -56,11 +66,19 @@ impl App for VikingVision {
 }
 
 fn main() {
-    tracing_subscriber::fmt().init();
+    let (filter, layer, logs) = trace::create();
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(layer)
+        .with(tracing_subscriber::fmt::layer())
+        .init();
     let res = eframe::run_native(
         "VikingVision GUI",
         Default::default(),
-        Box::new(VikingVision::new_boxed),
+        Box::new(|ctx| match VikingVision::new(ctx, logs) {
+            Ok(app) => Ok(Box::new(app)),
+            Err(err) => Err(Box::new(err)),
+        }),
     );
     if let Err(err) = res {
         tracing::error!(%err, "error in app");

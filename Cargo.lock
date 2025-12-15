@@ -4287,10 +4287,13 @@ name = "vv-gui"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "egui_extras",
+ "matchers",
  "rfd",
  "time",
  "toml_parser",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
 ]
 
