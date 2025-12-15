@@ -1,3 +1,4 @@
+pub use color::ToColor32;
 use eframe::egui;
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -6,8 +7,6 @@ use std::sync::{Arc, mpsc};
 use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{EnvFilter, Layer, Registry, reload};
-
-use crate::trace::color::ToColor32;
 
 mod color;
 
@@ -59,6 +58,7 @@ pub struct LogWidget {
 impl LogWidget {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         ui.heading("Logs");
+        let mut bottom = false;
         ui.horizontal(|ui| {
             ui.label("Input Filter: ")
                 .on_hover_text("A filter for captured events");
@@ -70,8 +70,13 @@ impl LogWidget {
             self.shared
                 .filter_noisy
                 .store(self.filter_noisy, Ordering::Relaxed);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if ui.button("Bottom").clicked() {
+                    bottom = true;
+                }
+            });
         });
-        let builder = egui_extras::TableBuilder::new(ui)
+        let mut builder = egui_extras::TableBuilder::new(ui)
             .resizable(true)
             .stick_to_bottom(true)
             .striped(true)
@@ -79,9 +84,13 @@ impl LogWidget {
             .column(egui_extras::Column::initial(50.0))
             .column(egui_extras::Column::initial(100.0).clip(true))
             .column(egui_extras::Column::remainder().clip(true))
+            .column(egui_extras::Column::exact(20.0))
             .auto_shrink(false);
+        if bottom {
+            builder = builder.vertical_scroll_offset(100000.0);
+        }
         let mut refresh = false;
-        let table = builder.header(15.0, |mut row| {
+        let table = builder.header(20.0, |mut row| {
             row.col(|ui| {
                 ui.label("Time");
             });
@@ -193,13 +202,12 @@ impl LogWidget {
             let height = body.ui_mut().text_style_height(&egui::TextStyle::Body);
             body.rows(height, self.filtered.len(), |mut row| {
                 let entry = &self.filtered[row.index()];
+                let time = entry
+                    .time
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap();
                 row.col(|ui| {
-                    ui.label(
-                        entry
-                            .time
-                            .format(&time::format_description::well_known::Rfc3339)
-                            .unwrap(),
-                    );
+                    ui.label(&time);
                 });
                 row.col(|ui| {
                     ui.label(entry.level.to_rich_text());
@@ -218,6 +226,41 @@ impl LogWidget {
                         .find(|e| e.0 == "message")
                         .map_or("", |e| &e.1);
                     ui.label(message);
+                });
+                row.col(|ui| {
+                    let button = ui.button("\u{2139}");
+                    egui::Popup::from_toggle_button_response(&button)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| {
+                            // ui.set_width(100.0);
+                            ui.horizontal(|ui| {
+                                ui.label("Target: ");
+                                ui.label(
+                                    egui::RichText::new(&*entry.target)
+                                        .monospace()
+                                        .color(ui.style().visuals.weak_text_color()),
+                                );
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Time: ");
+                                ui.label(time);
+                            });
+                            egui_extras::TableBuilder::new(ui)
+                                .column(egui_extras::Column::initial(100.0).clip(true))
+                                .column(egui_extras::Column::remainder().clip(true))
+                                .body(|mut body| {
+                                    for (field, val) in &entry.fields {
+                                        body.row(height, |mut row| {
+                                            row.col(|ui| {
+                                                ui.label(egui::RichText::new(*field).monospace());
+                                            });
+                                            row.col(|ui| {
+                                                ui.label(egui::RichText::new(val).monospace());
+                                            });
+                                        });
+                                    }
+                                });
+                        });
                 });
             });
         });

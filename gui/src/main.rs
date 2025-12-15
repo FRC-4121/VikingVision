@@ -1,3 +1,4 @@
+use crate::trace::ToColor32;
 use eframe::egui::containers::menu::MenuConfig;
 use eframe::{App, CreationContext, egui};
 use std::io;
@@ -43,7 +44,24 @@ impl App for VikingVision {
                             ui.menu_button("Loaders", |ui| ctx.loaders_ui(ui));
                             ui.menu_button("Textures", |ui| ctx.texture_ui(ui));
                             ui.menu_button("Settings", |ui| ctx.settings_ui(ui));
-                        })
+                        });
+                        ui.menu_button("Send events", |ui| {
+                            if ui.button(tracing::Level::ERROR.to_rich_text()).clicked() {
+                                tracing::error!("test ERROR");
+                            }
+                            if ui.button(tracing::Level::WARN.to_rich_text()).clicked() {
+                                tracing::warn!("test WARN");
+                            }
+                            if ui.button(tracing::Level::INFO.to_rich_text()).clicked() {
+                                tracing::info!("test INFO");
+                            }
+                            if ui.button(tracing::Level::DEBUG.to_rich_text()).clicked() {
+                                tracing::debug!("test DEBUG");
+                            }
+                            if ui.button(tracing::Level::TRACE.to_rich_text()).clicked() {
+                                tracing::trace!("test TRACE");
+                            }
+                        });
                     });
                 });
         });
