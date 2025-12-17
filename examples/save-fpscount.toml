@@ -10,7 +10,7 @@ height = 480
 fourcc = "YUYV"
 fps = 30
 # output = "fps"
-outputs = ["fps", "save", "nt"]
+outputs = ["fps", "save"]
 
 [camera.mono]
 type = "frame"
