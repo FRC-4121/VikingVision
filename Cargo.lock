@@ -3936,7 +3936,7 @@ dependencies = [
  "serde_core",
  "serde_spanned",
  "toml_datetime",
- "toml_parser",
+ "toml_parser 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "toml_writer",
  "winnow",
 ]
@@ -3958,7 +3958,7 @@ checksum = "6485ef6d0d9b5d0ec17244ff7eb05310113c3f316f2d14200d4de56b3cb98f8d"
 dependencies = [
  "indexmap",
  "toml_datetime",
- "toml_parser",
+ "toml_parser 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "winnow",
 ]
 
@@ -3967,6 +3967,14 @@ name = "toml_parser"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0cbe268d35bdb4bb5a56a2de88d0ad0eb70af5384a99d648cd4b3d04039800e"
+dependencies = [
+ "winnow",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.0.4"
+source = "git+https://github.com/matt-cornell/toml.git#fd2f13920c51aad588f88da1d111a9b3b32d41fa"
 dependencies = [
  "winnow",
 ]
@@ -4303,7 +4311,7 @@ dependencies = [
  "ntable",
  "rfd",
  "time",
- "toml_parser",
+ "toml_parser 1.0.4 (git+https://github.com/matt-cornell/toml.git)",
  "tracing",
  "tracing-log",
  "tracing-subscriber",

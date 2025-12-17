@@ -21,6 +21,7 @@ pub struct NtVisitor<'a> {
 }
 #[allow(unused_variables)]
 impl<'i> Visitor<'i> for NtVisitor<'_> {
+    fn begin(&mut self, def: Span) {}
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,

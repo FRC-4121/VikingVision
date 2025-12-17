@@ -11,7 +11,7 @@ matchers = "0.2.0"
 ntable = { version = "0.1.0", path = "../ntable", optional = true }
 rfd.workspace = true
 time.workspace = true
-toml_parser = "1.0.4"
+toml_parser = { version = "1.0.4", git = "https://github.com/matt-cornell/toml.git" } # I need more things in the API
 tracing.workspace = true
 tracing-log = "0.2.0"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

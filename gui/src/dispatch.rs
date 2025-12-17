@@ -5,6 +5,7 @@ pub struct DispatchVisitor<'a> {
     pub ntable: NtVisitor<'a>,
 }
 impl<'i> Visitor<'i> for DispatchVisitor<'_> {
+    fn begin(&mut self, _def: Span) {}
     fn accept_scalar(
         &mut self,
         mut path: RawsIter<'_, 'i>,
@@ -20,13 +21,14 @@ impl<'i> Visitor<'i> for DispatchVisitor<'_> {
                 _ => {
                     error.report_error(
                         ParseError::new(format!("Unexpected scalar at {old}"))
-                            .with_context(scalar.span),
+                            .with_context(scalar.raw.span()),
                     );
                 }
             }
         } else {
             error.report_error(
-                ParseError::new(format!("Unexpected scalar at {old}")).with_context(scalar.span),
+                ParseError::new(format!("Unexpected scalar at {old}"))
+                    .with_context(scalar.raw.span()),
             );
         }
     }
@@ -43,7 +45,14 @@ impl<'i> Visitor<'i> for DispatchVisitor<'_> {
     fn begin_table(&mut self, mut path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         if let Some(PathKind::Key(k)) = path.next() {
             match k.as_str() {
-                "ntable" => path.clone().next().is_none() || self.ntable.begin_table(path, error),
+                "ntable" => {
+                    if path.clone().next().is_none() {
+                        self.ntable.begin(k.span());
+                        true
+                    } else {
+                        self.ntable.begin_table(path, error)
+                    }
+                }
                 _ => false,
             }
         } else {

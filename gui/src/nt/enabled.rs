@@ -1,108 +1,267 @@
 use crate::visit::prelude::*;
 use eframe::egui;
 use ntable::team::{TeamNumber, TeamParseError};
-use toml_parser::decoder::Encoding;
+use toml_parser::decoder::{Encoding, ScalarKind};
 
-enum Host {
-    Team {
-        team: TeamNumber,
-        edit: String,
-        err: Option<TeamParseError>,
-    },
+enum HostKind {
+    Team(Option<TeamNumber>),
     Host(String, Encoding),
 }
 
-struct PresentNt {
-    host: Host,
+struct Identity {
     identity: String,
-    host_span: Span,
     id_span: Span,
     id_enc: Encoding,
+}
+
+struct Host {
+    kind: HostKind,
+    span: Span,
+    path: Span,
+}
+
+#[derive(Default)]
+struct PresentNt {
+    host: Option<Host>,
+    identity: Option<Identity>,
 }
 
 #[derive(Default)]
 pub struct NtConfig {
     inner: Option<PresentNt>,
+    host_edit: String,
+    host_err: Option<TeamParseError>,
 }
 impl NtConfig {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         if let Some(inner) = &mut self.inner {
-            ui.text_edit_singleline(&mut inner.identity);
-            let mut is_host = matches!(inner.host, Host::Host(..));
-            egui::ComboBox::new("nt-host-kind", "Host Kind")
-                .selected_text(if is_host { "Hostname" } else { "Team Number" })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut is_host, true, "Hostname");
-                    ui.selectable_value(&mut is_host, false, "Team Number");
-                });
-            let mut changed = false;
-            match (&inner.host, is_host) {
-                (Host::Team { team, .. }, true) => {
-                    changed = true;
-                    inner.host = Host::Host(team.to_ipv4().to_string(), Encoding::BasicString);
-                }
-                (Host::Host(hostname, _), false) => {
-                    changed = true;
-                    if let Some(team) = TeamNumber::parse_ipv4(hostname) {
-                        inner.host = Host::Team {
-                            team,
-                            edit: team.to_string(),
-                            err: None,
-                        };
-                    } else {
-                        inner.host = Host::Team {
-                            team: TeamNumber::new_unchecked(0),
-                            edit: "0".to_string(),
-                            err: None,
-                        };
-                    }
-                }
-                _ => {}
+            if let Some(identity) = &mut inner.identity {
+                ui.text_edit_singleline(&mut identity.identity);
+            } else {
+                ui.label("Identity not present!");
             }
-            match &mut inner.host {
-                Host::Team { team, edit, err } => {
-                    let resp = ui.text_edit_singleline(edit);
-                    if resp.changed() {
-                        match edit.parse() {
-                            Ok(t) => {
-                                changed = true;
-                                *team = t;
-                                *err = None;
-                            }
-                            Err(e) => {
-                                *err = Some(e);
+            if let Some(host) = &mut inner.host {
+                let mut host_changed = false;
+                let mut is_host = matches!(host.kind, HostKind::Host(..));
+                egui::ComboBox::new("nt-host-kind", "Host Kind")
+                    .selected_text(if is_host { "Hostname" } else { "Team Number" })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut is_host, true, "Hostname");
+                        ui.selectable_value(&mut is_host, false, "Team Number");
+                    });
+                match (&host.kind, is_host) {
+                    (HostKind::Team(Some(team)), true) => {
+                        host_changed = true;
+                        host.kind =
+                            HostKind::Host(team.to_ipv4().to_string(), Encoding::BasicString);
+                    }
+                    (HostKind::Team(None), true) => {
+                        host_changed = true;
+                        host.kind = HostKind::Host("localhost".to_string(), Encoding::BasicString);
+                    }
+                    (HostKind::Host(hostname, _), false) => {
+                        host_changed = true;
+                        if let Some(team) = TeamNumber::parse_ipv4(hostname) {
+                            self.host_edit = team.to_string();
+                            self.host_err = None;
+                            host.kind = HostKind::Team(Some(team));
+                        } else {
+                            self.host_edit = "0".to_string();
+                            self.host_err = None;
+                            host.kind = HostKind::Team(Some(TeamNumber::new_unchecked(0)));
+                        }
+                    }
+                    _ => {}
+                }
+                match &mut host.kind {
+                    HostKind::Team(team) => {
+                        let resp = ui.text_edit_singleline(&mut self.host_edit);
+                        if resp.changed() {
+                            match self.host_edit.parse() {
+                                Ok(t) => {
+                                    host_changed = true;
+                                    *team = Some(t);
+                                    self.host_err = None;
+                                }
+                                Err(e) => {
+                                    self.host_err = Some(e);
+                                }
                             }
                         }
                     }
+                    HostKind::Host(hostname, _) => {
+                        host_changed |= ui.text_edit_singleline(hostname).changed();
+                    }
                 }
-                Host::Host(hostname, _) => {
-                    changed |= ui.text_edit_singleline(hostname).changed();
-                }
+                let _ = host_changed;
             }
-            let _ = changed;
         } else {
             ui.label("NetworkTables not present in this file!");
             let _ = ui.button("Add to file");
         }
     }
     pub fn visitor(&mut self) -> NtVisitor<'_> {
-        NtVisitor { nt: self }
+        self.inner = None;
+        NtVisitor {
+            nt: self,
+            spans: Vec::new(),
+        }
     }
 }
 pub struct NtVisitor<'a> {
     nt: &'a mut NtConfig,
+    spans: Vec<Span>,
 }
 #[allow(unused_variables)]
 impl<'i> Visitor<'i> for NtVisitor<'_> {
+    fn begin(&mut self, def: Span) {
+        self.nt.inner.get_or_insert_default();
+        self.spans.push(def);
+    }
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,
         scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
+        let present = self.nt.inner.get_or_insert_default();
+        match path.clone().next() {
+            Some(PathKind::Key(k)) => match k.as_str() {
+                "identity" => {
+                    if present.identity.is_some() {
+                        error.report_error(
+                            ParseError::new("Duplicate key .ntable.identity")
+                                .with_context(k.span()),
+                        );
+                    } else if scalar.kind == ScalarKind::String {
+                        let mut id = String::new();
+                        let _ = scalar.raw.decode_scalar(&mut id, &mut ());
+                        present.identity = Some(Identity {
+                            identity: id,
+                            id_span: scalar.raw.span(),
+                            id_enc: scalar.raw.encoding().unwrap(),
+                        });
+                    } else {
+                        present.identity = Some(Identity {
+                            identity: String::new(),
+                            id_span: scalar.raw.span(),
+                            id_enc: Encoding::BasicString,
+                        });
+                    }
+                    if scalar.kind != ScalarKind::String {
+                        error.report_error(ParseError::new(format!(
+                            "Expected a string for key .ntable.identity, got {}",
+                            scalar.kind.description()
+                        )));
+                    }
+                }
+                "host" => {
+                    match present.host {
+                        Some(Host {
+                            kind: HostKind::Host(..),
+                            ..
+                        }) => {
+                            error.report_error(
+                                ParseError::new("Duplicate key .ntable.host")
+                                    .with_context(k.span()),
+                            );
+                        }
+                        Some(Host {
+                            kind: HostKind::Team { .. },
+                            ..
+                        }) => {
+                            error.report_error(
+                                ParseError::new("Key .ntable.host conflicts with .ntable.team")
+                                    .with_context(k.span()),
+                            );
+                        }
+                        None => {
+                            if scalar.kind == ScalarKind::String {
+                                let mut host = String::new();
+                                let _ = scalar.raw.decode_scalar(&mut host, &mut ());
+                                present.host = Some(Host {
+                                    kind: HostKind::Host(host, scalar.raw.encoding().unwrap()),
+                                    span: scalar.raw.span(),
+                                    path: k.span(),
+                                });
+                            } else {
+                                present.host = Some(Host {
+                                    kind: HostKind::Host(
+                                        "localhost".to_string(),
+                                        Encoding::BasicString,
+                                    ),
+                                    span: scalar.raw.span(),
+                                    path: k.span(),
+                                });
+                            }
+                        }
+                    }
+                    if scalar.kind != ScalarKind::String {
+                        error.report_error(ParseError::new(format!(
+                            "Expected a string for key .ntable.host, got {}",
+                            scalar.kind.description()
+                        )));
+                    }
+                }
+                "team" => {
+                    match present.host {
+                        Some(Host {
+                            kind: HostKind::Host(..),
+                            ..
+                        }) => {
+                            error.report_error(
+                                ParseError::new("Key .ntable.team conflicts with .ntable.host")
+                                    .with_context(k.span()),
+                            );
+                        }
+                        Some(Host {
+                            kind: HostKind::Team { .. },
+                            ..
+                        }) => {
+                            error.report_error(
+                                ParseError::new("Duplicate key .ntable.team")
+                                    .with_context(k.span()),
+                            );
+                        }
+                        None => {
+                            if scalar.kind
+                                == ScalarKind::Integer(toml_parser::decoder::IntegerRadix::Dec)
+                            {
+                                let mut team = String::new();
+                                let _ = scalar.raw.decode_scalar(&mut team, &mut ());
+                                present.host = Some(Host {
+                                    kind: HostKind::Team(team.parse().ok()),
+                                    span: scalar.raw.span(),
+                                    path: k.span(),
+                                });
+                            } else {
+                                present.host = Some(Host {
+                                    kind: HostKind::Team(None),
+                                    span: scalar.raw.span(),
+                                    path: k.span(),
+                                });
+                            }
+                        }
+                    }
+                    if scalar.kind != ScalarKind::Integer(toml_parser::decoder::IntegerRadix::Dec) {
+                        error.report_error(ParseError::new(format!(
+                            "Expected a integer for key .ntable.team, got {}",
+                            scalar.kind.description()
+                        )));
+                    }
+                }
+                _ => {
+                    error.report_error(
+                        ParseError::new(format!("Unexpected key .ntable{path}"))
+                            .with_context(scalar.raw.span()),
+                    );
+                }
+            },
+            _ => unreachable!("Only a table should be passed to this visitor"),
+        }
     }
     fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
-        true
+        false
     }
     fn end_array(
         &mut self,
@@ -111,9 +270,25 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
         value: Span,
         error: &mut dyn ErrorSink,
     ) {
+        match path.clone().next() {
+            Some(PathKind::Key(k)) if ["identity", "host", "team"].contains(&k.as_str()) => {
+                error.report_error(
+                    ParseError::new(format!(
+                        "Expected a scalar for value .ntable.{}, got an array",
+                        k.as_str(),
+                    ))
+                    .with_context(value),
+                );
+            }
+            _ => {
+                error.report_error(
+                    ParseError::new(format!("Unexpected key .ntable{path}")).with_context(key),
+                );
+            }
+        }
     }
     fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
-        true
+        false
     }
     fn end_table(
         &mut self,
@@ -122,6 +297,38 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
         value: Span,
         error: &mut dyn ErrorSink,
     ) {
+        match path.clone().next() {
+            Some(PathKind::Key(k)) if ["identity", "host", "team"].contains(&k.as_str()) => {
+                error.report_error(
+                    ParseError::new(format!(
+                        "Expected a scalar for value .ntable.{}, got a table",
+                        k.as_str(),
+                    ))
+                    .with_context(value),
+                );
+            }
+            _ => {
+                error.report_error(
+                    ParseError::new(format!("Unexpected key .ntable{path}")).with_context(key),
+                );
+            }
+        }
     }
-    fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink) {}
+    fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink) {
+        'missing_keys: {
+            if !self.spans.is_empty()
+                && let Some(present) = &self.nt.inner
+            {
+                let msg = match (present.host.is_none(), present.identity.is_none()) {
+                    (true, true) => "Missing keys: (.ntable.host | .ntable.team), .ntable.identity",
+                    (false, true) => "Missing key: .ntable.identity",
+                    (true, false) => "Missing key: .ntable.host | .ntable.team",
+                    (false, false) => break 'missing_keys,
+                };
+                for span in self.spans.drain(..) {
+                    error.report_error(ParseError::new(msg).with_context(span));
+                }
+            }
+        }
+    }
 }

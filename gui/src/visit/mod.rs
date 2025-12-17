@@ -11,11 +11,11 @@ pub mod prelude {
 
 pub struct ScalarInfo<'i> {
     pub raw: Raw<'i>,
-    pub span: Span,
     pub kind: ScalarKind,
 }
 
 pub trait Visitor<'i> {
+    fn begin(&mut self, def: Span);
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,
@@ -43,6 +43,7 @@ pub trait Visitor<'i> {
 
 #[allow(unused_variables)]
 impl<'i> Visitor<'i> for () {
+    fn begin(&mut self, def: Span) {}
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,
@@ -340,8 +341,7 @@ impl EventReceiver for Receiver<'_, '_> {
             self.visitor.accept_scalar(
                 path,
                 ScalarInfo {
-                    raw: scalar,
-                    span,
+                    raw: dbg!(scalar),
                     kind,
                 },
                 error,
