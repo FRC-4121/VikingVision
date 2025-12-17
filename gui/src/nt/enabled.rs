@@ -1,3 +1,4 @@
+use crate::edit::{Edits, format_string};
 use crate::visit::prelude::*;
 use eframe::egui;
 use ntable::team::{TeamNumber, TeamParseError};
@@ -33,10 +34,12 @@ pub struct NtConfig {
     host_err: Option<TeamParseError>,
 }
 impl NtConfig {
-    pub fn show(&mut self, ui: &mut egui::Ui) {
+    pub fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
         if let Some(inner) = &mut self.inner {
-            if let Some(identity) = &mut inner.identity {
-                ui.text_edit_singleline(&mut identity.identity);
+            if let Some(id) = &mut inner.identity {
+                if ui.text_edit_singleline(&mut id.identity).changed() {
+                    edits.add(id.id_span, format_string(&id.identity, &mut id.id_enc));
+                }
             } else {
                 ui.label("Identity not present!");
             }
@@ -54,10 +57,12 @@ impl NtConfig {
                         host_changed = true;
                         host.kind =
                             HostKind::Host(team.to_ipv4().to_string(), Encoding::BasicString);
+                        edits.add(host.path, "host");
                     }
                     (HostKind::Team(None), true) => {
                         host_changed = true;
                         host.kind = HostKind::Host("localhost".to_string(), Encoding::BasicString);
+                        edits.add(host.path, "host");
                     }
                     (HostKind::Host(hostname, _), false) => {
                         host_changed = true;
@@ -70,6 +75,7 @@ impl NtConfig {
                             self.host_err = None;
                             host.kind = HostKind::Team(Some(TeamNumber::new_unchecked(0)));
                         }
+                        edits.add(host.path, "team");
                     }
                     _ => {}
                 }
@@ -93,7 +99,15 @@ impl NtConfig {
                         host_changed |= ui.text_edit_singleline(hostname).changed();
                     }
                 }
-                let _ = host_changed;
+                if host_changed {
+                    edits.add(
+                        host.span,
+                        match host.kind {
+                            HostKind::Host(ref hn, ref mut enc) => format_string(hn, enc),
+                            HostKind::Team(team) => team.unwrap().to_string(),
+                        },
+                    );
+                }
             }
         } else {
             ui.label("NetworkTables not present in this file!");
@@ -149,10 +163,13 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
                         });
                     }
                     if scalar.kind != ScalarKind::String {
-                        error.report_error(ParseError::new(format!(
-                            "Expected a string for key .ntable.identity, got {}",
-                            scalar.kind.description()
-                        )));
+                        error.report_error(
+                            ParseError::new(format!(
+                                "Expected a string for key .ntable.identity, got {}",
+                                scalar.kind.description()
+                            ))
+                            .with_context(scalar.raw.span()),
+                        );
                     }
                 }
                 "host" => {
@@ -197,10 +214,13 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
                         }
                     }
                     if scalar.kind != ScalarKind::String {
-                        error.report_error(ParseError::new(format!(
-                            "Expected a string for key .ntable.host, got {}",
-                            scalar.kind.description()
-                        )));
+                        error.report_error(
+                            ParseError::new(format!(
+                                "Expected a string for key .ntable.host, got {}",
+                                scalar.kind.description()
+                            ))
+                            .with_context(scalar.raw.span()),
+                        );
                     }
                 }
                 "team" => {
@@ -244,10 +264,13 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
                         }
                     }
                     if scalar.kind != ScalarKind::Integer(toml_parser::decoder::IntegerRadix::Dec) {
-                        error.report_error(ParseError::new(format!(
-                            "Expected a integer for key .ntable.team, got {}",
-                            scalar.kind.description()
-                        )));
+                        error.report_error(
+                            ParseError::new(format!(
+                                "Expected a integer for key .ntable.team, got {}",
+                                scalar.kind.description()
+                            ))
+                            .with_context(scalar.raw.span()),
+                        );
                     }
                 }
                 _ => {

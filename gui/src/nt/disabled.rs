@@ -1,3 +1,4 @@
+use crate::edit::Edits;
 use crate::visit::prelude::*;
 use eframe::egui;
 use std::marker::PhantomData;
@@ -7,7 +8,7 @@ pub struct NtConfig {
     _priv: (),
 }
 impl NtConfig {
-    pub fn show(&mut self, ui: &mut egui::Ui) {
+    pub fn show(&mut self, ui: &mut egui::Ui, _edits: &mut Edits) {
         ui.label("NetworkTables is unavailable in this build");
     }
     pub fn visitor(&mut self) -> NtVisitor<'_> {

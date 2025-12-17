@@ -1,3 +1,4 @@
+use crate::edit;
 use crate::visit::{Receiver, Visitor, log};
 use eframe::egui;
 use std::fs::{File, OpenOptions};
@@ -373,6 +374,12 @@ impl EditorState {
                     }
                 }
             }
+        }
+    }
+    pub fn apply_edits(&mut self, edits: &edit::Edits) {
+        if !edits.is_empty() {
+            self.contents = edits.apply(&self.contents);
+            self.contents_persisted = false;
         }
     }
 }

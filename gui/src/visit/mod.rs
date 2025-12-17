@@ -338,14 +338,8 @@ impl EventReceiver for Receiver<'_, '_> {
                 source: self.source,
                 iter: self.path.iter(),
             };
-            self.visitor.accept_scalar(
-                path,
-                ScalarInfo {
-                    raw: dbg!(scalar),
-                    kind,
-                },
-                error,
-            );
+            self.visitor
+                .accept_scalar(path, ScalarInfo { raw: scalar, kind }, error);
         }
         self.close_keys(span, error);
     }

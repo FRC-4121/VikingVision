@@ -6,6 +6,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 mod dispatch;
+mod edit;
 mod editor;
 mod nt;
 mod trace;
@@ -21,12 +22,18 @@ struct VikingVision {
     nt: nt::NtConfig,
     editor: editor::EditorState,
     logs: trace::LogWidget,
+    edits: edit::Edits,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext, logs: trace::LogWidget) -> io::Result<Self> {
         let nt = nt::NtConfig::default();
         let editor = editor::EditorState::load(ctx.storage);
-        Ok(Self { nt, editor, logs })
+        Ok(Self {
+            nt,
+            editor,
+            logs,
+            edits: edit::Edits::default(),
+        })
     }
 }
 impl App for VikingVision {
@@ -71,11 +78,13 @@ impl App for VikingVision {
         });
         egui::SidePanel::right("options").show(ctx, |ui| {
             ui.collapsing(egui::RichText::new("NetworkTables").heading(), |ui| {
-                self.nt.show(ui);
+                self.nt.show(ui, &mut self.edits);
             });
             ui.collapsing(egui::RichText::new("Cameras").heading(), |ui| {});
             ui.collapsing(egui::RichText::new("Components").heading(), |ui| {});
         });
+        self.editor.apply_edits(&self.edits);
+        self.edits.clear();
         egui::SidePanel::left("editor").show(ctx, |ui| {
             self.editor.in_left(
                 &mut dispatch::DispatchVisitor {
