@@ -5,7 +5,9 @@ use std::io;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+mod dispatch;
 mod editor;
+mod nt;
 mod trace;
 mod visit;
 
@@ -16,13 +18,15 @@ fn now() -> time::OffsetDateTime {
 }
 
 struct VikingVision {
+    nt: nt::NtConfig,
     editor: editor::EditorState,
     logs: trace::LogWidget,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext, logs: trace::LogWidget) -> io::Result<Self> {
+        let nt = nt::NtConfig::default();
         let editor = editor::EditorState::load(ctx.storage);
-        Ok(Self { editor, logs })
+        Ok(Self { nt, editor, logs })
     }
 }
 impl App for VikingVision {
@@ -66,11 +70,20 @@ impl App for VikingVision {
                 });
         });
         egui::SidePanel::right("options").show(ctx, |ui| {
-            ui.collapsing(egui::RichText::new("NetworkTables").heading(), |ui| {});
+            ui.collapsing(egui::RichText::new("NetworkTables").heading(), |ui| {
+                self.nt.show(ui);
+            });
             ui.collapsing(egui::RichText::new("Cameras").heading(), |ui| {});
             ui.collapsing(egui::RichText::new("Components").heading(), |ui| {});
         });
-        egui::SidePanel::left("editor").show(ctx, |ui| self.editor.in_left(&mut (), ui));
+        egui::SidePanel::left("editor").show(ctx, |ui| {
+            self.editor.in_left(
+                &mut dispatch::DispatchVisitor {
+                    ntable: self.nt.visitor(),
+                },
+                ui,
+            )
+        });
         egui::TopBottomPanel::bottom("logging")
             .default_height(100.0)
             .resizable(true)

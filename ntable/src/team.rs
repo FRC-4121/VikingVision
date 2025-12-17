@@ -1,4 +1,6 @@
 use std::fmt::{self, Display, Formatter};
+use std::str::FromStr;
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TeamNumber(u16);
@@ -20,6 +22,39 @@ impl TeamNumber {
     }
     pub const fn to_ipv4(self) -> Ipv4Team {
         Ipv4Team(self)
+    }
+    /// Parse an IPv4 address of the form `10.te.am.x` into a team number
+    pub fn parse_ipv4(ipv4: &str) -> Option<Self> {
+        use atoi::FromRadix10;
+        let bytes = ipv4.as_bytes();
+        let rest = bytes.strip_prefix(b"10.")?;
+        let (upper, used) = u16::from_radix_10(rest);
+        if used == 0 {
+            return None;
+        }
+        if upper > 255 {
+            return None;
+        }
+        let rest = rest.get(used..)?.strip_prefix(b".")?;
+        let (lower, used) = u16::from_radix_10(rest);
+        if used == 0 {
+            return None;
+        }
+        if lower > 99 {
+            return None;
+        }
+        let rest = rest.get(used..)?.strip_prefix(b".")?;
+        if rest.is_empty() {
+            return None;
+        }
+        let (last, used) = u16::from_radix_10(rest);
+        if used < rest.len() {
+            return None;
+        }
+        if last > 255 {
+            return None;
+        }
+        Some(Self::new_unchecked(upper * 100 + lower))
     }
 }
 impl serde::Serialize for TeamNumber {
@@ -46,11 +81,31 @@ impl<'de> serde::Deserialize<'de> for TeamNumber {
         })
     }
 }
+impl FromStr for TeamNumber {
+    type Err = TeamParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let team = s.parse()?;
+        TeamNumber::new(team).ok_or(TeamParseError::OutOfRange(team))
+    }
+}
+impl Display for TeamNumber {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Ipv4Team(TeamNumber);
+pub struct Ipv4Team(pub TeamNumber);
 impl Display for Ipv4Team {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "10.{}.{}.1", self.0.upper(), self.0.lower())
     }
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum TeamParseError {
+    #[error(transparent)]
+    Parse(#[from] std::num::ParseIntError),
+    #[error("team number {0} is out of range of 0..=25599")]
+    OutOfRange(u16),
 }

@@ -42,33 +42,46 @@ impl<'i> Visitor<'i> for LoggingVisitor<'_> {
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,
-        scalar: Raw<'i>,
-        kind: ScalarKind,
+        scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
-        let s = scalar.as_str();
+        let s = scalar.raw.as_str();
         self.0.0.push(LogEntry("scalar", format!("{path} = {s}")));
-        self.1.accept_scalar(path, scalar, kind, error);
+        self.1.accept_scalar(path, scalar, error);
     }
     fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         self.0.0.push(LogEntry("begin_array", path.to_string()));
         self.1.begin_array(path, error)
     }
-    fn end_array(&mut self, path: RawsIter<'_, 'i>, span: Span, error: &mut dyn ErrorSink) {
-        self.0
-            .0
-            .push(LogEntry("end_array", format!("{path} ({span:?})")));
-        self.1.end_array(path, span, error);
+    fn end_array(
+        &mut self,
+        path: RawsIter<'_, 'i>,
+        key: Span,
+        value: Span,
+        error: &mut dyn ErrorSink,
+    ) {
+        self.0.0.push(LogEntry(
+            "end_array",
+            format!("{path} ({key:?} => {value:?})"),
+        ));
+        self.1.end_array(path, key, value, error);
     }
     fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         self.0.0.push(LogEntry("begin_table", path.to_string()));
         self.1.begin_table(path, error)
     }
-    fn end_table(&mut self, path: RawsIter<'_, 'i>, span: Span, error: &mut dyn ErrorSink) {
-        self.0
-            .0
-            .push(LogEntry("end_table", format!("{path} ({span:?})")));
-        self.1.end_table(path, span, error);
+    fn end_table(
+        &mut self,
+        path: RawsIter<'_, 'i>,
+        key: Span,
+        value: Span,
+        error: &mut dyn ErrorSink,
+    ) {
+        self.0.0.push(LogEntry(
+            "end_table",
+            format!("{path} ({key:?} => {value:?})"),
+        ));
+        self.1.end_table(path, key, value, error);
     }
     fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink) {
         self.1.finish(source, error);

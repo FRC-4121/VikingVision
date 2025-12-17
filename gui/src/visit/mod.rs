@@ -4,19 +4,40 @@ use toml_parser::parser::EventReceiver;
 use toml_parser::{ErrorSink, ParseError, Raw, Source, Span};
 
 pub mod log;
+pub mod prelude {
+    pub use super::{PathKind, RawsIter, ScalarInfo, Visitor};
+    pub use toml_parser::{ErrorSink, ParseError, Source, Span};
+}
+
+pub struct ScalarInfo<'i> {
+    pub raw: Raw<'i>,
+    pub span: Span,
+    pub kind: ScalarKind,
+}
 
 pub trait Visitor<'i> {
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,
-        scalar: Raw<'i>,
-        kind: ScalarKind,
+        scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     );
     fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
-    fn end_array(&mut self, path: RawsIter<'_, 'i>, span: Span, error: &mut dyn ErrorSink);
+    fn end_array(
+        &mut self,
+        path: RawsIter<'_, 'i>,
+        key: Span,
+        value: Span,
+        error: &mut dyn ErrorSink,
+    );
     fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
-    fn end_table(&mut self, path: RawsIter<'_, 'i>, span: Span, error: &mut dyn ErrorSink);
+    fn end_table(
+        &mut self,
+        path: RawsIter<'_, 'i>,
+        key: Span,
+        value: Span,
+        error: &mut dyn ErrorSink,
+    );
     fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink);
 }
 
@@ -25,19 +46,32 @@ impl<'i> Visitor<'i> for () {
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,
-        scalar: Raw<'i>,
-        kind: ScalarKind,
+        scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
     }
     fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         true
     }
-    fn end_array(&mut self, path: RawsIter<'_, 'i>, span: Span, error: &mut dyn ErrorSink) {}
+    fn end_array(
+        &mut self,
+        path: RawsIter<'_, 'i>,
+        key: Span,
+        value: Span,
+        error: &mut dyn ErrorSink,
+    ) {
+    }
     fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         true
     }
-    fn end_table(&mut self, path: RawsIter<'_, 'i>, span: Span, error: &mut dyn ErrorSink) {}
+    fn end_table(
+        &mut self,
+        path: RawsIter<'_, 'i>,
+        key: Span,
+        value: Span,
+        error: &mut dyn ErrorSink,
+    ) {
+    }
     fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink) {}
 }
 
@@ -80,18 +114,23 @@ impl<'a, 'i> Receiver<'a, 'i> {
     }
     fn close_table(&mut self, span: Span, error: &mut dyn ErrorSink) {
         if let Some(start) = self.outer_table_start.take() {
-            let span = start.append(span);
+            let value = start.append(span);
+            let key = self
+                .path
+                .iter()
+                .rfind(|v| matches!(v.kind, PathElemKind::Table))
+                .unwrap()
+                .span;
             while let Some(PathElem { kind, .. }) = self.path.last() {
-                if self.skip_depth == 0 {
-                    if matches!(kind, PathElemKind::Key) {
-                        let path = RawsIter {
-                            source: self.source,
-                            iter: self.path.iter(),
-                        };
-                        self.visitor.end_table(path, span, error);
-                    }
-                } else if self.path.len() <= self.skip_depth {
+                if self.path.len() <= self.skip_depth {
                     self.skip_depth = 0;
+                }
+                if self.skip_depth == 0 && matches!(kind, PathElemKind::Key) {
+                    let path = RawsIter {
+                        source: self.source,
+                        iter: self.path.iter(),
+                    };
+                    self.visitor.end_table(path, key, value, error);
                 }
                 self.path.pop();
             }
@@ -101,6 +140,9 @@ impl<'a, 'i> Receiver<'a, 'i> {
         while let Some(PathElem { span: start, .. }) =
             self.path.pop_if(|e| matches!(e.kind, PathElemKind::Key))
         {
+            if self.path.len() <= self.skip_depth {
+                self.skip_depth = 0;
+            }
             if self.skip_depth == 0
                 && matches!(
                     self.path.last(),
@@ -114,10 +156,8 @@ impl<'a, 'i> Receiver<'a, 'i> {
                     source: self.source,
                     iter: self.path.iter(),
                 };
-                self.visitor.end_table(path, start.append(span), error);
-            }
-            if self.path.len() <= self.skip_depth {
-                self.skip_depth = 0;
+                self.visitor
+                    .end_table(path, start, start.append(span), error);
             }
         }
     }
@@ -166,7 +206,7 @@ impl EventReceiver for Receiver<'_, '_> {
             source: self.source,
             iter: self.path[..len].iter(),
         };
-        if !self.visitor.begin_table(path, error) {
+        if self.skip_depth == 0 && !self.visitor.begin_table(path, error) {
             self.skip_depth = self.path.len();
         }
         true
@@ -185,7 +225,13 @@ impl EventReceiver for Receiver<'_, '_> {
                     };
                     let span = start.append(end);
                     if self.skip_depth == 0 {
-                        self.visitor.end_table(path, span, error);
+                        let key = self
+                            .path
+                            .iter()
+                            .rfind(|e| matches!(e.kind, PathElemKind::Key))
+                            .unwrap()
+                            .span;
+                        self.visitor.end_table(path, key, span, error);
                     }
                     if self.path.len() <= self.skip_depth {
                         self.skip_depth = 0;
@@ -207,7 +253,7 @@ impl EventReceiver for Receiver<'_, '_> {
             source: self.source,
             iter: self.path[..len].iter(),
         };
-        if !self.visitor.begin_array(path, error) {
+        if self.skip_depth == 0 && !self.visitor.begin_array(path, error) {
             self.skip_depth = self.path.len();
         }
         true
@@ -226,7 +272,13 @@ impl EventReceiver for Receiver<'_, '_> {
                     };
                     let span = start.append(end);
                     if self.skip_depth == 0 {
-                        self.visitor.end_array(path, span, error);
+                        let key = self
+                            .path
+                            .iter()
+                            .rfind(|e| matches!(e.kind, PathElemKind::Key))
+                            .unwrap()
+                            .span;
+                        self.visitor.end_array(path, key, span, error);
                     }
                     if self.path.len() <= self.skip_depth {
                         self.skip_depth = 0;
@@ -285,7 +337,15 @@ impl EventReceiver for Receiver<'_, '_> {
                 source: self.source,
                 iter: self.path.iter(),
             };
-            self.visitor.accept_scalar(path, scalar, kind, error);
+            self.visitor.accept_scalar(
+                path,
+                ScalarInfo {
+                    raw: scalar,
+                    span,
+                    kind,
+                },
+                error,
+            );
         }
         self.close_keys(span, error);
     }

@@ -5,7 +5,7 @@ use std::io::{self, prelude::*};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
-use toml_parser::ParseError;
+use toml_parser::{ParseError, Span};
 
 fn opts() -> OpenOptions {
     let mut opts = OpenOptions::new();
@@ -480,16 +480,25 @@ impl egui::Widget for TomlEditorInner<'_, '_> {
                     };
 
                     let mut is_err = false;
-                    if let Some((head, tail)) =
+                    while let Some((head, tail)) =
                         unsafe { unbind_lifetime(err_slice).split_first_mut() } // Rust doesn't like this control flow, but the only place we store the reference is in err_slice
                         && let Some(err_span) = head.context()
-                        && span.end() > err_span.start()
-                        && span.start() <= err_span.end()
                     {
+                        if span.end() < err_span.start() {
+                            break;
+                        }
+                        if span.start() >= err_span.end() {
+                            err_slice = tail;
+                            continue;
+                        }
+
                         *head = std::mem::replace(head, ParseError::new("placeholder!"))
-                            .with_context(span);
-                        err_slice = tail;
+                            .with_context(Span::new_unchecked(
+                                span.start().min(err_span.start()),
+                                span.end().max(err_span.end()),
+                            ));
                         is_err = true;
+                        break;
                     }
                     if is_err && !all_errs && color.is_none() {
                         color = Some(egui::Color32::WHITE);
