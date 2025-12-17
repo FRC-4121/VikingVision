@@ -255,7 +255,18 @@ fn main() {
                                     return None;
                                 }
                                 if !inputs.can_take(ch.channel.as_deref(), Some(&*comp.component)) {
-                                    error!(channel = ?ch.channel, ?inputs, "component can't take input on the expected channel");
+                                    match &inputs {
+                                        Inputs::Named(v) | Inputs::MinTree(v) | Inputs::FullTree(v) => {
+                                            if let Some(c) = &ch.channel {
+                                                error!(component = &*ch.component, channel = &**c, %id, known_expected = ?v, "component can't take input on the given channel");
+                                            } else {
+                                                error!(component = &*ch.component, %id, "component can't take input on the primary channel because it expects inputs on named channels");
+                                            }
+                                        }
+                                        Inputs::Primary => {
+                                            error!(component = &*ch.component, c = ch.channel.as_deref().unwrap(), %id, "component can't take input on a named channel because it expects inputs on the primary channel");
+                                        }
+                                    }
                                     return None;
                                 }
                                 Some((id, ch.channel))
