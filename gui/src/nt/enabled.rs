@@ -32,21 +32,25 @@ pub struct NtConfig {
     inner: Option<PresentNt>,
     host_edit: String,
     host_err: Option<TeamParseError>,
+    last_team: Option<TeamNumber>,
 }
 impl NtConfig {
     pub fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
         if let Some(inner) = &mut self.inner {
             if let Some(id) = &mut inner.identity {
-                if ui.text_edit_singleline(&mut id.identity).changed() {
-                    edits.add(id.id_span, format_string(&id.identity, &mut id.id_enc));
-                }
+                ui.horizontal(|ui| {
+                    ui.label("Identity: ");
+                    if ui.text_edit_singleline(&mut id.identity).changed() {
+                        edits.add(id.id_span, format_string(&id.identity, &mut id.id_enc));
+                    }
+                });
             } else {
                 ui.label("Identity not present!");
             }
             if let Some(host) = &mut inner.host {
                 let mut host_changed = false;
                 let mut is_host = matches!(host.kind, HostKind::Host(..));
-                egui::ComboBox::new("nt-host-kind", "Host Kind")
+                egui::ComboBox::new("nt-host-kind", "Host")
                     .selected_text(if is_host { "Hostname" } else { "Team Number" })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut is_host, true, "Hostname");
@@ -247,10 +251,15 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
                             if scalar.kind
                                 == ScalarKind::Integer(toml_parser::decoder::IntegerRadix::Dec)
                             {
-                                let mut team = String::new();
-                                let _ = scalar.raw.decode_scalar(&mut team, &mut ());
+                                let mut team_str = String::new();
+                                let _ = scalar.raw.decode_scalar(&mut team_str, &mut ());
+                                let team = team_str.parse().ok();
+                                if team.is_some() && team != self.nt.last_team {
+                                    self.nt.last_team = team;
+                                    self.nt.host_edit = team_str;
+                                }
                                 present.host = Some(Host {
-                                    kind: HostKind::Team(team.parse().ok()),
+                                    kind: HostKind::Team(team),
                                     span: scalar.raw.span(),
                                     path: k.span(),
                                 });
