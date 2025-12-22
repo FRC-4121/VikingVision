@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use std::fmt::{self, Display, Formatter};
 use std::fs::File;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::exit;
 use tracing::{debug, error, error_span, info};
@@ -92,9 +92,16 @@ struct Cli {
     color: Color,
     /// Regex to match cameras against
     ///
-    /// If unspecified, all available cameras will be used
+    /// If unspecified, all available cameras will be used.
     #[arg(short, long)]
     filter: Option<String>,
+    /// A file to dump graph and runner representations to
+    ///
+    /// This is primarily for debugging, to see the state of the graph after parsing
+    /// and compilation. The contents of the written file will have the `Debug`
+    /// representation of the graph and runner.
+    #[arg(short, long)]
+    dump: Option<PathBuf>,
 }
 
 fn format_log_file(arg: &str, now: time::OffsetDateTime) -> String {
@@ -202,6 +209,13 @@ fn main() {
         info!("no filter specified, using all available cameras");
     }
 
+    let mut dump = args.dump.as_ref().and_then(|path| {
+        info!(path = %path.display(), "dumping internal representations");
+        std::fs::File::create(path)
+            .inspect_err(|err| error!(path = %path.display(), %err, "failed to open dump file"))
+            .ok()
+    });
+
     let graph = match config
         .components
         .build_graph(&mut viking_vision::utils::NoContext)
@@ -215,6 +229,12 @@ fn main() {
             exit(3);
         }
     };
+    if let Some(file) = &mut dump
+        && let Err(err) = writeln!(file, "{graph:#?}")
+    {
+        let path = args.dump.as_ref().unwrap();
+        error!(path = %path.display(), %err, "error when writing writing to dump file");
+    }
     let (_, runner) = match graph.compile() {
         Ok(runner) => {
             info!("built pipeline runner");
@@ -225,6 +245,12 @@ fn main() {
             exit(3);
         }
     };
+    if let Some(file) = &mut dump
+        && let Err(err) = writeln!(file, "{runner:#?}")
+    {
+        let path = args.dump.as_ref().unwrap();
+        error!(path = %path.display(), %err, "error when writing writing to dump file");
+    }
 
     info!(cameras = ?config.cameras.keys().collect::<Vec<_>>(), "loading cameras");
 
