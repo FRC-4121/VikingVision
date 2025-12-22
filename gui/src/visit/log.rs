@@ -39,9 +39,15 @@ pub struct LoggingVisitor<'a>(
     pub &'a mut dyn for<'i> Visitor<'i>,
 );
 impl<'i> Visitor<'i> for LoggingVisitor<'_> {
-    fn begin(&mut self, def: Span) {
-        self.0.0.push(LogEntry("begin", format!("begin {def:?}")));
-        self.1.begin(def);
+    fn begin_def(&mut self, key: Span) {
+        self.0.0.push(LogEntry("begin_def", format!("{key:?}")));
+        self.1.begin_def(key);
+    }
+    fn end_def(&mut self, key: Span, value: Span) {
+        self.0
+            .0
+            .push(LogEntry("end_def", format!("{key:?} = {value:?}")));
+        self.1.end_def(key, value);
     }
     fn accept_scalar(
         &mut self,

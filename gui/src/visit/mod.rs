@@ -14,8 +14,10 @@ pub struct ScalarInfo<'i> {
     pub kind: ScalarKind,
 }
 
+#[allow(unused_variables)]
 pub trait Visitor<'i> {
-    fn begin(&mut self, def: Span);
+    fn begin_def(&mut self, key: Span) {}
+    fn end_def(&mut self, key: Span, value: Span) {}
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,
@@ -43,7 +45,7 @@ pub trait Visitor<'i> {
 
 #[allow(unused_variables)]
 impl<'i> Visitor<'i> for () {
-    fn begin(&mut self, def: Span) {}
+    fn begin_def(&mut self, def: Span) {}
     fn accept_scalar(
         &mut self,
         path: RawsIter<'_, 'i>,

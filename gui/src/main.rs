@@ -8,6 +8,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod dispatch;
 mod edit;
 mod editor;
+mod map;
 mod nt;
 mod trace;
 mod visit;
@@ -19,20 +20,23 @@ fn now() -> time::OffsetDateTime {
 }
 
 struct VikingVision {
-    nt: nt::NtConfig,
     editor: editor::EditorState,
     logs: trace::LogWidget,
     edits: edit::Edits,
+    nt: nt::NtConfig,
+    cameras: map::MapConfig<()>,
+    components: map::MapConfig<()>,
 }
 impl VikingVision {
     fn new(ctx: &CreationContext, logs: trace::LogWidget) -> io::Result<Self> {
-        let nt = nt::NtConfig::default();
         let editor = editor::EditorState::load(ctx.storage);
         Ok(Self {
-            nt,
             editor,
             logs,
             edits: edit::Edits::default(),
+            nt: Default::default(),
+            cameras: Default::default(),
+            components: Default::default(),
         })
     }
 }
@@ -80,8 +84,12 @@ impl App for VikingVision {
             ui.collapsing(egui::RichText::new("NetworkTables").heading(), |ui| {
                 self.nt.show(ui, &mut self.edits);
             });
-            ui.collapsing(egui::RichText::new("Cameras").heading(), |ui| {});
-            ui.collapsing(egui::RichText::new("Components").heading(), |ui| {});
+            ui.collapsing(egui::RichText::new("Cameras").heading(), |ui| {
+                self.cameras.show(ui, &mut self.edits);
+            });
+            ui.collapsing(egui::RichText::new("Components").heading(), |ui| {
+                self.components.show(ui, &mut self.edits);
+            });
         });
         self.editor.apply_edits(&self.edits);
         self.edits.clear();
@@ -89,6 +97,8 @@ impl App for VikingVision {
             self.editor.in_left(
                 &mut dispatch::DispatchVisitor {
                     ntable: self.nt.visitor(),
+                    cameras: self.cameras.visit(),
+                    components: self.components.visit(),
                 },
                 ui,
             )

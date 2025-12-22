@@ -10,6 +10,7 @@ impl Edits {
         self.0.insert(span, content.into());
     }
     pub fn apply(&self, input: &str) -> String {
+        tracing::debug!(edits = ?self.0, "appying edits");
         let cap = self
             .0
             .iter()
@@ -29,6 +30,11 @@ impl Edits {
     }
     pub fn clear(&mut self) {
         self.0.clear();
+    }
+}
+impl<C: Into<Cow<'static, str>>> Extend<(Span, C)> for Edits {
+    fn extend<T: IntoIterator<Item = (Span, C)>>(&mut self, iter: T) {
+        self.0.extend(iter.into_iter().map(|(s, c)| (s, c.into())));
     }
 }
 fn format_basic_string(s: &str) -> String {

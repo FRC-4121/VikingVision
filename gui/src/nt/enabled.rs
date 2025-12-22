@@ -132,9 +132,9 @@ pub struct NtVisitor<'a> {
 }
 #[allow(unused_variables)]
 impl<'i> Visitor<'i> for NtVisitor<'_> {
-    fn begin(&mut self, def: Span) {
+    fn begin_def(&mut self, key: Span) {
         self.nt.inner.get_or_insert_default();
-        self.spans.push(def);
+        self.spans.push(key);
     }
     fn accept_scalar(
         &mut self,
