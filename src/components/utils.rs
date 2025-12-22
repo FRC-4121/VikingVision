@@ -2,13 +2,14 @@
 
 use super::ComponentIdentifier;
 use crate::buffer::Buffer;
+use crate::mutex::Mutex;
 use crate::pipeline::{PipelineId, prelude::*};
 use crate::utils::{Configurable, Configure, FpsCounter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use supply::{Request, prelude::*};
 use tracing::{error, info};

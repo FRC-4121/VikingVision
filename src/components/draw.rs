@@ -1,10 +1,10 @@
 use crate::buffer::Buffer;
 use crate::draw::*;
+use crate::mutex::Mutex;
 use crate::pipeline::prelude::*;
 use crate::vision::{Blob, Color};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::sync::Mutex;
 
 pub struct DrawComponent<T> {
     pub color: Color,

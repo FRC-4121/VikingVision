@@ -4,12 +4,13 @@
 
 use super::runner::ComponentContext;
 use crate::buffer::Buffer;
+use crate::mutex::Mutex;
 use crate::pipeline::graph::{GraphComponentId, IdResolver, PipelineGraph};
 use crate::utils::LogErr;
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug, Display, Formatter};
-use std::sync::{Arc, Mutex, TryLockError};
+use std::sync::{Arc, TryLockError};
 use supply::prelude::*;
 use thiserror::Error;
 
@@ -315,10 +316,10 @@ impl Inputs {
 ///
 ///     fn run<'s, 'r: 's>(&self, ctx: ComponentContext<'_, 's, 'r>) {
 ///         let Ok(image) = ctx.get_as::<Buffer<'static>>("image").and_log_err() else { return };
-///         
+///
 ///         // Process image...
 ///         let result = process_image(&image);
-///         
+///
 ///         // Submit result
 ///         ctx.submit("", Arc::new(result));
 ///     }
