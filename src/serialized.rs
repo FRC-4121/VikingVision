@@ -12,12 +12,14 @@ fn default_running() -> usize {
 pub struct RunConfig {
     #[serde(default = "default_running")]
     pub max_running: usize,
+    pub num_threads: Option<usize>,
 }
 
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
             max_running: default_running(),
+            num_threads: None,
         }
     }
 }
@@ -127,7 +129,7 @@ pub struct CameraWithOutputs {
 #[derive(Serialize, Deserialize)]
 pub struct ConfigFile {
     #[serde(default)]
-    pub config: RunConfig,
+    pub run: RunConfig,
     #[cfg_attr(not(feature = "ntable"), serde(skip))]
     pub ntable: Option<NtConfig>,
     #[serde(alias = "camera")]

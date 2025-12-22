@@ -102,6 +102,12 @@ struct Cli {
     /// representation of the graph and runner.
     #[arg(short, long)]
     dump: Option<PathBuf>,
+    /// The number of worker threads to use for the runner
+    ///
+    /// This defaults to the value specified in the config file, or
+    /// the number of CPU cores if none are specified.
+    #[arg(short, long)]
+    threads: Option<usize>,
 }
 
 fn format_log_file(arg: &str, now: time::OffsetDateTime) -> String {
@@ -318,7 +324,17 @@ fn main() {
     let mut refs = Vec::new();
     refs.resize_with(cameras.len(), || None);
 
-    rayon::scope(|rscope| {
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(threads) = args.threads.or(config.run.num_threads) {
+        builder = builder.num_threads(threads);
+    }
+
+    let pool = builder.build().unwrap_or_else(|err| {
+        error!(%err, "failed to build thread pool");
+        exit(101);
+    });
+
+    pool.scope(|rscope| {
         std::thread::scope(|tscope| {
             for ((mut cam, next), provider) in cameras.into_iter().zip(&mut refs) {
                 let builder = std::thread::Builder::new().name(format!("camera-{}", cam.name()));
@@ -337,7 +353,7 @@ fn main() {
                                     RunParams::new(*id)
                                         .with_args(arg.clone())
                                         .with_context(provider)
-                                        .with_max_running(config.config.max_running),
+                                        .with_max_running(config.run.max_running),
                                     rscope,
                                 );
                                 if let Err(RunError::WithParams(RunErrorWithParams {
