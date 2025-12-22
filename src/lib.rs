@@ -11,7 +11,7 @@ pub mod vision;
 
 /// Mutexes to be used throughout the crate
 ///
-/// Either a re-export of [`std::sync::Mutex`] or [`no_dealocks::Mutex`] based
+/// Either a re-export of [`std::sync::Mutex`] or [`no_deadlocks::Mutex`] based
 /// on which is enabled.
 pub mod mutex {
     #[cfg(feature = "debug-tools")]
