@@ -229,11 +229,13 @@ mod family_list {
     use serde::{Deserializer, Serializer};
 
     #[derive(Serialize)]
+    #[serde(rename_all = "lowercase")]
     enum SerFamilyList<'a> {
         Family(TagFamilyWithBits),
         Families(&'a Vec<TagFamilyWithBits>),
     }
     #[derive(Deserialize)]
+    #[serde(rename_all = "lowercase")]
     enum DeFamilyList {
         Family(TagFamilyWithBits),
         Families(Vec<TagFamilyWithBits>),
