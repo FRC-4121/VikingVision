@@ -28,12 +28,13 @@ impl Component for AprilTagComponent {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
+        let grayscale = img.convert_cow(crate::buffer::PixelFormat::LUMA);
         let it = {
             let Ok(mut lock) = self.detector.lock() else {
                 tracing::warn!("poisoned mutex for detector");
                 return;
             };
-            lock.detect(img.borrow())
+            lock.detect(grayscale)
         };
         let listening_vec = context.listening("vec");
         let listening_elem = context.listening("");
