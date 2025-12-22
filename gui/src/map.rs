@@ -196,7 +196,7 @@ impl<'i, T: MapElem> Visitor<'i> for MapVisitor<'_, T> {
             if path.clone().next().is_some() {
                 visitor.visitor().end_table(path, key, value, error);
             } else {
-                visitor.elem.spans.push(key.append(value));
+                visitor.elem.spans.push(value);
                 visitor.visitor().end_def(key, value);
             }
         } else {

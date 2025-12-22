@@ -25,6 +25,7 @@ struct Host {
 struct PresentNt {
     host: Option<Host>,
     identity: Option<Identity>,
+    spans: Vec<Span>,
 }
 
 #[derive(Default)]
@@ -37,6 +38,10 @@ pub struct NtConfig {
 impl NtConfig {
     pub fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
         if let Some(inner) = &mut self.inner {
+            if ui.button("Delete").clicked() {
+                edits.extend(inner.spans.drain(..).map(|s| (s, "")));
+                return;
+            }
             if let Some(id) = &mut inner.identity {
                 ui.horizontal(|ui| {
                     ui.label("Identity: ");
@@ -130,11 +135,13 @@ pub struct NtVisitor<'a> {
     nt: &'a mut NtConfig,
     spans: Vec<Span>,
 }
-#[allow(unused_variables)]
 impl<'i> Visitor<'i> for NtVisitor<'_> {
     fn begin_def(&mut self, key: Span) {
         self.nt.inner.get_or_insert_default();
         self.spans.push(key);
+    }
+    fn end_def(&mut self, _key: Span, value: Span) {
+        self.nt.inner.get_or_insert_default().spans.push(value);
     }
     fn accept_scalar(
         &mut self,
@@ -157,7 +164,7 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
                         present.identity = Some(Identity {
                             identity: id,
                             id_span: scalar.raw.span(),
-                            id_enc: scalar.raw.encoding().unwrap(),
+                            id_enc: scalar.raw.encoding().unwrap_or(Encoding::BasicString),
                         });
                     } else {
                         present.identity = Some(Identity {
@@ -201,7 +208,10 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
                                 let mut host = String::new();
                                 let _ = scalar.raw.decode_scalar(&mut host, &mut ());
                                 present.host = Some(Host {
-                                    kind: HostKind::Host(host, scalar.raw.encoding().unwrap()),
+                                    kind: HostKind::Host(
+                                        host,
+                                        scalar.raw.encoding().unwrap_or(Encoding::BasicString),
+                                    ),
                                     span: scalar.raw.span(),
                                     path: k.span(),
                                 });
@@ -292,7 +302,7 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
             _ => unreachable!("Only a table should be passed to this visitor"),
         }
     }
-    fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_array(&mut self, _path: RawsIter<'_, 'i>, _error: &mut dyn ErrorSink) -> bool {
         false
     }
     fn end_array(
@@ -319,7 +329,7 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
             }
         }
     }
-    fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_table(&mut self, _path: RawsIter<'_, 'i>, _error: &mut dyn ErrorSink) -> bool {
         false
     }
     fn end_table(
@@ -346,7 +356,7 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
             }
         }
     }
-    fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink) {
+    fn finish(&mut self, _source: Source<'i>, error: &mut dyn ErrorSink) {
         'missing_keys: {
             if !self.spans.is_empty()
                 && let Some(present) = &self.nt.inner

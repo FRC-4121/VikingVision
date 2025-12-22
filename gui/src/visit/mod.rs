@@ -159,8 +159,14 @@ impl<'a, 'i> Receiver<'a, 'i> {
                     source: self.source,
                     iter: self.path.iter(),
                 };
-                self.visitor
-                    .end_table(path, start, start.append(span), error);
+                self.visitor.end_table(
+                    path,
+                    start,
+                    self.path
+                        .first()
+                        .map_or(span, |start| start.span.append(span)),
+                    error,
+                );
             }
         }
     }
@@ -231,7 +237,7 @@ impl EventReceiver for Receiver<'_, '_> {
                         let key = self
                             .path
                             .iter()
-                            .rfind(|e| matches!(e.kind, PathElemKind::Key))
+                            .rfind(|e| !matches!(e.kind, PathElemKind::Key))
                             .unwrap()
                             .span;
                         self.visitor.end_table(path, key, span, error);
