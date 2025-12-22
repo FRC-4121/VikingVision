@@ -2,6 +2,8 @@
 //!
 //! Operations across all pixels in a buffer are very common, and this module defines a generic way to get chunks of data, along with helper funtions to apply a function across chunks.
 
+use std::sync::OnceLock;
+
 use crate::buffer::Buffer;
 use rayon::prelude::*;
 
@@ -12,7 +14,7 @@ pub trait Chunks {
     fn chunks(self, n: usize) -> impl Iterator<Item = Self::Chunk>;
 }
 /// An extension to [`Chunks`] that works with rayon, allowing parallel broadcasting.
-pub trait ParChunks: Chunks {
+pub trait ParChunks: Chunks + Send {
     fn par_chunks(self, n: usize) -> impl IndexedParallelIterator<Item = Self::Chunk>;
 }
 
@@ -235,8 +237,12 @@ pub fn broadcast3<
         .for_each(|((c1, c2), c3)| f.run(c1, c2, c3));
 }
 pub fn par_broadcast1<Marker, A1: ParChunks, B: ParBroadcast1<A1::Chunk, Marker>>(f: B, arr1: A1) {
-    let [s1] = f.sizes();
-    arr1.par_chunks(s1).for_each(|c1| f.par_run(c1));
+    broadcast_pool().install(|| {
+        let [s1] = f.sizes();
+        let it = arr1.par_chunks(s1);
+        // broadcast_pool().install(|| {
+        it.for_each(|c1| f.par_run(c1));
+    });
 }
 pub fn par_broadcast2<
     Marker,
@@ -248,10 +254,12 @@ pub fn par_broadcast2<
     arr1: A1,
     arr2: A2,
 ) {
-    let [s1, s2] = f.sizes();
-    arr1.par_chunks(s1)
-        .zip(arr2.par_chunks(s2))
-        .for_each(|(c1, c2)| f.par_run(c1, c2));
+    broadcast_pool().install(|| {
+        let [s1, s2] = f.sizes();
+        let it = arr1.par_chunks(s1).zip(arr2.par_chunks(s2));
+        // broadcast_pool().install(|| {
+        it.for_each(|(c1, c2)| f.par_run(c1, c2));
+    });
 }
 pub fn par_broadcast3<
     Marker,
@@ -265,9 +273,26 @@ pub fn par_broadcast3<
     arr2: A2,
     arr3: A3,
 ) {
-    let [s1, s2, s3] = f.sizes();
-    arr1.par_chunks(s1)
-        .zip(arr2.par_chunks(s2))
-        .zip(arr3.par_chunks(s3))
-        .for_each(|((c1, c2), c3)| f.par_run(c1, c2, c3));
+    broadcast_pool().install(|| {
+        let [s1, s2, s3] = f.sizes();
+        let it = arr1
+            .par_chunks(s1)
+            .zip(arr2.par_chunks(s2))
+            .zip(arr3.par_chunks(s3));
+        // broadcast_pool().install(|| {
+        it.for_each(|((c1, c2), c3)| f.par_run(c1, c2, c3));
+    });
+}
+
+pub static BROADCAST_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+pub fn broadcast_pool() -> &'static rayon::ThreadPool {
+    BROADCAST_POOL.get_or_init(default_broadcast_pool)
+}
+
+fn default_broadcast_pool() -> rayon::ThreadPool {
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(|idx| format!("broadcast-{idx}"))
+        .build()
+        .expect("Failed to build thread pool!")
 }
