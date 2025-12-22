@@ -1,5 +1,6 @@
 use crate::buffer::Buffer;
 use crate::buffer::PixelFormat;
+use crate::mutex::{Mutex, RwLock};
 use crate::pipeline::PipelineId;
 use crate::pipeline::PipelineName;
 use crate::pipeline::prelude::*;
@@ -12,7 +13,6 @@ use std::io::Write;
 use std::process::Stdio;
 use std::process::{Child, ChildStdin, Command};
 use std::sync::PoisonError;
-use std::sync::{Mutex, RwLock};
 use tracing::error;
 use tracing::info;
 use tracing::warn;

@@ -2,6 +2,7 @@
 //! Implementation of [`GroupComponent`], a component that acts as a group of other components.
 
 use super::ComponentIdentifier;
+use crate::mutex::Mutex;
 use crate::pipeline::graph::IdResolver;
 use crate::pipeline::prelude::*;
 use crate::pipeline::serialized::ComponentChannel as NameSource;
@@ -9,8 +10,8 @@ use crate::utils::{Configurable, Configure};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 use tracing::{error, warn};
 
 #[derive(Default)]

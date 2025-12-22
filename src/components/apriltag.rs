@@ -3,9 +3,9 @@
 use crate::apriltag;
 use crate::buffer::Buffer;
 use crate::camera::Camera;
+use crate::mutex::Mutex;
 use crate::pipeline::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use supply::ProviderExt;
 
 #[derive(Debug)]

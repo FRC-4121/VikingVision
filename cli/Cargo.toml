@@ -13,3 +13,6 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 viking-vision.workspace = true
+
+[features]
+debug-tools = ["viking-vision/debug-tools"]
