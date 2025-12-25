@@ -122,7 +122,12 @@ impl<T: MapElem> MapConfig<T> {
             }
             if finish {
                 let (name, mut state) = self.adding.take().unwrap();
-                let mut new = format!("\n\n[{}.{}]\n", self.prefix, name);
+                let mut encoding = None;
+                let mut new = format!(
+                    "\n\n[{}.{}]\n",
+                    self.prefix,
+                    format_key(&name, &mut encoding)
+                );
                 let end = edits.end();
                 let name_start = end + 4 + self.prefix.len();
                 let name_end = name_start + name.len();
@@ -133,7 +138,7 @@ impl<T: MapElem> MapConfig<T> {
                     name,
                     Box::new(ElemData {
                         elem: state,
-                        name_spans: vec![(Span::new_unchecked(name_start, name_end), None)],
+                        name_spans: vec![(Span::new_unchecked(name_start, name_end), encoding)],
                         val_spans: vec![Span::new_unchecked(end, end + len)],
                     }),
                 ));
