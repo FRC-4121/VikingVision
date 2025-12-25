@@ -1,0 +1,41 @@
+[ntable]
+host = "localhost"
+identity = "testing"
+
+[camera.video]
+type = "v4l"
+path = "/dev/video32" # the webcam for my laptop, the first 16 are something weird with my camera
+width = 640
+height = 480
+fourcc = "YUYV"
+fps = 30
+# output = "fps"
+outputs = ["fps", "save", "tags"]
+
+[camera.mono]
+type = "frame"
+width = 640
+height = 480
+color.format = "rgb"
+color.bytes = [255, 255, 0]
+outputs = ["fps", "save", "tags"]
+
+[component.fps]
+type = "fps"
+
+[component.tags]
+type = "apriltag"
+family = "tag36h11"
+
+[component.nt-fps]
+type = "ntable"
+prefix = "%N/fps"
+input.pretty = "fps.pretty"
+input.fps = "fps.fps"
+input.min = "fps.min"
+input.max = "fps.max"
+
+[component.nt-tags]
+type = "ntable"
+prefix = "%N"
+input.tags-found = "tags.found"
