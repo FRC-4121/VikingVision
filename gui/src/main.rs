@@ -5,6 +5,7 @@ use std::io;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+mod camera;
 mod dispatch;
 mod dyn_elem;
 mod edit;
@@ -24,7 +25,7 @@ struct VikingVision {
     editor: editor::EditorState,
     logs: trace::LogWidget,
     nt: nt::NtConfig,
-    cameras: map::MapConfig<()>,
+    cameras: map::MapConfig<dyn_elem::DynElemConfig<camera::CameraConfig>>,
     components: map::MapConfig<()>,
 }
 impl VikingVision {

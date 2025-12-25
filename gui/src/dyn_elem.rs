@@ -5,9 +5,43 @@ use eframe::egui;
 use toml_parser::decoder::{Encoding, ScalarKind};
 use toml_parser::{Raw, Span};
 
-pub trait DynElemType: map::MapElem {
+pub trait DynElemType {
+    type Visitor<'a>: for<'i> Visitor<'i> + 'a
+    where
+        Self: 'a;
+    fn add(&mut self, ui: &mut egui::Ui) -> bool;
+    fn finish(&mut self, new: &mut String);
+    fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits);
+    fn visit(&mut self) -> Self::Visitor<'_>;
     fn kinds() -> &'static [(&'static str, &'static str)];
     fn create(kind: usize) -> Self;
+}
+
+fn coalesce_spans(spans: &mut Vec<Span>, source: &str) {
+    if spans.len() < 2 {
+        return;
+    }
+    spans.reverse();
+    let mut write = 1;
+    for read in 1..spans.len() {
+        let new = spans[read];
+        let last = spans[write - 1];
+        if new.start() >= last.start() && new.end() <= last.end() {
+            // new is contained in last
+        } else if source
+            .get(new.end()..last.start())
+            .is_some_and(|s| s.bytes().all(|c| c.is_ascii_whitespace()))
+        {
+            // only whitespace between, merge our spans
+            spans[write - 1] = new.append(last);
+        } else {
+            // write this to the new position
+            spans[write] = new;
+            write += 1;
+        }
+    }
+    spans.truncate(write);
+    spans.reverse();
 }
 
 pub struct DynElemConfig<T> {
@@ -32,7 +66,7 @@ impl<T: DynElemType> map::MapElem for DynElemConfig<T> {
     where
         Self: 'a;
     fn add(&mut self, ui: &mut egui::Ui) -> bool {
-        self.select(ui);
+        self.select(ui, None);
         self.selected.as_mut().is_some_and(|c| c.add(ui))
     }
     fn finish(&mut self, new: &mut String) {
@@ -45,7 +79,7 @@ impl<T: DynElemType> map::MapElem for DynElemConfig<T> {
         self.selected.as_mut().unwrap().finish(new);
     }
     fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
-        if let Some(Some(_)) = self.select(ui) {
+        if let Some(Some(_)) = self.select(ui, Some(edits)) {
             edits.delete_all(self.spans.drain(..));
         }
         if let Some(inner) = &mut self.selected {
@@ -62,14 +96,23 @@ impl<T: DynElemType> map::MapElem for DynElemConfig<T> {
     }
 }
 impl<T: DynElemType> DynElemConfig<T> {
-    fn select(&mut self, ui: &mut egui::Ui) -> Option<Option<T>> {
+    fn select(&mut self, ui: &mut egui::Ui, edits: Option<&mut Edits>) -> Option<Option<T>> {
         let old = self.kind;
         let kinds = T::kinds();
-        egui::ComboBox::new("elem-type", "Type").show_index(ui, &mut self.kind, kinds.len(), |i| {
-            kinds.get(i).map_or("", |p| p.1)
-        });
-        (old != self.kind && self.kind < kinds.len())
-            .then(|| self.selected.replace(T::create(self.kind)))
+        egui::ComboBox::new(ui.next_auto_id(), "Type").show_index(
+            ui,
+            &mut self.kind,
+            kinds.len(),
+            |i| kinds.get(i).map_or("", |p| p.1),
+        );
+        (old != self.kind && self.kind < kinds.len()).then(|| {
+            if let Some(edits) = edits
+                && let Some((span, encoding)) = &mut self.kind_span
+            {
+                edits.replace(*span, format_string(kinds[self.kind].0, encoding));
+            }
+            self.selected.replace(T::create(self.kind))
+        })
     }
 }
 
@@ -206,6 +249,7 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
                 s == "type"
             };
             if is_type {
+                self.has_type = true;
                 if !matches!(self.visitor, VisitorPresence::Waiting) {
                     error.report_error(
                         ParseError::new("Duplicate key .type").with_context(k.span()),
@@ -214,8 +258,13 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
                     let mut s = String::new();
                     let _ = scalar.raw.decode_scalar(&mut s, &mut ());
                     let kinds = T::kinds();
+                    self.parent.kind_span = Some((
+                        scalar.raw.span(),
+                        scalar.raw.encoding().unwrap_or(Encoding::BasicString),
+                    ));
                     if let Some(kind) = kinds.iter().position(|k| s == k.0) {
                         if kind != self.parent.kind {
+                            self.parent.kind = kind;
                             self.parent.selected = Some(T::create(kind));
                         }
                         let Some(sel) = &mut self.parent.selected else {
@@ -253,7 +302,7 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
                         error
                             .report_error(ParseError::new(message).with_context(scalar.raw.span()));
                         self.parent.selected = None;
-                        self.has_type = true;
+                        self.visitor = VisitorPresence::Drop;
                     }
                 } else {
                     self.parent.kind = usize::MAX;
@@ -347,6 +396,7 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
         }
     }
     fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink) {
+        coalesce_spans(&mut self.parent.spans, source.input());
         match std::mem::replace(&mut self.visitor, VisitorPresence::Waiting) {
             VisitorPresence::Here(mut visitor) => {
                 visitor.finish(source, error);

@@ -1,10 +1,11 @@
 use crate::map::MapVisitor;
 use crate::nt::NtVisitor;
 use crate::visit::prelude::*;
+use crate::{camera, dyn_elem};
 
 pub struct DispatchVisitor<'a> {
     pub ntable: NtVisitor<'a>,
-    pub cameras: MapVisitor<'a, ()>,
+    pub cameras: MapVisitor<'a, dyn_elem::DynElemConfig<camera::CameraConfig>>,
     pub components: MapVisitor<'a, ()>,
 }
 impl<'i> Visitor<'i> for DispatchVisitor<'_> {
