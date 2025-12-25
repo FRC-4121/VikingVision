@@ -51,7 +51,7 @@ impl<'i> Visitor<'i> for LoggingVisitor<'_> {
     }
     fn accept_scalar(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
@@ -59,13 +59,13 @@ impl<'i> Visitor<'i> for LoggingVisitor<'_> {
         self.0.0.push(LogEntry("scalar", format!("{path} = {s}")));
         self.1.accept_scalar(path, scalar, error);
     }
-    fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_array(&mut self, path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         self.0.0.push(LogEntry("begin_array", path.to_string()));
         self.1.begin_array(path, error)
     }
     fn end_array(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
@@ -76,13 +76,13 @@ impl<'i> Visitor<'i> for LoggingVisitor<'_> {
         ));
         self.1.end_array(path, key, value, error);
     }
-    fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_table(&mut self, path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         self.0.0.push(LogEntry("begin_table", path.to_string()));
         self.1.begin_table(path, error)
     }
     fn end_table(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,

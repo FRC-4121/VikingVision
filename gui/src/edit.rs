@@ -54,7 +54,9 @@ impl Edits {
         let mut out = String::with_capacity(cap);
         let mut last = 0;
         for (old, new) in &self.edits {
-            out.push_str(&input[last..old.start()]);
+            if last < old.start() {
+                out.push_str(&input[last..old.start()]);
+            }
             out.push_str(new);
             last = old.end();
         }

@@ -6,6 +6,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 mod dispatch;
+mod dyn_elem;
 mod edit;
 mod editor;
 mod map;

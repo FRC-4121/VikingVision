@@ -162,7 +162,7 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
     }
     fn accept_scalar(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
@@ -319,12 +319,12 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
             _ => unreachable!("Only a table should be passed to this visitor"),
         }
     }
-    fn begin_array(&mut self, _path: RawsIter<'_, 'i>, _error: &mut dyn ErrorSink) -> bool {
+    fn begin_array(&mut self, _path: PathIter<'_, 'i>, _error: &mut dyn ErrorSink) -> bool {
         false
     }
     fn end_array(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
@@ -346,12 +346,12 @@ impl<'i> Visitor<'i> for NtVisitor<'_> {
             }
         }
     }
-    fn begin_table(&mut self, _path: RawsIter<'_, 'i>, _error: &mut dyn ErrorSink) -> bool {
+    fn begin_table(&mut self, _path: PathIter<'_, 'i>, _error: &mut dyn ErrorSink) -> bool {
         false
     }
     fn end_table(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,

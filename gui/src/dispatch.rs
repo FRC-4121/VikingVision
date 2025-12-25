@@ -10,7 +10,7 @@ pub struct DispatchVisitor<'a> {
 impl<'i> Visitor<'i> for DispatchVisitor<'_> {
     fn accept_scalar(
         &mut self,
-        mut path: RawsIter<'_, 'i>,
+        mut path: PathIter<'_, 'i>,
         scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
@@ -36,7 +36,7 @@ impl<'i> Visitor<'i> for DispatchVisitor<'_> {
             );
         }
     }
-    fn begin_array(&mut self, mut path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_array(&mut self, mut path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         if let Some(PathKind::Key(k)) = path.next() {
             path.clone().next().is_some()
                 && match k.as_str() {
@@ -49,7 +49,7 @@ impl<'i> Visitor<'i> for DispatchVisitor<'_> {
             false
         }
     }
-    fn begin_table(&mut self, mut path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_table(&mut self, mut path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         if let Some(PathKind::Key(k)) = path.next() {
             match k.as_str() {
                 "ntable" => {
@@ -84,7 +84,7 @@ impl<'i> Visitor<'i> for DispatchVisitor<'_> {
     }
     fn end_array(
         &mut self,
-        mut path: RawsIter<'_, 'i>,
+        mut path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
@@ -131,7 +131,7 @@ impl<'i> Visitor<'i> for DispatchVisitor<'_> {
     }
     fn end_table(
         &mut self,
-        mut path: RawsIter<'_, 'i>,
+        mut path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,

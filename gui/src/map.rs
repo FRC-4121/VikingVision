@@ -225,7 +225,7 @@ pub struct MapVisitor<'a, T: MapElem> {
 impl<'i, T: MapElem> Visitor<'i> for MapVisitor<'_, T> {
     fn accept_scalar(
         &mut self,
-        mut path: RawsIter<'_, 'i>,
+        mut path: PathIter<'_, 'i>,
         scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
@@ -245,7 +245,7 @@ impl<'i, T: MapElem> Visitor<'i> for MapVisitor<'_, T> {
             );
         }
     }
-    fn begin_array(&mut self, mut path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_array(&mut self, mut path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         if let Some(PathKind::Key(k)) = path.next()
             && path.clone().next().is_some()
         {
@@ -260,7 +260,7 @@ impl<'i, T: MapElem> Visitor<'i> for MapVisitor<'_, T> {
     }
     fn end_array(
         &mut self,
-        mut path: RawsIter<'_, 'i>,
+        mut path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
@@ -280,7 +280,7 @@ impl<'i, T: MapElem> Visitor<'i> for MapVisitor<'_, T> {
             );
         }
     }
-    fn begin_table(&mut self, mut path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_table(&mut self, mut path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         if let Some(PathKind::Key(k)) = path.next() {
             if path.clone().next().is_some() {
                 self.visitors
@@ -317,7 +317,7 @@ impl<'i, T: MapElem> Visitor<'i> for MapVisitor<'_, T> {
     }
     fn end_table(
         &mut self,
-        mut path: RawsIter<'_, 'i>,
+        mut path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,

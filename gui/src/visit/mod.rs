@@ -5,7 +5,7 @@ use toml_parser::{ErrorSink, ParseError, Raw, Source, Span};
 
 pub mod log;
 pub mod prelude {
-    pub use super::{PathKind, RawsIter, ScalarInfo, Visitor};
+    pub use super::{PathIter, PathKind, ScalarInfo, Visitor};
     pub use toml_parser::{ErrorSink, ParseError, Source, Span};
 }
 
@@ -20,22 +20,22 @@ pub trait Visitor<'i> {
     fn end_def(&mut self, key: Span, value: Span) {}
     fn accept_scalar(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     );
-    fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
+    fn begin_array(&mut self, path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
     fn end_array(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
     );
-    fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
+    fn begin_table(&mut self, path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool;
     fn end_table(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
@@ -48,28 +48,28 @@ impl<'i> Visitor<'i> for () {
     fn begin_def(&mut self, def: Span) {}
     fn accept_scalar(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         scalar: ScalarInfo<'i>,
         error: &mut dyn ErrorSink,
     ) {
     }
-    fn begin_array(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_array(&mut self, path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         true
     }
     fn end_array(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
     ) {
     }
-    fn begin_table(&mut self, path: RawsIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
+    fn begin_table(&mut self, path: PathIter<'_, 'i>, error: &mut dyn ErrorSink) -> bool {
         true
     }
     fn end_table(
         &mut self,
-        path: RawsIter<'_, 'i>,
+        path: PathIter<'_, 'i>,
         key: Span,
         value: Span,
         error: &mut dyn ErrorSink,
@@ -78,6 +78,7 @@ impl<'i> Visitor<'i> for () {
     fn finish(&mut self, source: Source<'i>, error: &mut dyn ErrorSink) {}
 }
 
+#[derive(Clone, Copy)]
 enum PathElemKind {
     Key,
     Table,
@@ -85,6 +86,7 @@ enum PathElemKind {
     ArrayStart,
 }
 
+#[derive(Clone, Copy)]
 struct PathElem {
     span: Span,
     kind: PathElemKind,
@@ -129,7 +131,7 @@ impl<'a, 'i> Receiver<'a, 'i> {
                     self.skip_depth = 0;
                 }
                 if self.skip_depth == 0 && matches!(kind, PathElemKind::Key) {
-                    let path = RawsIter {
+                    let path = PathIter {
                         source: self.source,
                         iter: self.path.iter(),
                     };
@@ -155,7 +157,7 @@ impl<'a, 'i> Receiver<'a, 'i> {
                     })
                 )
             {
-                let path = RawsIter {
+                let path = PathIter {
                     source: self.source,
                     iter: self.path.iter(),
                 };
@@ -211,7 +213,7 @@ impl EventReceiver for Receiver<'_, '_> {
             span,
             kind: PathElemKind::InlineStart,
         });
-        let path = RawsIter {
+        let path = PathIter {
             source: self.source,
             iter: self.path[..len].iter(),
         };
@@ -228,7 +230,7 @@ impl EventReceiver for Receiver<'_, '_> {
                     span: start,
                     kind: PathElemKind::InlineStart,
                 }) => {
-                    let path = RawsIter {
+                    let path = PathIter {
                         source: self.source,
                         iter: self.path.iter(),
                     };
@@ -258,7 +260,7 @@ impl EventReceiver for Receiver<'_, '_> {
             span,
             kind: PathElemKind::ArrayStart,
         });
-        let path = RawsIter {
+        let path = PathIter {
             source: self.source,
             iter: self.path[..len].iter(),
         };
@@ -275,7 +277,7 @@ impl EventReceiver for Receiver<'_, '_> {
                     span: start,
                     kind: PathElemKind::ArrayStart,
                 }) => {
-                    let path = RawsIter {
+                    let path = PathIter {
                         source: self.source,
                         iter: self.path.iter(),
                     };
@@ -326,7 +328,7 @@ impl EventReceiver for Receiver<'_, '_> {
                     return;
                 }
             }
-            let path = RawsIter {
+            let path = PathIter {
                 source: self.source,
                 iter: slice.iter(),
             };
@@ -342,7 +344,7 @@ impl EventReceiver for Receiver<'_, '_> {
         let scalar = Raw::new_unchecked(raw, kind, span);
         let kind = scalar.decode_scalar(&mut (), error);
         if self.skip_depth == 0 {
-            let path = RawsIter {
+            let path = PathIter {
                 source: self.source,
                 iter: self.path.iter(),
             };
@@ -366,11 +368,22 @@ pub enum PathKind<'i> {
 }
 
 #[derive(Clone)]
-pub struct RawsIter<'a, 'i> {
+pub struct PathIter<'a, 'i> {
     source: Source<'i>,
     iter: std::slice::Iter<'a, PathElem>,
 }
-impl<'i> Iterator for RawsIter<'_, 'i> {
+impl<'i> PathIter<'_, 'i> {
+    pub fn source(&self) -> Source<'i> {
+        self.source
+    }
+    pub fn to_toml_path(&self) -> TomlPath {
+        TomlPath(self.iter.as_slice().to_vec())
+    }
+    pub fn raw_len(&self) -> usize {
+        self.iter.len()
+    }
+}
+impl<'i> Iterator for PathIter<'_, 'i> {
     type Item = PathKind<'i>;
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.find_map(|e| match e.kind {
@@ -379,13 +392,16 @@ impl<'i> Iterator for RawsIter<'_, 'i> {
             _ => None,
         })
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.iter.len()))
+    }
 }
-impl Debug for RawsIter<'_, '_> {
+impl Debug for PathIter<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawsIter").finish_non_exhaustive()
     }
 }
-impl Display for RawsIter<'_, '_> {
+impl Display for PathIter<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for elem in self.clone() {
             match elem {
@@ -394,5 +410,19 @@ impl Display for RawsIter<'_, '_> {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct TomlPath(Vec<PathElem>);
+impl TomlPath {
+    pub fn iter<'i>(&self, source: Source<'i>) -> PathIter<'_, 'i> {
+        PathIter {
+            source,
+            iter: self.0.iter(),
+        }
+    }
+    pub fn raw_len(&self) -> usize {
+        self.0.len()
     }
 }
