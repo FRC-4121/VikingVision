@@ -39,24 +39,21 @@ impl NtConfig {
     pub fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
         if let Some(inner) = &mut self.inner {
             if ui.button("Delete").clicked() {
-                edits.extend(inner.spans.drain(..).map(|s| (s, "")));
+                edits.delete_all(inner.spans.drain(..));
                 return;
             }
             if let Some(id) = &mut inner.identity {
                 ui.horizontal(|ui| {
                     ui.label("Identity: ");
                     if ui.text_edit_singleline(&mut id.identity).changed() {
-                        edits.add(id.id_span, format_string(&id.identity, &mut id.id_enc));
+                        edits.replace(id.id_span, format_string(&id.identity, &mut id.id_enc));
                     }
                 });
             } else {
                 ui.horizontal(|ui| {
                     ui.label("Identity not present!");
                     if ui.button("Add").clicked() {
-                        edits.add(
-                            Span::new_unchecked(0, 0),
-                            "ntable.identity = \"vv-client\"\n",
-                        );
+                        edits.insert(0, "ntable.identity = \"vv-client\"\n");
                     }
                 });
             }
@@ -74,12 +71,12 @@ impl NtConfig {
                         host_changed = true;
                         host.kind =
                             HostKind::Host(team.to_ipv4().to_string(), Encoding::BasicString);
-                        edits.add(host.path, "host");
+                        edits.replace(host.path, "host");
                     }
                     (HostKind::Team(None), true) => {
                         host_changed = true;
                         host.kind = HostKind::Host("localhost".to_string(), Encoding::BasicString);
-                        edits.add(host.path, "host");
+                        edits.replace(host.path, "host");
                     }
                     (HostKind::Host(hostname, _), false) => {
                         host_changed = true;
@@ -92,7 +89,7 @@ impl NtConfig {
                             self.host_err = None;
                             host.kind = HostKind::Team(Some(TeamNumber::new_unchecked(0)));
                         }
-                        edits.add(host.path, "team");
+                        edits.replace(host.path, "team");
                     }
                     _ => {}
                 }
@@ -117,7 +114,7 @@ impl NtConfig {
                     }
                 }
                 if host_changed {
-                    edits.add(
+                    edits.replace(
                         host.span,
                         match host.kind {
                             HostKind::Host(ref hn, ref mut enc) => format_string(hn, enc),
@@ -129,15 +126,15 @@ impl NtConfig {
                 ui.horizontal(|ui| {
                     ui.label("Identity not present!");
                     if ui.button("Add").clicked() {
-                        edits.add(Span::new_unchecked(0, 0), "ntable.host = \"localhost\"\n");
+                        edits.insert(0, "ntable.host = \"localhost\"\n");
                     }
                 });
             }
         } else {
             ui.label("NetworkTables not present in this file!");
             if ui.button("Add to file").clicked() {
-                edits.add(
-                    Span::new_unchecked(0, 0),
+                edits.insert(
+                    0,
                     "[ntable]\nidentity = \"vv-client\"\nhost = \"localhost\"\n",
                 );
             }

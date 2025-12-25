@@ -33,6 +33,7 @@ pub struct EditorState {
     show_confirm: Option<ConfirmReason>,
     events: log::LoggedEvents,
     last_saved: Option<time::Time>,
+    edits: edit::Edits,
 }
 impl EditorState {
     pub fn load(storage: Option<&dyn eframe::Storage>) -> Self {
@@ -89,6 +90,7 @@ impl EditorState {
             }
         }
         EditorState {
+            edits: edit::Edits::new(contents.len()),
             contents,
             loaded,
             file,
@@ -102,6 +104,9 @@ impl EditorState {
             events: log::LoggedEvents::new(),
             last_saved,
         }
+    }
+    pub fn edit(&mut self) -> &mut edit::Edits {
+        &mut self.edits
     }
     pub fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if !self.contents_persisted {
@@ -255,6 +260,10 @@ impl EditorState {
         });
     }
     pub fn in_left(&mut self, visit: &mut dyn for<'i> Visitor<'i>, ui: &mut egui::Ui) {
+        if !self.edits.is_empty() {
+            self.contents = self.edits.apply(&self.contents);
+            self.contents_persisted = false;
+        }
         ui.heading("Editor");
         if self.loaded.as_os_str().is_empty() {
             ui.label("No file open");
@@ -301,6 +310,7 @@ impl EditorState {
             self.contents_persisted = false;
             self.saved = false;
         }
+        self.edits = edit::Edits::new(self.contents.len());
     }
     pub fn poll_futures(&mut self) {
         let mut cx = Context::from_waker(Waker::noop());
@@ -374,12 +384,6 @@ impl EditorState {
                     }
                 }
             }
-        }
-    }
-    pub fn apply_edits(&mut self, edits: &edit::Edits) {
-        if !edits.is_empty() {
-            self.contents = edits.apply(&self.contents);
-            self.contents_persisted = false;
         }
     }
 }

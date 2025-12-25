@@ -22,7 +22,6 @@ fn now() -> time::OffsetDateTime {
 struct VikingVision {
     editor: editor::EditorState,
     logs: trace::LogWidget,
-    edits: edit::Edits,
     nt: nt::NtConfig,
     cameras: map::MapConfig<()>,
     components: map::MapConfig<()>,
@@ -33,7 +32,6 @@ impl VikingVision {
         Ok(Self {
             editor,
             logs,
-            edits: edit::Edits::default(),
             nt: Default::default(),
             cameras: Default::default(),
             components: Default::default(),
@@ -82,17 +80,15 @@ impl App for VikingVision {
         });
         egui::SidePanel::right("options").show(ctx, |ui| {
             ui.collapsing(egui::RichText::new("NetworkTables").heading(), |ui| {
-                self.nt.show(ui, &mut self.edits);
+                self.nt.show(ui, self.editor.edit());
             });
             ui.collapsing(egui::RichText::new("Cameras").heading(), |ui| {
-                self.cameras.show(ui, &mut self.edits);
+                self.cameras.show(ui, self.editor.edit());
             });
             ui.collapsing(egui::RichText::new("Components").heading(), |ui| {
-                self.components.show(ui, &mut self.edits);
+                self.components.show(ui, self.editor.edit());
             });
         });
-        self.editor.apply_edits(&self.edits);
-        self.edits.clear();
         egui::SidePanel::left("editor").show(ctx, |ui| {
             self.editor.in_left(
                 &mut dispatch::DispatchVisitor {
