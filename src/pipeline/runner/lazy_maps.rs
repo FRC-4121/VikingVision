@@ -1,4 +1,4 @@
-//! Lazy collections for the inputs and outputs of compoennts.
+//! Lazy collections for the inputs and outputs of components.
 //!
 //! All of these types are thin wrappers around references and are therefore cheap to
 //! construct and copy.
