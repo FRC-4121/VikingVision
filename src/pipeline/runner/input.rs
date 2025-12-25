@@ -157,7 +157,7 @@ impl PipelineRunner {
         let data = &self.components[component.index()];
         match &data.input_mode {
             InputMode::Single { name, .. } => {
-                let name = name.as_deref().ok_or(PackArgsError::ExpectingPrimary)?;
+                let (name, _) = name.as_ref().ok_or(PackArgsError::ExpectingPrimary)?;
                 input
                     .get(name)
                     .ok_or(PackArgsError::MissingInput(name))

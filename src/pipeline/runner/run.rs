@@ -209,7 +209,7 @@ pub(crate) struct MutableData {
 #[derive(Debug)]
 pub(crate) enum InputMode {
     Single {
-        name: Option<SmolStr>,
+        name: Option<(SmolStr, bool)>,
     },
     Multiple {
         lookup: HashMap<SmolStr, InputIndex>,

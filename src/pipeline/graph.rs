@@ -818,9 +818,14 @@ impl PipelineGraph {
                                 multi: Some(MultiData { chan, .. }),
                                 broadcast,
                             } => {
-                                if single.is_empty() {
+                                if !matches!(broadcast, BroadcastMode::FullTree)
+                                    && single.is_empty()
+                                {
                                     runner::InputMode::Single {
-                                        name: Some(chan.clone()),
+                                        name: Some((
+                                            chan.clone(),
+                                            !matches!(broadcast, BroadcastMode::Broadcast),
+                                        )),
                                     }
                                 } else {
                                     runner::InputMode::Multiple {
@@ -834,9 +839,14 @@ impl PipelineGraph {
                             InputKind::Multiple {
                                 single, broadcast, ..
                             } => {
-                                if let [(name, _)] = &**single {
+                                if !matches!(broadcast, BroadcastMode::FullTree)
+                                    && let [(chan, _)] = &**single
+                                {
                                     runner::InputMode::Single {
-                                        name: Some(name.clone()),
+                                        name: Some((
+                                            chan.clone(),
+                                            !matches!(broadcast, BroadcastMode::Broadcast),
+                                        )),
                                     }
                                 } else {
                                     runner::InputMode::Multiple {
