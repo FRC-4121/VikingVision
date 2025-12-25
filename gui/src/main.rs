@@ -82,12 +82,21 @@ impl App for VikingVision {
             ui.collapsing(egui::RichText::new("NetworkTables").heading(), |ui| {
                 self.nt.show(ui, self.editor.edit());
             });
-            ui.collapsing(egui::RichText::new("Cameras").heading(), |ui| {
-                self.cameras.show(ui, self.editor.edit());
-            });
-            ui.collapsing(egui::RichText::new("Components").heading(), |ui| {
-                self.components.show(ui, self.editor.edit());
-            });
+            let heading =
+                egui::RichText::new(format!("Cameras ({})", self.cameras.elems().len())).heading();
+            egui::CollapsingHeader::new(heading)
+                .id_salt("Cameras")
+                .show(ui, |ui| {
+                    self.cameras.show(ui, self.editor.edit());
+                });
+            let heading =
+                egui::RichText::new(format!("Components ({})", self.components.elems().len()))
+                    .heading();
+            egui::CollapsingHeader::new(heading)
+                .id_salt("Components")
+                .show(ui, |ui| {
+                    self.components.show(ui, self.editor.edit());
+                });
         });
         egui::SidePanel::left("editor").show(ctx, |ui| {
             self.editor.in_left(

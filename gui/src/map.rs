@@ -28,8 +28,8 @@ impl MapElem for () {
 }
 
 #[derive(Default)]
-struct ElemData<T> {
-    elem: T,
+pub struct ElemData<T> {
+    pub elem: T,
     name_spans: Vec<(Span, Option<Encoding>)>,
     val_spans: Vec<Span>,
 }
@@ -73,6 +73,9 @@ impl<T: MapElem> MapConfig<T> {
             names: Vec::new(),
             adding: None,
         }
+    }
+    pub fn elems(&self) -> &[(String, Box<ElemData<T>>)] {
+        &self.elems
     }
     pub fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
         {
