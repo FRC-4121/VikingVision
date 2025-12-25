@@ -1056,13 +1056,26 @@ impl PipelineGraph {
             }
         }
 
-        // make the tree shapes of multi-input components cumulative
+        // make the tree shapes of multi-input components cumulative and check to see if we can optimize single-input full-trees to single-inputs
         for comp in &mut components {
-            if let runner::InputMode::Multiple { tree_shape, .. } = &mut comp.input_mode {
-                let mut last = 0;
-                for elem in tree_shape.iter_mut().rev() {
-                    last += *elem;
-                    *elem = last;
+            if let runner::InputMode::Multiple {
+                tree_shape,
+                lookup,
+                broadcast,
+                ..
+            } = &mut comp.input_mode
+            {
+                if lookup.len() == 1 && *broadcast == Some(0) {
+                    let name = std::mem::take(lookup).into_keys().next().unwrap();
+                    comp.input_mode = runner::InputMode::Single {
+                        name: Some((name, true)),
+                    };
+                } else {
+                    let mut last = 0;
+                    for elem in tree_shape.iter_mut().rev() {
+                        last += *elem;
+                        *elem = last;
+                    }
                 }
             }
         }
