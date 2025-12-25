@@ -83,8 +83,7 @@ impl LogWidget {
             .column(egui_extras::Column::initial(250.0).clip(true))
             .column(egui_extras::Column::initial(50.0))
             .column(egui_extras::Column::initial(100.0).clip(true))
-            .column(egui_extras::Column::remainder().clip(true))
-            .column(egui_extras::Column::exact(20.0))
+            .column(egui_extras::Column::remainder())
             .auto_shrink(false);
         if bottom {
             builder = builder.vertical_scroll_offset(100000.0);
@@ -220,47 +219,55 @@ impl LogWidget {
                     );
                 });
                 row.col(|ui| {
-                    let message = entry
-                        .fields
-                        .iter()
-                        .find(|e| e.0 == "message")
-                        .map_or("", |e| &e.1);
-                    ui.label(message);
-                });
-                row.col(|ui| {
-                    let button = ui.button("\u{2139}");
-                    egui::Popup::from_toggle_button_response(&button)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            // ui.set_width(100.0);
-                            ui.horizontal(|ui| {
-                                ui.label("Target: ");
-                                ui.label(
-                                    egui::RichText::new(&*entry.target)
-                                        .monospace()
-                                        .color(ui.style().visuals.weak_text_color()),
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Time: ");
-                                ui.label(time);
-                            });
-                            egui_extras::TableBuilder::new(ui)
-                                .column(egui_extras::Column::initial(100.0).clip(true))
-                                .column(egui_extras::Column::remainder().clip(true))
-                                .body(|mut body| {
-                                    for (field, val) in &entry.fields {
-                                        body.row(height, |mut row| {
-                                            row.col(|ui| {
-                                                ui.label(egui::RichText::new(*field).monospace());
-                                            });
-                                            row.col(|ui| {
-                                                ui.label(egui::RichText::new(val).monospace());
-                                            });
+                    ui.horizontal(|ui| {
+                        let message = entry
+                            .fields
+                            .iter()
+                            .find(|e| e.0 == "message")
+                            .map_or("", |e| &e.1);
+                        // egui::ScrollArea::both().show(ui, |ui| ui.label(message));
+                        let mut rect = ui.available_rect_before_wrap();
+                        *rect.right_mut() -= 20.0;
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                            ui.label(message);
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            let button = ui.button("\u{2139}");
+                            egui::Popup::from_toggle_button_response(&button)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                .show(|ui| {
+                                    // ui.set_width(100.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label("Target: ");
+                                        ui.label(
+                                            egui::RichText::new(&*entry.target)
+                                                .monospace()
+                                                .color(ui.style().visuals.weak_text_color()),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Time: ");
+                                        ui.label(time);
+                                    });
+                                    egui_extras::TableBuilder::new(ui)
+                                        .column(egui_extras::Column::initial(100.0).clip(true))
+                                        .column(egui_extras::Column::remainder().clip(true))
+                                        .body(|mut body| {
+                                            for (field, val) in &entry.fields {
+                                                body.row(height, |mut row| {
+                                                    row.col(|ui| {
+                                                        ui.label(egui::RichText::new(*field).monospace());
+                                                    });
+                                                    row.col(|ui| {
+                                                        ui.label(egui::RichText::new(val).monospace());
+                                                    });
+                                                });
+                                            }
                                         });
-                                    }
                                 });
                         });
+                    });
                 });
             });
         });
