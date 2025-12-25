@@ -50,7 +50,15 @@ impl NtConfig {
                     }
                 });
             } else {
-                ui.label("Identity not present!");
+                ui.horizontal(|ui| {
+                    ui.label("Identity not present!");
+                    if ui.button("Add").clicked() {
+                        edits.add(
+                            Span::new_unchecked(0, 0),
+                            "ntable.identity = \"vv-client\"\n",
+                        );
+                    }
+                });
             }
             if let Some(host) = &mut inner.host {
                 let mut host_changed = false;
@@ -117,10 +125,22 @@ impl NtConfig {
                         },
                     );
                 }
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label("Identity not present!");
+                    if ui.button("Add").clicked() {
+                        edits.add(Span::new_unchecked(0, 0), "ntable.host = \"localhost\"\n");
+                    }
+                });
             }
         } else {
             ui.label("NetworkTables not present in this file!");
-            let _ = ui.button("Add to file");
+            if ui.button("Add to file").clicked() {
+                edits.add(
+                    Span::new_unchecked(0, 0),
+                    "[ntable]\nidentity = \"vv-client\"\nhost = \"localhost\"\n",
+                );
+            }
         }
     }
     pub fn visitor(&mut self) -> NtVisitor<'_> {
