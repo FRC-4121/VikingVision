@@ -12,6 +12,8 @@ pub mod prelude {
 pub struct ScalarInfo<'i> {
     pub raw: Raw<'i>,
     pub kind: ScalarKind,
+    pub source: Source<'i>,
+    pub full: Span,
 }
 
 #[allow(unused_variables)]
@@ -117,6 +119,19 @@ impl<'a, 'i> Receiver<'a, 'i> {
         self.array_table_close(span, error);
         self.std_table_close(span, error);
     }
+    fn line_start(&self) -> Span {
+        let mut it = self.path.iter();
+        let first = it.next().unwrap();
+        while it
+            .next()
+            .is_some_and(|i| !matches!(i.kind, PathElemKind::Table))
+        {}
+        if let Some(elem) = it.next() {
+            elem.span
+        } else {
+            first.span
+        }
+    }
     fn close_table(&mut self, span: Span, error: &mut dyn ErrorSink) {
         if let Some(start) = self.outer_table_start.take() {
             let value = start.append(span);
@@ -142,6 +157,7 @@ impl<'a, 'i> Receiver<'a, 'i> {
         }
     }
     fn close_keys(&mut self, span: Span, error: &mut dyn ErrorSink) {
+        let value = self.line_start().append(span);
         while let Some(PathElem { span: start, .. }) =
             self.path.pop_if(|e| matches!(e.kind, PathElemKind::Key))
         {
@@ -161,14 +177,7 @@ impl<'a, 'i> Receiver<'a, 'i> {
                     source: self.source,
                     iter: self.path.iter(),
                 };
-                self.visitor.end_table(
-                    path,
-                    start,
-                    self.path
-                        .first()
-                        .map_or(span, |start| start.span.append(span)),
-                    error,
-                );
+                self.visitor.end_table(path, start, value, error);
             }
         }
     }
@@ -348,8 +357,16 @@ impl EventReceiver for Receiver<'_, '_> {
                 source: self.source,
                 iter: self.path.iter(),
             };
-            self.visitor
-                .accept_scalar(path, ScalarInfo { raw: scalar, kind }, error);
+            self.visitor.accept_scalar(
+                path,
+                ScalarInfo {
+                    raw: scalar,
+                    kind,
+                    source: self.source,
+                    full: self.line_start().append(span),
+                },
+                error,
+            );
         }
         self.close_keys(span, error);
     }
