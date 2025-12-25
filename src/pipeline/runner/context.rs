@@ -17,300 +17,6 @@ pub(super) enum InputKind {
     Multiple(SmallVec<[u32; 2]>),
 }
 
-/// Definitions for lazy input and listener maps
-pub mod lazy_maps {
-    use super::{InputIndex, RunnerComponentId};
-    use smol_str::SmolStr;
-    use std::borrow::Borrow;
-    use std::collections::hash_map::*;
-    use std::fmt::{self, Debug, Formatter};
-    use std::hash::Hash;
-
-    #[derive(Clone, Copy)]
-    pub(super) enum InputSetInner<'r> {
-        Primary,
-        SingleNamed(&'r SmolStr),
-        Map(&'r HashMap<SmolStr, InputIndex>),
-    }
-    #[derive(Clone)]
-    enum InputSetIterInner<'r> {
-        Empty,
-        One(&'r SmolStr),
-        Many(Keys<'r, SmolStr, InputIndex>),
-    }
-
-    /// The iterator returned from all of the iterator methods for [`InputSet`]
-    #[derive(Clone)]
-    pub struct InputSetIter<'r>(InputSetIterInner<'r>);
-    impl<'r> Iterator for InputSetIter<'r> {
-        type Item = &'r SmolStr;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            match &mut self.0 {
-                InputSetIterInner::Empty => None,
-                InputSetIterInner::One(v) => {
-                    let out = *v;
-                    self.0 = InputSetIterInner::Empty;
-                    Some(out)
-                }
-                InputSetIterInner::Many(it) => it.next(),
-            }
-        }
-        fn size_hint(&self) -> (usize, Option<usize>) {
-            let len = self.len();
-            (len, Some(len))
-        }
-    }
-    impl<'r> ExactSizeIterator for InputSetIter<'r> {
-        fn len(&self) -> usize {
-            match &self.0 {
-                InputSetIterInner::Empty => 0,
-                InputSetIterInner::One(_) => 1,
-                InputSetIterInner::Many(it) => it.len(),
-            }
-        }
-    }
-    impl<'r> std::iter::FusedIterator for InputSetIter<'r> {}
-
-    /// A lazy set of inputs for a component.
-    ///
-    /// This doesn't allocate, it borrows from the runner.
-    #[derive(Clone, Copy)]
-    pub struct InputSet<'r>(pub(super) InputSetInner<'r>);
-    impl<'r> InputSet<'r> {
-        pub fn contains<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> bool
-        where
-            SmolStr: Borrow<Q>,
-        {
-            match &self.0 {
-                InputSetInner::Primary => false,
-                InputSetInner::SingleNamed(v) => Borrow::<Q>::borrow(*v) == chan,
-                InputSetInner::Map(m) => m.contains_key(chan),
-            }
-        }
-        pub fn iter(&self) -> InputSetIter<'r> {
-            InputSetIter(match &self.0 {
-                InputSetInner::Primary => InputSetIterInner::Empty,
-                InputSetInner::SingleNamed(v) => InputSetIterInner::One(v),
-                InputSetInner::Map(m) => InputSetIterInner::Many(m.keys()),
-            })
-        }
-        pub fn len(&self) -> usize {
-            match &self.0 {
-                InputSetInner::Primary => 0,
-                InputSetInner::SingleNamed(_) => 1,
-                InputSetInner::Map(m) => m.len(),
-            }
-        }
-        pub fn is_empty(&self) -> bool {
-            self.len() == 0
-        }
-        /// An input set can be empty either because no named inputs were passed or because it takes a single primary input.
-        ///
-        /// This can be used to check which reason it is.
-        pub fn is_primary(&self) -> bool {
-            matches!(self.0, InputSetInner::Primary)
-        }
-    }
-    impl<'r> IntoIterator for InputSet<'r> {
-        type IntoIter = InputSetIter<'r>;
-        type Item = &'r SmolStr;
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.iter()
-        }
-    }
-    impl<'r> IntoIterator for &InputSet<'r> {
-        type IntoIter = InputSetIter<'r>;
-        type Item = &'r SmolStr;
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.iter()
-        }
-    }
-    impl Debug for InputSet<'_> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            f.debug_set().entries(self.iter()).finish()
-        }
-    }
-
-    /// The iterator returned from [`ListenerMap::iter`] and the [`IntoIterator`] implementations
-    #[derive(Clone)]
-    pub struct ListenerMapIter<'r>(
-        Iter<'r, SmolStr, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
-    );
-    impl<'r> Iterator for ListenerMapIter<'r> {
-        type Item = (&'r SmolStr, usize);
-
-        fn next(&mut self) -> Option<Self::Item> {
-            self.0.next().map(|(k, v)| (k, v.len()))
-        }
-        fn size_hint(&self) -> (usize, Option<usize>) {
-            self.0.size_hint()
-        }
-    }
-    impl<'r> ExactSizeIterator for ListenerMapIter<'r> {
-        fn len(&self) -> usize {
-            self.0.len()
-        }
-    }
-    impl<'r> std::iter::FusedIterator for ListenerMapIter<'r> {}
-
-    /// The iterator returned from [`ListenerMap::keys`]
-    #[derive(Clone)]
-    pub struct ListenerMapKeys<'r>(
-        Keys<'r, SmolStr, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
-    );
-    impl<'r> Iterator for ListenerMapKeys<'r> {
-        type Item = &'r SmolStr;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            self.0.next()
-        }
-        fn size_hint(&self) -> (usize, Option<usize>) {
-            self.0.size_hint()
-        }
-    }
-    impl<'r> ExactSizeIterator for ListenerMapKeys<'r> {
-        fn len(&self) -> usize {
-            self.0.len()
-        }
-    }
-    impl<'r> std::iter::FusedIterator for ListenerMapKeys<'r> {}
-
-    /// A map of how many listeners are on each output channel of a component
-    ///
-    /// This borrows from the pipeline runner to avoid allocation. The value type
-    /// is the number of listeners, but since it's lazy, this can't implement [`Index`](std::ops::Index).
-    #[derive(Clone, Copy)]
-    pub struct ListenerMap<'r>(
-        pub(super) &'r HashMap<SmolStr, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
-    );
-    impl<'r> ListenerMap<'r> {
-        pub fn iter(&self) -> ListenerMapIter<'r> {
-            ListenerMapIter(self.0.iter())
-        }
-        pub fn keys(&self) -> ListenerMapKeys<'r> {
-            ListenerMapKeys(self.0.keys())
-        }
-        pub fn contains_key<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> bool
-        where
-            SmolStr: Borrow<Q>,
-        {
-            self.0.contains_key(chan)
-        }
-        pub fn get<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> Option<usize>
-        where
-            SmolStr: Borrow<Q>,
-        {
-            self.0.get(chan).map(Vec::len)
-        }
-        pub fn len(&self) -> usize {
-            self.0.len()
-        }
-        pub fn is_empty(&self) -> bool {
-            self.len() == 0
-        }
-    }
-    impl<'r> IntoIterator for ListenerMap<'r> {
-        type IntoIter = ListenerMapIter<'r>;
-        type Item = (&'r SmolStr, usize);
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.iter()
-        }
-    }
-    impl<'r> IntoIterator for &ListenerMap<'r> {
-        type IntoIter = ListenerMapIter<'r>;
-        type Item = (&'r SmolStr, usize);
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.iter()
-        }
-    }
-    impl Debug for ListenerMap<'_> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            f.debug_map().entries(self.iter()).finish()
-        }
-    }
-
-    /// The iterator returned from [`InputIndexMap::iter`]
-    #[derive(Clone)]
-    pub struct InputIndexMapIter<'r>(Iter<'r, SmolStr, InputIndex>, u32);
-    impl<'r> Iterator for InputIndexMapIter<'r> {
-        type Item = (&'r SmolStr, InputIndex);
-        fn next(&mut self) -> Option<Self::Item> {
-            self.0
-                .next()
-                .map(|(k, InputIndex(r, c))| (k, InputIndex(r - self.1, *c)))
-        }
-        fn size_hint(&self) -> (usize, Option<usize>) {
-            self.0.size_hint()
-        }
-    }
-    impl<'r> ExactSizeIterator for InputIndexMapIter<'r> {
-        fn len(&self) -> usize {
-            self.0.len()
-        }
-    }
-    impl<'r> std::iter::FusedIterator for InputIndexMapIter<'r> {}
-
-    /// A map of input channels to [`InputIndex`]es that can be used on an input tree.
-    ///
-    /// This doesn't allocate, and borrows from the runner.
-    #[derive(Clone, Copy)]
-    pub struct InputIndexMap<'r>(pub(super) &'r HashMap<SmolStr, InputIndex>, pub(super) u32);
-    impl<'r> InputIndexMap<'r> {
-        pub fn iter(&self) -> InputIndexMapIter<'r> {
-            InputIndexMapIter(self.0.iter(), self.1)
-        }
-        pub fn keys(&self) -> Keys<'r, SmolStr, InputIndex> {
-            self.0.keys()
-        }
-        pub fn contains_key<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> bool
-        where
-            SmolStr: Borrow<Q>,
-        {
-            self.0.contains_key(chan)
-        }
-        pub fn get<Q: Hash + Eq + ?Sized>(&self, chan: &Q) -> Option<InputIndex>
-        where
-            SmolStr: Borrow<Q>,
-        {
-            self.0
-                .get(chan)
-                .map(|InputIndex(t, c)| InputIndex(t - self.1, *c))
-        }
-        pub fn len(&self) -> usize {
-            self.0.len()
-        }
-        pub fn is_empty(&self) -> bool {
-            self.len() == 0
-        }
-    }
-    impl<'r> IntoIterator for InputIndexMap<'r> {
-        type IntoIter = InputIndexMapIter<'r>;
-        type Item = (&'r SmolStr, InputIndex);
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.iter()
-        }
-    }
-    impl<'r> IntoIterator for &InputIndexMap<'r> {
-        type IntoIter = InputIndexMapIter<'r>;
-        type Item = (&'r SmolStr, InputIndex);
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.iter()
-        }
-    }
-    impl Debug for InputIndexMap<'_> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            f.debug_map().entries(self.iter()).finish()
-        }
-    }
-}
-
 /// Core context used to get input and submit output from a component body.
 ///
 /// This contains all of the core functionality, but [`ComponentContext`] is often more convenient
@@ -376,32 +82,25 @@ impl<'r> ComponentContextInner<'r> {
         self.callback.is_none()
     }
 
-    /// Get the set of inputs for this component
+    /// Get the set of inputs for this component.
+    ///
+    /// See [`ComponentData::available_inputs`].
     pub fn available_inputs(&self) -> lazy_maps::InputSet<'r> {
-        let inner = match &self.component.input_mode {
-            InputMode::Single { name: None, .. } => lazy_maps::InputSetInner::Primary,
-            InputMode::Single { name: Some(v), .. } => lazy_maps::InputSetInner::SingleNamed(v),
-            InputMode::Multiple { lookup, .. } => lazy_maps::InputSetInner::Map(lookup),
-        };
-        lazy_maps::InputSet(inner)
+        self.component.available_inputs()
     }
 
-    /// Get a map of the listeners for this component
+    /// Get a map of the listeners for this component.
+    ///
+    /// See [`ComponentData::listeners`].
     pub fn listeners(&self) -> lazy_maps::ListenerMap<'r> {
-        lazy_maps::ListenerMap(&self.component.dependents)
+        self.component.listeners()
     }
 
+    /// Get the map of input channels to their indices, if this component takes a tree as input.
+    ///
+    /// See [`ComponentData::input_indices`].
     pub fn input_indices(&self) -> Option<lazy_maps::InputIndexMap<'r>> {
-        if let InputMode::Multiple {
-            ref lookup,
-            broadcast: Some(prune),
-            ..
-        } = self.component.input_mode
-        {
-            Some(lazy_maps::InputIndexMap(lookup, prune))
-        } else {
-            None
-        }
+        self.component.input_indices()
     }
 
     /// Retrieve the input data from either a named channel or the primary one.
@@ -416,7 +115,14 @@ impl<'r> ComponentContextInner<'r> {
             InputKind::Empty => None,
             InputKind::Single(data) => {
                 let exp = match &self.component.input_mode {
-                    InputMode::Single { name, .. } => name.as_deref(),
+                    InputMode::Single {
+                        name: Some((name, false)),
+                        ..
+                    } => Some(&**name),
+                    InputMode::Single {
+                        name: Some((_, true)) | None,
+                        ..
+                    } => None,
                     _ => None,
                 };
                 (exp == req_channel).then(|| data.clone())
@@ -611,8 +317,18 @@ impl<'r> ComponentContextInner<'r> {
                 tracing::error_span!("next", %comp_id, name = &*next_comp.name, ?index).entered();
             let mut deferred = Vec::new();
             match &next_comp.input_mode {
-                InputMode::Single { .. } => {
-                    self.spawn_next(next_comp, InputKind::Single(data.clone()), next_id, scope)
+                InputMode::Single { name, .. } => {
+                    let mut arg = data.clone();
+                    if matches!(name, Some((_, true))) {
+                        arg = Arc::new(InputTree {
+                            vals: smallvec::smallvec![arg],
+                            next: Vec::new(),
+                            branch_id: 0,
+                            remaining_finish: 0,
+                            remaining_inputs: 0,
+                        });
+                    }
+                    self.spawn_next(next_comp, InputKind::Single(arg), next_id, scope)
                 }
                 InputMode::Multiple {
                     tree_shape,

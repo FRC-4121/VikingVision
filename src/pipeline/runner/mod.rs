@@ -16,6 +16,8 @@ mod context;
 mod input;
 mod run;
 
+pub mod lazy_maps;
+
 /// Alias for component IDs used in a [`PipelineRunner`].
 pub type RunnerComponentId = ComponentId<PipelineRunner>;
 /// Alias for component channels used in a [`PipelineRunner`].

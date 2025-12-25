@@ -209,7 +209,7 @@ pub(crate) struct MutableData {
 #[derive(Debug)]
 pub(crate) enum InputMode {
     Single {
-        name: Option<SmolStr>,
+        name: Option<(SmolStr, bool)>,
     },
     Multiple {
         lookup: HashMap<SmolStr, InputIndex>,
@@ -269,6 +269,45 @@ impl Debug for ComponentData {
             .field("name", &self.name)
             .field("input_mode", &self.input_mode)
             .finish_non_exhaustive()
+    }
+}
+impl ComponentData {
+    /// Get the set of inputs for this component.
+    pub fn available_inputs(&self) -> lazy_maps::InputSet<'_> {
+        let inner = match &self.input_mode {
+            InputMode::Single { name: None, .. } => lazy_maps::InputSetInner::Primary,
+            InputMode::Single {
+                name: Some((name, _)),
+                ..
+            } => lazy_maps::InputSetInner::SingleNamed(name),
+            InputMode::Multiple { lookup, .. } => lazy_maps::InputSetInner::Map(lookup),
+        };
+        lazy_maps::InputSet(inner)
+    }
+
+    /// Get a map of the listeners for this component.
+    pub fn listeners(&self) -> lazy_maps::ListenerMap<'_> {
+        lazy_maps::ListenerMap(&self.dependents)
+    }
+
+    /// Get the map of input channels to their indices, if this component takes a tree as input.
+    pub fn input_indices(&self) -> Option<lazy_maps::InputIndexMap<'_>> {
+        match self.input_mode {
+            InputMode::Multiple {
+                ref lookup,
+                broadcast: Some(prune),
+                ..
+            } => Some(lazy_maps::InputIndexMap(
+                lazy_maps::InputIndexMapInner::Many(lookup, prune),
+            )),
+            InputMode::Single {
+                name: Some((ref name, true)),
+                ..
+            } => Some(lazy_maps::InputIndexMap(
+                lazy_maps::InputIndexMapInner::Single(name),
+            )),
+            _ => None,
+        }
     }
 }
 
