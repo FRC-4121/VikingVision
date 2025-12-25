@@ -135,7 +135,7 @@ impl NtConfig {
             if ui.button("Add to file").clicked() {
                 edits.insert(
                     0,
-                    "[ntable]\nidentity = \"vv-client\"\nhost = \"localhost\"\n",
+                    "[ntable]\nidentity = \"vv-client\"\nhost = \"localhost\"\n\n",
                 );
             }
         }

@@ -29,6 +29,22 @@ impl Edits {
     pub fn delete_all(&mut self, spans: impl IntoIterator<Item = Span>) {
         self.extend(spans.into_iter().map(|s| (s, "")));
     }
+    pub fn replace_all(
+        &mut self,
+        spans: impl IntoIterator<Item = Span>,
+        with: impl Into<Cow<'static, str>>,
+    ) {
+        let with = with.into();
+        let mut it = spans.into_iter().peekable();
+        while let Some(span) = it.next() {
+            if it.peek().is_some() {
+                self.replace(span, with.clone());
+            } else {
+                self.replace(span, with);
+                break;
+            }
+        }
+    }
     pub fn apply(&self, input: &str) -> String {
         tracing::debug!(edits = ?self.edits, "appying edits");
         let cap = self
@@ -87,13 +103,59 @@ pub fn format_string(s: &str, encoding: &mut Encoding) -> String {
                 format_basic_string(s)
             }
         }
-        Encoding::MlBasicString => format_basic_string(s),
+        Encoding::MlBasicString => {
+            *encoding = Encoding::BasicString;
+            format_basic_string(s)
+        }
         Encoding::MlLiteralString => {
             if s.chars().all(|ch| ch != '\'' && ch != '\n') {
                 *encoding = Encoding::LiteralString;
                 format!("'{s}'")
             } else {
                 *encoding = Encoding::BasicString;
+                format_basic_string(s)
+            }
+        }
+    }
+}
+pub fn format_key(s: &str, encoding: &mut Option<Encoding>) -> String {
+    match encoding {
+        None => {
+            for ch in s.chars() {
+                if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+                    continue;
+                }
+                if ch == '\'' || ch == '\n' {
+                    *encoding = Some(Encoding::BasicString);
+                    return format_basic_string(s);
+                }
+                *encoding = Some(Encoding::LiteralString);
+            }
+            if encoding.is_none() {
+                s.to_string()
+            } else {
+                format!("'{s}'")
+            }
+        }
+        Some(Encoding::BasicString) => format_basic_string(s),
+        Some(Encoding::LiteralString) => {
+            if s.chars().all(|ch| ch != '\'' && ch != '\n') {
+                format!("'{s}'")
+            } else {
+                *encoding = Some(Encoding::BasicString);
+                format_basic_string(s)
+            }
+        }
+        Some(Encoding::MlBasicString) => {
+            *encoding = Some(Encoding::BasicString);
+            format_basic_string(s)
+        }
+        Some(Encoding::MlLiteralString) => {
+            if s.chars().all(|ch| ch != '\'' && ch != '\n') {
+                *encoding = Some(Encoding::LiteralString);
+                format!("'{s}'")
+            } else {
+                *encoding = Some(Encoding::BasicString);
                 format_basic_string(s)
             }
         }

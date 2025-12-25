@@ -33,8 +33,8 @@ impl VikingVision {
             editor,
             logs,
             nt: Default::default(),
-            cameras: Default::default(),
-            components: Default::default(),
+            cameras: map::MapConfig::new("camera"),
+            components: map::MapConfig::new("component"),
         })
     }
 }
