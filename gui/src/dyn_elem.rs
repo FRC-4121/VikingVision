@@ -5,7 +5,7 @@ use eframe::egui;
 use toml_parser::decoder::{Encoding, ScalarKind};
 use toml_parser::{Raw, Span};
 
-pub trait DynElemType {
+pub trait DynElemType: Default {
     type Visitor<'a>: for<'i> Visitor<'i> + 'a
     where
         Self: 'a;
@@ -13,8 +13,10 @@ pub trait DynElemType {
     fn finish(&mut self, new: &mut String);
     fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits);
     fn visit(&mut self) -> Self::Visitor<'_>;
+    fn kind(&self) -> usize;
     fn kinds() -> &'static [(&'static str, &'static str)];
-    fn create(kind: usize) -> Self;
+    fn set_kind(&mut self, kind: usize);
+    fn common_keys() -> &'static [&'static str];
 }
 
 fn coalesce_spans(spans: &mut Vec<Span>, source: &str) {
@@ -45,17 +47,15 @@ fn coalesce_spans(spans: &mut Vec<Span>, source: &str) {
 }
 
 pub struct DynElemConfig<T> {
-    kind: usize,
     kind_span: Option<(Span, Encoding)>,
-    selected: Option<T>,
+    pub inner: T,
     spans: Vec<Span>,
 }
-impl<T> Default for DynElemConfig<T> {
+impl<T: Default> Default for DynElemConfig<T> {
     fn default() -> Self {
         Self {
-            kind: usize::MAX,
             kind_span: None,
-            selected: None,
+            inner: T::default(),
             spans: Vec::new(),
         }
     }
@@ -67,52 +67,51 @@ impl<T: DynElemType> map::MapElem for DynElemConfig<T> {
         Self: 'a;
     fn add(&mut self, ui: &mut egui::Ui) -> bool {
         self.select(ui, None);
-        self.selected.as_mut().is_some_and(|c| c.add(ui))
+        self.inner.add(ui) && self.inner.kind() < T::kinds().len()
     }
     fn finish(&mut self, new: &mut String) {
         new.push_str("type = ");
         new.push_str(&format_string(
-            T::kinds()[self.kind].0,
+            T::kinds()[self.inner.kind()].0,
             &mut Encoding::BasicString,
         ));
         new.push('\n');
-        self.selected.as_mut().unwrap().finish(new);
+        self.inner.finish(new);
     }
     fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
-        if let Some(Some(_)) = self.select(ui, Some(edits)) {
+        if self.select(ui, Some(edits)) {
             edits.delete_all(self.spans.drain(..));
         }
-        if let Some(inner) = &mut self.selected {
-            inner.show(ui, edits);
-        }
+        self.inner.show(ui, edits);
     }
     fn visit(&mut self) -> Self::Visitor<'_> {
         DECVisitor {
             parent: self,
             events: Vec::new(),
             visitor: VisitorPresence::Waiting,
-            has_type: false,
+            has_common: false,
         }
     }
 }
 impl<T: DynElemType> DynElemConfig<T> {
-    fn select(&mut self, ui: &mut egui::Ui, edits: Option<&mut Edits>) -> Option<Option<T>> {
-        let old = self.kind;
+    fn select(&mut self, ui: &mut egui::Ui, edits: Option<&mut Edits>) -> bool {
+        let mut kind = self.inner.kind();
         let kinds = T::kinds();
         egui::ComboBox::new(ui.next_auto_id(), "Type").show_index(
             ui,
-            &mut self.kind,
+            &mut kind,
             kinds.len(),
             |i| kinds.get(i).map_or("", |p| p.1),
         );
-        (old != self.kind && self.kind < kinds.len()).then(|| {
+        kind != self.inner.kind() && kind < kinds.len() && {
             if let Some(edits) = edits
                 && let Some((span, encoding)) = &mut self.kind_span
             {
-                edits.replace(*span, format_string(kinds[self.kind].0, encoding));
+                edits.replace(*span, format_string(kinds[kind].0, encoding));
             }
-            self.selected.replace(T::create(self.kind))
-        })
+            self.inner.set_kind(kind);
+            true
+        }
     }
 }
 
@@ -207,7 +206,7 @@ pub struct DECVisitor<'a, T: DynElemType + 'a> {
     parent: &'a mut DynElemConfig<T>,
     events: Vec<Event>,
     visitor: VisitorPresence<T::Visitor<'a>>,
-    has_type: bool,
+    has_common: bool,
 }
 impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
     fn begin_def(&mut self, key: Span) {
@@ -217,12 +216,12 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
                 self.events.push(Event::BeginDef { key });
             }
             VisitorPresence::Drop => {
-                self.has_type = false;
+                self.has_common = false;
             }
         }
     }
     fn end_def(&mut self, key: Span, value: Span) {
-        if !self.has_type {
+        if !self.has_common {
             self.parent.spans.push(value);
         }
         match &mut self.visitor {
@@ -240,16 +239,14 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
         error: &mut dyn ErrorSink,
     ) {
         let mut it = path.clone();
+        let mut delete = true;
         if let Some(PathKind::Key(k)) = it.next()
             && it.next().is_none()
         {
-            let is_type = k.as_str() == "type" || k.as_str() == "'type'" || {
-                let mut s = String::new();
-                k.decode_key(&mut s, &mut ());
-                s == "type"
-            };
-            if is_type {
-                self.has_type = true;
+            let mut s = String::new();
+            k.decode_key(&mut s, &mut ());
+            if s == "type" {
+                self.has_common = true;
                 if !matches!(self.visitor, VisitorPresence::Waiting) {
                     error.report_error(
                         ParseError::new("Duplicate key .type").with_context(k.span()),
@@ -263,14 +260,10 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
                         scalar.raw.encoding().unwrap_or(Encoding::BasicString),
                     ));
                     if let Some(kind) = kinds.iter().position(|k| s == k.0) {
-                        if kind != self.parent.kind {
-                            self.parent.kind = kind;
-                            self.parent.selected = Some(T::create(kind));
+                        if kind != self.parent.inner.kind() {
+                            self.parent.inner.set_kind(kind);
                         }
-                        let Some(sel) = &mut self.parent.selected else {
-                            panic!("Valid kind but no selected element!")
-                        };
-                        let mut visitor = sel.visit();
+                        let mut visitor = self.parent.inner.visit();
                         feed_events_to_visitor(
                             &mut visitor,
                             scalar.source,
@@ -301,11 +294,11 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
                         }
                         error
                             .report_error(ParseError::new(message).with_context(scalar.raw.span()));
-                        self.parent.selected = None;
+                        self.parent.inner.set_kind(usize::MAX);
                         self.visitor = VisitorPresence::Drop;
                     }
                 } else {
-                    self.parent.kind = usize::MAX;
+                    self.parent.inner.set_kind(usize::MAX);
                     self.parent.kind_span = Some((scalar.raw.span(), Encoding::BasicString));
                     error.report_error(
                         ParseError::new(format!(
@@ -316,9 +309,14 @@ impl<'i, T: DynElemType> Visitor<'i> for DECVisitor<'_, T> {
                     );
                 }
                 return;
+            } else if T::common_keys().contains(&&*s) {
+                self.has_common = true;
+                delete = false;
             }
         }
-        self.parent.spans.push(scalar.full);
+        if delete {
+            self.parent.spans.push(scalar.full);
+        }
         match &mut self.visitor {
             VisitorPresence::Here(visitor) => visitor.accept_scalar(path, scalar, error),
             VisitorPresence::Waiting => self.events.push(Event::Scalar {

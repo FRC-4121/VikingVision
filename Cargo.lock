@@ -4315,6 +4315,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "viking-vision",
 ]
 
 [[package]]

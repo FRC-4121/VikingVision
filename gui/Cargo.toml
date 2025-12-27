@@ -15,7 +15,9 @@ toml_parser = { version = "1.0.4", git = "https://github.com/matt-cornell/toml.g
 tracing.workspace = true
 tracing-log = "0.2.0"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+viking-vision.workspace = true
 
 [features]
-default = ["ntable"]
+default = ["ntable", "v4l"]
 ntable = ["dep:ntable"]
+v4l = ["viking-vision/v4l"]
