@@ -64,6 +64,7 @@ pub struct MapConfig<T> {
     elems: Vec<(String, Box<ElemData<T>>)>,
     names: Vec<String>,
     adding: Option<(String, T)>,
+    pub selected: Option<usize>,
 }
 impl<T: MapElem> MapConfig<T> {
     pub fn new(prefix: &'static str) -> Self {
@@ -72,12 +73,17 @@ impl<T: MapElem> MapConfig<T> {
             elems: Vec::new(),
             names: Vec::new(),
             adding: None,
+            selected: None,
         }
     }
     pub fn elems(&self) -> &[(String, Box<ElemData<T>>)] {
         &self.elems
     }
+    pub fn elems_mut(&mut self) -> &mut [(String, Box<ElemData<T>>)] {
+        &mut self.elems
+    }
     pub fn show(&mut self, ui: &mut egui::Ui, edits: &mut Edits) {
+        self.selected = None;
         {
             let new = ui.add_enabled(self.adding.is_none(), egui::Button::new("New"));
             if new.clicked() {
@@ -151,10 +157,11 @@ impl<T: MapElem> MapConfig<T> {
             }
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
+            let mut i = 0;
             self.elems.retain_mut(|(name, elem)| {
                 let mut keep = true;
                 egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(200.0);
+                    ui.set_min_width(250.0);
                     ui.horizontal(|ui| {
                         ui.heading(&*name);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -198,11 +205,16 @@ impl<T: MapElem> MapConfig<T> {
                                         }
                                     }
                                 });
+                            if ui.button("Select").clicked() {
+                                self.selected = Some(i);
+                            }
                         })
                     });
                     elem.elem.show(ui, edits);
                 });
-                if !keep {
+                if keep {
+                    i += 1;
+                } else {
                     edits.delete_all(elem.val_spans.drain(..));
                 }
                 keep

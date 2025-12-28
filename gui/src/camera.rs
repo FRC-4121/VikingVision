@@ -30,6 +30,7 @@ struct Common {
 
 #[derive(Default)]
 pub struct CameraConfig {
+    pub window_id: Option<egui::Id>,
     common: Common,
     inner: Inner,
 }

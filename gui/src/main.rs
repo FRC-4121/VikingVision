@@ -43,6 +43,7 @@ impl VikingVision {
 impl App for VikingVision {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.editor.poll_futures();
+        let mut collapse = None;
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             egui::MenuBar::new()
                 .config(
@@ -50,6 +51,14 @@ impl App for VikingVision {
                 )
                 .ui(ui, |ui| {
                     self.editor.file_menu(ui);
+                    ui.menu_button("Workspace", |ui| {
+                        if ui.button("Expand All").clicked() {
+                            collapse = Some(true);
+                        }
+                        if ui.button("Collapse All").clicked() {
+                            collapse = Some(false);
+                        }
+                    });
                     ui.menu_button("Debug", |ui| {
                         ui.menu_button("TOML Parsing", |ui| {
                             self.editor.parse_events(ui);
@@ -116,6 +125,43 @@ impl App for VikingVision {
             .show(ctx, |ui| {
                 self.logs.show(ui);
             });
+        let available = ctx.available_rect();
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Workspace");
+            if ui.button("Expand All").clicked() {
+                collapse = Some(true);
+            }
+            if ui.button("Collapse All").clicked() {
+                collapse = Some(false);
+            }
+        });
+        let sel = self.cameras.selected;
+        for (n, (name, cam)) in self.cameras.elems_mut().iter_mut().enumerate() {
+            let id = *cam
+                .elem
+                .inner
+                .window_id
+                .get_or_insert_with(|| egui::Id::new((&name, 0)));
+            let mut window = egui::Window::new(format!("Camera: {name}"))
+                .id(id)
+                .constrain_to(available);
+            if sel.is_some_and(|s| s == n) {
+                let mut frame = egui::Frame::window(&ctx.style());
+                frame.stroke.color = egui::Color32::CYAN;
+                window = window.frame(frame);
+                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, id));
+            }
+            if let Some(open) = collapse {
+                let mut collapsing =
+                    egui::collapsing_header::CollapsingState::load(ctx, id.with("collapsing"))
+                        .unwrap();
+                collapsing.set_open(open);
+                collapsing.store(ctx);
+            }
+            window.show(ctx, |ui| {
+                map::MapElem::show(&mut cam.elem, ui, self.editor.edit());
+            });
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.editor.save(storage);
