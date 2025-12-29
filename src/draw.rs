@@ -4,6 +4,7 @@ use crate::vision::Blob;
 use std::cmp::Ordering;
 use std::fmt::{self, Display, Formatter};
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
+use std::sync::Arc;
 
 pub trait SignedCoordinate:
     Copy
@@ -90,6 +91,9 @@ impl Display for Line {
 impl Data for Line {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Display::fmt(self, f)
+    }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(*self)
     }
 }
 impl Drawable for Line {
@@ -272,7 +276,7 @@ impl Drawable for crate::apriltag::Detection {
         }
     }
 }
-impl<T: Drawable> Drawable for Vec<T> {
+impl<T: Drawable + Clone> Drawable for Vec<T> {
     fn draw(&self, color: &[u8], buffer: &mut Buffer) {
         for elem in self {
             elem.draw(color, buffer);

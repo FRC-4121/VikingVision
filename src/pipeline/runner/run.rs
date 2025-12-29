@@ -24,7 +24,11 @@ pub struct InputTree {
     pub(crate) remaining_inputs: u32,
     pub(crate) remaining_finish: u32,
 }
-impl Data for InputTree {}
+impl Data for InputTree {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(self.clone())
+    }
+}
 impl PartialEq for InputTree {
     fn eq(&self, other: &Self) -> bool {
         self.remaining_inputs == other.remaining_inputs
@@ -219,7 +223,11 @@ pub(crate) enum InputMode {
     },
 }
 pub(super) struct PlaceholderData;
-impl Data for PlaceholderData {}
+impl Data for PlaceholderData {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        PLACEHOLDER_DATA.clone()
+    }
+}
 pub(super) static PLACEHOLDER_DATA: LazyLock<Arc<dyn Data>> =
     LazyLock::new(|| Arc::new(PlaceholderData));
 

@@ -2,6 +2,7 @@ use crate::pipeline::prelude::Data;
 use smallvec::{SmallVec, smallvec};
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
+use std::sync::Arc;
 
 fn filter_pixel(v: &[u8]) -> bool {
     v.iter().any(|&v| v > 0)
@@ -108,7 +109,11 @@ impl Blob {
         self.pixels as f64 / self.area() as f64
     }
 }
-impl Data for Blob {}
+impl Data for Blob {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(*self)
+    }
+}
 
 /// State returned from [`BlobWithBottom::eat`]
 #[derive(Debug)]

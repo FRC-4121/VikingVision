@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::mem::MaybeUninit;
 use std::str::FromStr;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[cfg(test)]
@@ -20,7 +21,11 @@ pub struct Pose {
     /// The rotation matrix stored in a row-major layout.
     pub rotation: [f64; 9],
 }
-impl Data for Pose {}
+impl Data for Pose {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(*self)
+    }
+}
 impl Default for Pose {
     fn default() -> Self {
         Self {
@@ -41,6 +46,9 @@ impl Data for PoseEstimation {
         f.debug_struct("PoseEstimation")
             .field("error", &self.error)
             .finish_non_exhaustive()
+    }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(*self)
     }
 }
 
@@ -547,6 +555,9 @@ unsafe impl Sync for Detection {}
 impl Data for Detection {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Debug::fmt(self, f)
+    }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(self.clone())
     }
 }
 impl Debug for Detection {

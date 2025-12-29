@@ -53,12 +53,15 @@ impl<A> LogErr for TypeMismatch<A> {
 /// let num: Arc<dyn Data> = Arc::new(42i32);
 ///
 /// // Custom types can implement Data
-/// #[derive(Debug)]
+/// #[derive(Debug, Clone)]
 /// struct MyData(String);
 /// impl Data for MyData {
 ///     // Optionally override debug for custom formatting
 ///     fn debug(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
 ///         write!(f, "MyData({})", self.0)
+///     }
+///     fn clone_to_arc(&self) -> Arc<dyn Data> {
+///         Arc::new(self.clone())
 ///     }
 /// }
 /// ```
@@ -68,6 +71,14 @@ pub trait Data: Any + Send + Sync {
     }
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Display::fmt(&disqualified::ShortName::of::<Self>(), f)
+    }
+    fn clone_to_arc(&self) -> Arc<dyn Data>;
+    #[allow(unused_variables)]
+    fn field(&self, field: &str) -> Option<&dyn Data> {
+        None
+    }
+    fn known_fields(&self) -> Vec<String> {
+        Vec::new()
     }
 }
 impl Debug for dyn Data {
@@ -125,6 +136,9 @@ macro_rules! impl_via_debug {
             fn debug(&self, f: &mut Formatter) -> fmt::Result {
                 Debug::fmt(self, f)
             }
+            fn clone_to_arc(&self) -> Arc<dyn Data> {
+                Arc::new(self.clone())
+            }
         }
         impl_via_debug!($($rest),*);
     };
@@ -147,14 +161,17 @@ impl_via_debug!(
     String,
     Buffer<'static>
 );
-impl<T: Data> Data for Vec<T> {
+impl<T: Data + Clone> Data for Vec<T> {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_list()
             .entries(self.iter().map(|e| e as &dyn Data))
             .finish()
     }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(self.clone())
+    }
 }
-impl<T: Data> Data for Mutex<T> {
+impl<T: Data + Clone> Data for Mutex<T> {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         let mut d = f.debug_struct("Mutex");
         match self.try_lock() {
@@ -171,11 +188,30 @@ impl<T: Data> Data for Mutex<T> {
         d.field("poisoned", &self.is_poisoned());
         d.finish_non_exhaustive()
     }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        let poisoned = self.is_poisoned();
+        let inner = self.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let new = Mutex::new(inner);
+        if poisoned {
+            // to poison the new mutex, we trigger an unwind past its guard.
+            // we use resume_unwind because we don't want to trigger any panic handlers,
+            // and an empty payload to avoid allocation-- as far as anyone else is concerned,
+            // this panic didn't happen.
+            // we can be fairly confident that this won't abort the program because our panics
+            // have to unwind in order for the mutex to be poisoned in the first place. It's possible
+            // that the mode was set to abort afterwards, but that's unlikely.
+            let _ = std::panic::catch_unwind(|| {
+                let _guard = new.lock();
+                std::panic::resume_unwind(Box::new(()));
+            });
+        }
+        Arc::new(new)
+    }
 }
 macro_rules! impl_for_tuple {
     () => {};
     ($head:ident $(, $tail:ident)*) => {
-        impl<$head: Data, $($tail: Data,)*> Data for ($head, $($tail,)*) {
+        impl<$head: Data + Clone, $($tail: Data + Clone,)*> Data for ($head, $($tail,)*) {
             #[allow(non_snake_case)]
             fn debug(&self, f: &mut Formatter) -> fmt::Result {
                 let mut tuple = f.debug_tuple("");
@@ -183,6 +219,9 @@ macro_rules! impl_for_tuple {
                 tuple.field(&($head as &dyn Data));
                 $(tuple.field(&($tail as &dyn Data));)*
                 tuple.finish()
+            }
+            fn clone_to_arc(&self) -> Arc<dyn Data> {
+                Arc::new(self.clone())
             }
         }
         impl_for_tuple!($($tail),*);
