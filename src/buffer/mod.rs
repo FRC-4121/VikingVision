@@ -6,6 +6,7 @@ use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::io;
 use std::num::{NonZero, ParseIntError};
+use std::str::FromStr;
 use thiserror::Error;
 use tracing::{error, info_span};
 use zune_jpeg::{JpegDecoder, errors::DecodeErrors as JpegDecodeErrors};
@@ -187,10 +188,11 @@ impl PixelFormat {
             }
         }
     }
-    /// Parse a string, in the format used for de/serialization.
-    ///
-    /// This takes a few different cases for the named formats, or allows a number of channels preceeded by a `?`, like `"?3"` for an anonymous format with three channels.
-    pub fn parse_str(s: &str) -> Result<Self, FormatParseError> {
+}
+impl FromStr for PixelFormat {
+    type Err = FormatParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(rest) = s.strip_prefix('?') {
             rest.parse()
                 .map_err(FormatParseError::ParseInt)
@@ -253,7 +255,7 @@ impl<'de> Deserialize<'de> for PixelFormat {
             where
                 E: serde::de::Error,
             {
-                PixelFormat::parse_str(v)
+                PixelFormat::from_str(v)
                     .map_err(|_| E::invalid_value(serde::de::Unexpected::Str(v), &self))
             }
         }
