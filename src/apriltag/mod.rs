@@ -1,6 +1,7 @@
 #![cfg(feature = "apriltag")]
 
 use crate::buffer::{Buffer, PixelFormat};
+use crate::geom::*;
 use crate::pipeline::prelude::Data;
 use apriltag_sys::*;
 use serde::{Deserialize, Serialize};
@@ -18,9 +19,9 @@ mod tests;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pose {
     /// The translation vector.
-    pub translation: [f64; 3],
+    pub translation: Vec3,
     /// The rotation matrix stored in a row-major layout.
-    pub rotation: [f64; 9],
+    pub rotation: Mat3,
 }
 impl Data for Pose {
     fn clone_to_arc(&self) -> Arc<dyn Data> {
@@ -28,8 +29,8 @@ impl Data for Pose {
     }
     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
         match field {
-            "translation" => Some(Cow::Owned(Arc::new(self.translation.to_vec()) as _)),
-            "rotation" => Some(Cow::Owned(Arc::new(self.rotation.to_vec()) as _)),
+            "translation" => Some(Cow::Borrowed(&self.translation)),
+            "rotation" => Some(Cow::Borrowed(&self.rotation)),
             _ => None,
         }
     }
@@ -40,8 +41,8 @@ impl Data for Pose {
 impl Default for Pose {
     fn default() -> Self {
         Self {
-            translation: [0.0; 3],
-            rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            translation: Vec3::ZERO,
+            rotation: Mat3::EYE,
         }
     }
 }
@@ -65,8 +66,8 @@ impl Data for PoseEstimation {
         match field {
             "pose" => Some(Cow::Borrowed(&self.pose)),
             "error" => Some(Cow::Borrowed(&self.error)),
-            "translation" => Some(Cow::Owned(Arc::new(self.pose.translation.to_vec()) as _)),
-            "rotation" => Some(Cow::Owned(Arc::new(self.pose.rotation.to_vec()) as _)),
+            "translation" => Some(Cow::Borrowed(&self.pose.translation)),
+            "rotation" => Some(Cow::Borrowed(&self.pose.rotation)),
             _ => None,
         }
     }
@@ -714,11 +715,11 @@ impl Detection {
             let mat = &*calc.R;
             assert_eq!(mat.nrows, 3);
             assert_eq!(mat.ncols, 3);
-            std::ptr::copy_nonoverlapping(mat.data.as_ptr(), pose.rotation.as_mut_ptr(), 9);
+            std::ptr::copy_nonoverlapping(mat.data.as_ptr(), pose.rotation.0.as_mut_ptr(), 9);
             let mat = &*calc.t;
             assert_eq!(mat.nrows, 3);
             assert_eq!(mat.ncols, 1);
-            std::ptr::copy_nonoverlapping(mat.data.as_ptr(), pose.translation.as_mut_ptr(), 3);
+            std::ptr::copy_nonoverlapping(mat.data.as_ptr(), pose.translation.0.as_mut_ptr(), 3);
             PoseEstimation { pose, error }
         }
     }
