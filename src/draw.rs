@@ -1,6 +1,7 @@
 use crate::buffer::{Buffer, PixelFormat};
 use crate::pipeline::component::Data;
 use crate::vision::Blob;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt::{self, Display, Formatter};
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
@@ -94,6 +95,18 @@ impl Data for Line {
     }
     fn clone_to_arc(&self) -> Arc<dyn Data> {
         Arc::new(*self)
+    }
+    fn known_fields(&self) -> &'static [&'static str] {
+        &["x0", "y0", "x1", "y1"]
+    }
+    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+        match field {
+            "x0" => Some(Cow::Borrowed(&self.x0)),
+            "y0" => Some(Cow::Borrowed(&self.y0)),
+            "x1" => Some(Cow::Borrowed(&self.x1)),
+            "y1" => Some(Cow::Borrowed(&self.y1)),
+            _ => None,
+        }
     }
 }
 impl Drawable for Line {
