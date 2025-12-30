@@ -10,7 +10,7 @@ height = 480
 fourcc = "YUYV"
 fps = 30
 # output = "fps"
-outputs = ["fps", "save", "tags"]
+outputs = ["fps", "tags"]
 
 [camera.mono]
 type = "frame"
@@ -18,7 +18,7 @@ width = 640
 height = 480
 color.format = "rgb"
 color.bytes = [255, 255, 0]
-outputs = ["fps", "save", "tags"]
+outputs = ["fps", "tags"]
 
 [component.fps]
 type = "fps"
@@ -26,6 +26,10 @@ type = "fps"
 [component.tags]
 type = "apriltag"
 family = "tag36h11"
+
+[component.tags-unpack]
+type = "unpack"
+input = "tags"
 
 [component.nt-fps]
 type = "ntable"
@@ -37,5 +41,6 @@ input.max = "fps.max"
 
 [component.nt-tags]
 type = "ntable"
-prefix = "%N"
-input.tags-found = "tags.found"
+prefix = "%N/tags"
+input.found = "tags.found"
+input.ids = "tags-unpack.id"
