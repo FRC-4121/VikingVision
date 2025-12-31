@@ -1,6 +1,7 @@
 use crate::buffer::{Buffer, PixelFormat};
-use crate::pipeline::prelude::*;
+use crate::pipeline::{PipelineId, PipelineName, prelude::*};
 use crate::vision::*;
+use crate::vision_debug;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -492,5 +493,49 @@ impl ComponentFactory for MedianFilterFactory {
             height: self.height,
             index: (self.width * self.height) / 2,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VisionDebugComponent {
+    #[serde(flatten)]
+    mode: Option<vision_debug::DebugMode>,
+}
+impl Component for VisionDebugComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, _name: &str) -> OutputKind {
+        OutputKind::None
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        let Ok(image) = context.get_as::<Buffer>(None).and_log_err() else {
+            return;
+        };
+        let Some(sender) = vision_debug::GLOBAL_SENDER.get() else {
+            tracing::warn!("no debug handler registered");
+            return;
+        };
+        sender.send(vision_debug::Message::DebugImage(
+            vision_debug::DebugImage {
+                image: image.clone_static(),
+                name: context
+                    .context
+                    .request::<PipelineName>()
+                    .map_or_else(|| "<anon>".to_string(), |n| n.0.to_string()),
+                id: context
+                    .context
+                    .request::<PipelineId>()
+                    .map_or(0, |id| id.0 as _)
+                    | ((context.comp_id().index() as u128) << 64),
+                mode: self.mode.clone().unwrap_or_default(),
+            },
+        ));
+    }
+}
+#[typetag::serde(name = "vision-debug")]
+impl ComponentFactory for VisionDebugComponent {
+    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(self.clone())
     }
 }
