@@ -68,7 +68,7 @@ impl Data for Vec3 {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Debug::fmt(self, f)
     }
-    fn clone_to_arc(&self) -> std::sync::Arc<dyn Data> {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
         Arc::new(*self)
     }
     fn known_fields(&self) -> &'static [&'static str] {
@@ -232,7 +232,7 @@ impl Data for Mat3 {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Debug::fmt(self, f)
     }
-    fn clone_to_arc(&self) -> std::sync::Arc<dyn Data> {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
         Arc::new(*self)
     }
     fn known_fields(&self) -> &'static [&'static str] {
@@ -268,7 +268,7 @@ impl Data for Quat {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Debug::fmt(self, f)
     }
-    fn clone_to_arc(&self) -> std::sync::Arc<dyn Data> {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
         Arc::new(*self)
     }
     fn known_fields(&self) -> &'static [&'static str] {
@@ -306,7 +306,7 @@ impl Data for EulerXYZ {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Debug::fmt(self, f)
     }
-    fn clone_to_arc(&self) -> std::sync::Arc<dyn Data> {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
         Arc::new(*self)
     }
     fn known_fields(&self) -> &'static [&'static str] {
