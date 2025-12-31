@@ -86,7 +86,7 @@ impl Data for Vec3 {
 
 /// A 3x3 double-precision matrix.
 ///
-/// This is stored internally in column-major order.
+/// This is stored internally in row-major order.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Mat3(pub [f64; 9]);
 impl Mat3 {
@@ -95,18 +95,18 @@ impl Mat3 {
     /// Strip a scaling from the matrix to get the normalized matrix and its scale.
     pub fn without_scale(&self) -> (Self, Vec3) {
         let Mat3([m0, m1, m2, m3, m4, m5, m6, m7, m8]) = *self;
-        let sx = (m0 * m0 + m3 * m3 + m6 * m6).sqrt();
-        let sy = (m1 * m1 + m4 * m4 + m7 * m7).sqrt();
-        let sz = (m2 * m2 + m5 * m5 + m8 * m8).sqrt();
+        let sx = (m0 * m0 + m1 * m1 + m2 * m2).sqrt();
+        let sy = (m3 * m3 + m4 * m4 + m5 * m5).sqrt();
+        let sz = (m6 * m6 + m7 * m7 + m8 * m8).sqrt();
         let r = Self([
             m0 / sx,
-            m1 / sy,
-            m2 / sz,
-            m3 / sx,
+            m1 / sx,
+            m2 / sx,
+            m3 / sy,
             m4 / sy,
-            m5 / sz,
-            m6 / sx,
-            m7 / sy,
+            m5 / sy,
+            m6 / sz,
+            m7 / sz,
             m8 / sz,
         ]);
         (r, Vec3([sx, sy, sz]))
@@ -114,17 +114,17 @@ impl Mat3 {
     /// Remove the scale from this matrix.
     pub fn remove_scale(&mut self) -> Vec3 {
         let Mat3([m0, m1, m2, m3, m4, m5, m6, m7, m8]) = self;
-        let sx = (*m0 * *m0 + *m3 * *m3 + *m6 * *m6).sqrt();
-        let sy = (*m1 * *m1 + *m4 * *m4 + *m7 * *m7).sqrt();
-        let sz = (*m2 * *m2 + *m5 * *m5 + *m8 * *m8).sqrt();
+        let sx = (*m0 * *m0 + *m1 * *m1 + *m2 * *m2).sqrt();
+        let sy = (*m3 * *m3 + *m4 * *m4 + *m5 * *m5).sqrt();
+        let sz = (*m6 * *m6 + *m7 * *m7 + *m8 * *m8).sqrt();
         *m0 /= sx;
-        *m1 /= sy;
-        *m2 /= sz;
-        *m3 /= sx;
+        *m1 /= sx;
+        *m2 /= sx;
+        *m3 /= sy;
         *m4 /= sy;
-        *m5 /= sz;
-        *m6 /= sx;
-        *m7 /= sy;
+        *m5 /= sy;
+        *m6 /= sz;
+        *m7 /= sz;
         *m8 /= sz;
         Vec3([sx, sy, sz])
     }
@@ -136,41 +136,40 @@ impl Mat3 {
         let trace = m0 + m4 + m8;
         if trace > 0.0 {
             let s = (trace + 1.0).sqrt() * 2.0;
-            Quat([(m7 - m5) / s, (m2 - m6) / s, (m3 - m1) / s, 0.25 * s])
+            Quat([(m5 - m7) / s, (m6 - m2) / s, (m1 - m3) / s, 0.25 * s])
         } else if m0 > m4 && m0 > m8 {
             let s = (1.0 + m0 - m4 - m8).sqrt() * 2.0;
-            Quat([0.25 * s, (m1 + m3) / s, (m2 + m6) / s, (m7 - m5) / s])
+            Quat([0.25 * s, (m1 + m3) / s, (m2 + m6) / s, (m5 - m7) / s])
         } else if m4 > m8 {
             let s = (1.0 + m4 - m0 - m8).sqrt() * 2.0;
-            Quat([(m1 + m3) / s, 0.25 * s, (m5 + m7) / s, (m2 - m6) / s])
+            Quat([(m1 + m3) / s, 0.25 * s, (m5 + m7) / s, (m6 - m2) / s])
         } else {
             let s = (1.0 + m8 - m0 - m4).sqrt() * 2.0;
-            Quat([(m2 + m6) / s, (m5 + m7) / s, 0.25 * s, (m3 - m1) / s])
+            Quat([(m2 + m6) / s, (m5 + m7) / s, 0.25 * s, (m1 - m3) / s])
         }
     }
     /// Convert this matrix to a set of XYZ Euler angles.
     pub fn to_euler(&self) -> EulerXYZ {
-        let Mat3([m0, _, _, m3, m4, m5, m6, m7, m8]) = *self;
-        let pitch = (-m6).asin();
+        let Mat3([m0, m1, m2, m3, m4, m5, _m6, _m7, m8]) = *self;
+        let pitch = (-m2).asin();
         let cos_pitch = pitch.cos();
         let (roll, yaw) = if cos_pitch.abs() > 1e-6 {
-            (m7.atan2(m8), m3.atan2(m0))
+            (m5.atan2(m8), m1.atan2(m0))
         } else {
-            // Gimbal lock
-            ((-m5).atan2(m4), 0.0)
+            ((-m3).atan2(m4), 0.0)
         };
         EulerXYZ([roll, pitch, yaw])
     }
     /// Multiply this matrix by another matrix.
     pub fn mul_mat(&self, rhs: &Self) -> Self {
         let mut out = [0.0; 9];
-        for (n, val) in out.iter_mut().enumerate() {
-            let mut a_idx = n % 3;
-            let mut b_idx = n / 3 * 3;
-            for _ in 0..3 {
-                *val += self.0[a_idx] * rhs.0[b_idx];
-                a_idx += 3;
-                b_idx += 1;
+        for i in 0..3 {
+            for j in 0..3 {
+                let mut sum = 0.0;
+                for k in 0..3 {
+                    sum += self.0[i * 3 + k] * rhs.0[k * 3 + j];
+                }
+                out[i * 3 + j] = sum;
             }
         }
         Self(out)
@@ -185,8 +184,8 @@ impl Mat3 {
     /// Find the determinant of the matrix.
     pub fn det(&self) -> f64 {
         self.0[0] * (self.0[4] * self.0[8] - self.0[5] * self.0[7])
-            - self.0[3] * (self.0[1] * self.0[8] - self.0[2] * self.0[7])
-            + self.0[6] * (self.0[1] * self.0[5] - self.0[2] * self.0[4])
+            - self.0[1] * (self.0[3] * self.0[8] - self.0[5] * self.0[6])
+            + self.0[2] * (self.0[3] * self.0[7] - self.0[4] * self.0[6])
     }
     /// Invert the matrix.
     ///
