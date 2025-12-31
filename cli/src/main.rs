@@ -195,6 +195,9 @@ fn main() {
         }
     };
 
+    config.debug.update_from_env();
+    let handler = viking_vision::vision_debug::Handler::new(config.debug).init_global_sender();
+
     if let Some(nt) = config.ntable {
         nt.init();
     }
@@ -334,7 +337,7 @@ fn main() {
         exit(101);
     });
 
-    pool.scope(|rscope| {
+    pool.in_place_scope(|rscope| {
         std::thread::scope(|tscope| {
             for ((mut cam, next), provider) in cameras.into_iter().zip(&mut refs) {
                 let builder = std::thread::Builder::new().name(format!("camera-{}", cam.name()));
@@ -380,6 +383,7 @@ fn main() {
                     error!(camera = cam_name, %err, "failed to spawn thread");
                 }
             }
+            handler.run();
         });
     });
 }
