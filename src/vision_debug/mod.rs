@@ -1,10 +1,17 @@
 //! Utilities to debug video streams
+#![allow(clippy::new_ret_no_self)]
 
 use crate::buffer::Buffer;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
+#[cfg(feature = "debug-gui")]
+mod with_winit;
 mod without_winit;
 
+#[cfg(feature = "debug-gui")]
+pub use with_winit::{Handler, Sender};
+#[cfg(not(feature = "debug-gui"))]
 pub use without_winit::{Handler, Sender};
 
 /// What to do with the image we received.
@@ -121,4 +128,20 @@ pub struct DebugImage {
 pub enum Message {
     DebugImage(DebugImage),
     Shutdown,
+}
+
+pub static GLOBAL_SENDER: OnceLock<Sender> = OnceLock::new();
+
+/// A pair of the handler and a sender.
+pub struct HandlerWithSender {
+    pub handler: Handler,
+    pub sender: Sender,
+}
+impl HandlerWithSender {
+    pub fn init_global_sender(self) -> Handler {
+        if GLOBAL_SENDER.set(self.sender).is_err() {
+            tracing::warn!("global sender is already set");
+        }
+        self.handler
+    }
 }

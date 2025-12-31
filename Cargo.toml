@@ -26,6 +26,7 @@ rayon.workspace = true
 serde.workspace = true
 smallvec = { version = "1.15.1", features = ["const_new", "drain_filter"] }
 smol_str = { workspace = true, features = ["serde"] }
+softbuffer = { version = "0.4.8", optional = true }
 supply = "0.3.1"
 thiserror = "2.0"
 time.workspace = true
@@ -34,6 +35,7 @@ triomphe.workspace = true
 ty-tag = "0.1.1"
 typetag = "0.2.21"
 v4l = { workspace = true, optional = true }
+winit = { version = "0.30.12", optional = true }
 zune-jpeg = "0.4.14"
 zune-png = "0.4.10"
 
@@ -42,11 +44,12 @@ anyhow = "1.0"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [features]
-default = ["apriltag", "ntable", "v4l"]
+default = ["apriltag", "debug-gui", "ntable", "v4l"]
 apriltag = ["dep:apriltag-sys", "dep:libc"]
 v4l = ["dep:v4l"]
 ntable = ["dep:ntable"]
 debug-tools = ["dep:no_deadlocks"]
+debug-gui = ["dep:softbuffer", "dep:winit"]
 
 [workspace.dependencies]
 eframe = { version = "0.33.2", features = ["persistence"] }

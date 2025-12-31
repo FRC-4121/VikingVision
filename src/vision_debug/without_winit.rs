@@ -145,7 +145,13 @@ pub struct Handler {
     debugs: HashMap<u128, Option<FfmpegProcess>>,
 }
 impl Handler {
-    pub fn new(mut default: DefaultDebug) -> (Self, Sender) {
+    /// Create a new handler and a sender.
+    #[cfg(not(feature = "debug-gui"))]
+    pub fn new(default: DefaultDebug) -> HandlerWithSender {
+        let (handler, sender) = Self::new_impl(default);
+        HandlerWithSender { handler, sender }
+    }
+    pub fn new_impl(mut default: DefaultDebug) -> (Self, Sender) {
         if default.mode == Some(DefaultDebugMode::Show) {
             tracing::warn!("showing images isn't supported in this environment");
             default.mode = None;
@@ -160,7 +166,15 @@ impl Handler {
             Sender(send),
         )
     }
-    pub fn run(&mut self) {
+    /// Create a new handler that can't create windows.
+    #[cfg(not(feature = "debug-gui"))]
+    pub fn no_gui(default: DefaultDebug) -> HandlerWithSender {
+        Self::new(default)
+    }
+    /// Run the given handler.
+    ///
+    /// This blocks until a [`Message::Shutdown`] is sent.
+    pub fn run(mut self) {
         for msg in self.recv.iter() {
             match msg {
                 Message::Shutdown => {
