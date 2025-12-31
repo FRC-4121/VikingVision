@@ -4,6 +4,7 @@ pub mod buffer;
 pub mod camera;
 pub mod components;
 pub mod draw;
+pub mod geom;
 pub mod pipeline;
 pub mod serialized;
 pub mod utils;

@@ -437,3 +437,40 @@ impl<T: Data + Clone> Component for BroadcastVec<T> {
         }
     }
 }
+
+#[inline(always)]
+const fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct UnpackFields {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_missing: bool,
+}
+impl Component for UnpackFields {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, _name: &str) -> OutputKind {
+        OutputKind::Single
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        let Ok(input) = context.get_res(None).and_log_err() else {
+            return;
+        };
+        for chan in context.listeners().keys() {
+            if let Some(field) = input.field(chan) {
+                context.submit(chan, field.into_owned());
+            } else if !self.allow_missing {
+                tracing::warn!(type = %disqualified::ShortName(input.type_name()), field = &**chan, "missing field in component");
+            }
+        }
+    }
+}
+#[typetag::serde(name = "unpack")]
+impl ComponentFactory for UnpackFields {
+    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(*self)
+    }
+}

@@ -9,6 +9,7 @@ use crate::pipeline::graph::{GraphComponentId, IdResolver, PipelineGraph};
 use crate::utils::LogErr;
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
+use std::borrow::Cow;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::{Arc, TryLockError};
 use supply::prelude::*;
@@ -53,12 +54,15 @@ impl<A> LogErr for TypeMismatch<A> {
 /// let num: Arc<dyn Data> = Arc::new(42i32);
 ///
 /// // Custom types can implement Data
-/// #[derive(Debug)]
+/// #[derive(Debug, Clone)]
 /// struct MyData(String);
 /// impl Data for MyData {
 ///     // Optionally override debug for custom formatting
 ///     fn debug(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
 ///         write!(f, "MyData({})", self.0)
+///     }
+///     fn clone_to_arc(&self) -> Arc<dyn Data> {
+///         Arc::new(self.clone())
 ///     }
 /// }
 /// ```
@@ -68,6 +72,14 @@ pub trait Data: Any + Send + Sync {
     }
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         Display::fmt(&disqualified::ShortName::of::<Self>(), f)
+    }
+    fn clone_to_arc(&self) -> Arc<dyn Data>;
+    #[allow(unused_variables)]
+    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+        None
+    }
+    fn known_fields(&self) -> &'static [&'static str] {
+        &[]
     }
 }
 impl Debug for dyn Data {
@@ -98,6 +110,12 @@ impl dyn Data {
         }
     }
 }
+impl ToOwned for dyn Data {
+    type Owned = Arc<dyn Data>;
+    fn to_owned(&self) -> Self::Owned {
+        self.clone_to_arc()
+    }
+}
 
 /// A type that can be converted into a [`Arc<dyn Data>`]
 pub trait IntoData {
@@ -125,6 +143,9 @@ macro_rules! impl_via_debug {
             fn debug(&self, f: &mut Formatter) -> fmt::Result {
                 Debug::fmt(self, f)
             }
+            fn clone_to_arc(&self) -> Arc<dyn Data> {
+                Arc::new(*self)
+            }
         }
         impl_via_debug!($($rest),*);
     };
@@ -143,18 +164,60 @@ impl_via_debug!(
     u64,
     usize,
     f32,
-    f64,
-    String,
-    Buffer<'static>
+    f64
 );
-impl<T: Data> Data for Vec<T> {
+impl Data for String {
+    fn debug(&self, f: &mut Formatter) -> fmt::Result {
+        Debug::fmt(&self, f)
+    }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(self.clone())
+    }
+    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+        (field == "len").then(|| Cow::Owned(Arc::new(self.len()) as _))
+    }
+    fn known_fields(&self) -> &'static [&'static str] {
+        &["len"]
+    }
+}
+impl Data for Buffer<'static> {
+    fn debug(&self, f: &mut Formatter) -> fmt::Result {
+        Debug::fmt(&self, f)
+    }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(self.clone())
+    }
+    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+        match field {
+            "width" => Some(Cow::Borrowed(&self.width)),
+            "height" => Some(Cow::Borrowed(&self.height)),
+            "pixels" => Some(Cow::Owned(Arc::new(self.width * self.height) as _)),
+            "raw_size" => Some(Cow::Owned(Arc::new(self.data.len()) as _)),
+            "format" => Some(Cow::Owned(Arc::new(self.format.to_string()) as _)),
+            _ => None,
+        }
+    }
+    fn known_fields(&self) -> &'static [&'static str] {
+        &["width", "height", "pixels", "raw_size", "format"]
+    }
+}
+impl<T: Data + Clone> Data for Vec<T> {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_list()
             .entries(self.iter().map(|e| e as &dyn Data))
             .finish()
     }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(self.clone())
+    }
+    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+        (field == "len").then(|| Cow::Owned(Arc::new(self.len()) as _))
+    }
+    fn known_fields(&self) -> &'static [&'static str] {
+        &["len"]
+    }
 }
-impl<T: Data> Data for Mutex<T> {
+impl<T: Data + Clone> Data for Mutex<T> {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         let mut d = f.debug_struct("Mutex");
         match self.try_lock() {
@@ -171,11 +234,57 @@ impl<T: Data> Data for Mutex<T> {
         d.field("poisoned", &self.is_poisoned());
         d.finish_non_exhaustive()
     }
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        let poisoned = self.is_poisoned();
+        let inner = self.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let new = Mutex::new(inner);
+        if poisoned {
+            // to poison the new mutex, we trigger an unwind past its guard.
+            // we use resume_unwind because we don't want to trigger any panic handlers,
+            // and an empty payload to avoid allocation-- as far as anyone else is concerned,
+            // this panic didn't happen.
+            // we can be fairly confident that this won't abort the program because our panics
+            // have to unwind in order for the mutex to be poisoned in the first place. It's possible
+            // that the mode was set to abort afterwards, but that's unlikely.
+            let _ = std::panic::catch_unwind(|| {
+                let _guard = new.lock();
+                std::panic::resume_unwind(Box::new(()));
+            });
+        }
+        Arc::new(new)
+    }
+    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+        (field == "inner").then(|| {
+            Cow::Owned(
+                self.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone_to_arc(),
+            )
+        })
+    }
+    fn known_fields(&self) -> &'static [&'static str] {
+        &["inner"]
+    }
+}
+static NUMS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"];
+macro_rules! make_1 {
+    ($ign:ident) => {
+        1
+    };
+}
+macro_rules! extract {
+    ($this:expr, $val:ident; $($fields:tt),*;) => {};
+    ($this:expr, $val:ident; $field:tt $(, $fields:tt)*; $id:ident $(, $ids:ident)*) => {
+        if $val == stringify!($field) {
+            return Some(Cow::Borrowed(&$this.$field));
+        }
+        extract!($this, $val; $($fields),*; $($ids),*);
+    };
 }
 macro_rules! impl_for_tuple {
     () => {};
     ($head:ident $(, $tail:ident)*) => {
-        impl<$head: Data, $($tail: Data,)*> Data for ($head, $($tail,)*) {
+        impl<$head: Data + Clone, $($tail: Data + Clone,)*> Data for ($head, $($tail,)*) {
             #[allow(non_snake_case)]
             fn debug(&self, f: &mut Formatter) -> fmt::Result {
                 let mut tuple = f.debug_tuple("");
@@ -183,6 +292,17 @@ macro_rules! impl_for_tuple {
                 tuple.field(&($head as &dyn Data));
                 $(tuple.field(&($tail as &dyn Data));)*
                 tuple.finish()
+            }
+            fn clone_to_arc(&self) -> Arc<dyn Data> {
+                Arc::new(self.clone())
+            }
+            fn known_fields(&self) -> &'static [&'static str] {
+                const LEN: usize = 1 $(+ make_1!($tail))*;
+                &NUMS[..LEN]
+            }
+            fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+                extract!(self, field; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12; $head $(, $tail)*);
+                None
             }
         }
         impl_for_tuple!($($tail),*);

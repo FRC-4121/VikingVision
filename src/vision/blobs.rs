@@ -1,7 +1,9 @@
 use crate::pipeline::prelude::Data;
 use smallvec::{SmallVec, smallvec};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
+use std::sync::Arc;
 
 fn filter_pixel(v: &[u8]) -> bool {
     v.iter().any(|&v| v > 0)
@@ -108,7 +110,30 @@ impl Blob {
         self.pixels as f64 / self.area() as f64
     }
 }
-impl Data for Blob {}
+impl Data for Blob {
+    fn clone_to_arc(&self) -> Arc<dyn Data> {
+        Arc::new(*self)
+    }
+    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+        match field {
+            "min_x" => Some(Cow::Borrowed(&self.min_x)),
+            "max_x" => Some(Cow::Borrowed(&self.max_x)),
+            "min_y" => Some(Cow::Borrowed(&self.min_y)),
+            "max_y" => Some(Cow::Borrowed(&self.max_y)),
+            "pixels" => Some(Cow::Borrowed(&self.pixels)),
+            "width" => Some(Cow::Owned(Arc::new(self.width()) as _)),
+            "height" => Some(Cow::Owned(Arc::new(self.height()) as _)),
+            "area" => Some(Cow::Owned(Arc::new(self.area()) as _)),
+            "filled" => Some(Cow::Owned(Arc::new(self.filled()) as _)),
+            _ => None,
+        }
+    }
+    fn known_fields(&self) -> &'static [&'static str] {
+        &[
+            "min_x", "max_x", "min_y", "max_y", "pixels", "width", "height", "area", "filled",
+        ]
+    }
+}
 
 /// State returned from [`BlobWithBottom::eat`]
 #[derive(Debug)]

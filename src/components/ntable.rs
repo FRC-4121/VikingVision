@@ -332,6 +332,49 @@ impl_atip!(
     f64, Double, "double";
     String, String, "string";
 );
+macro_rules! impl_for_geom {
+    ($($name:ident)*) => {
+        $(
+            impl AddToInProgress for crate::geom::$name {
+                fn push_to(self, arr: &mut InProgressArray) {
+                    match arr {
+                        InProgressArray::Unset => *arr = InProgressArray::Double(self.0.to_vec()),
+                        InProgressArray::Double(vec) => vec.extend_from_slice(&self.0),
+                        InProgressArray::Bool(_) => {
+                            tracing::error!(
+                                array = "bool",
+                                self = "double",
+                                "attempted to build a heterogenous array"
+                            );
+                        }
+                        InProgressArray::Int(_) => {
+                            tracing::error!(
+                                array = "int",
+                                self = "double",
+                                "attempted to build a heterogenous array"
+                            );
+                        }
+                        InProgressArray::Float(_) => {
+                            tracing::error!(
+                                array = "float",
+                                self = "double",
+                                "attempted to build a heterogenous array"
+                            );
+                        }
+                        InProgressArray::String(_) => {
+                            tracing::error!(
+                                array = "string",
+                                self = "double",
+                                "attempted to build a heterogenous array"
+                            );
+                        }
+                    }
+                }
+            }
+        )*
+    };
+}
+impl_for_geom!(Vec3 Mat3 Quat EulerXYZ);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NtPrimitiveFactory {
