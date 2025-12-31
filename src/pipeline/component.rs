@@ -190,7 +190,7 @@ impl Data for Buffer<'static> {
     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
         match field {
             "width" => Some(Cow::Borrowed(&self.width)),
-            "height" => Some(Cow::Borrowed(&self.width)),
+            "height" => Some(Cow::Borrowed(&self.height)),
             "pixels" => Some(Cow::Owned(Arc::new(self.width * self.height) as _)),
             "raw_size" => Some(Cow::Owned(Arc::new(self.data.len()) as _)),
             "format" => Some(Cow::Owned(Arc::new(self.format.to_string()) as _)),
