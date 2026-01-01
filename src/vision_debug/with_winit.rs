@@ -52,12 +52,22 @@ enum DebugKind {
         String,
     ),
 }
+impl DebugKind {
+    fn take_surface(&mut self) -> Option<softbuffer::Surface<OwnedDisplayHandle, Window>> {
+        if let DebugKind::Window(surface, ..) = std::mem::replace(self, DebugKind::Ignore) {
+            Some(surface)
+        } else {
+            None
+        }
+    }
+}
 
 struct WinitHandler {
     default: DefaultDebug,
     context: softbuffer::Context<OwnedDisplayHandle>,
-    windows: HashMap<WindowId, u128>,
+    live_windows: HashMap<WindowId, u128>,
     debugs: HashMap<u128, DebugKind>,
+    dead_windows: HashMap<WindowId, softbuffer::Surface<OwnedDisplayHandle, Window>>,
     reader: dispatch::Reader,
 }
 impl ApplicationHandler<Message> for WinitHandler {
@@ -68,19 +78,22 @@ impl ApplicationHandler<Message> for WinitHandler {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed)
-            && let Some(debug_id) = self.windows.remove(&window_id)
-            && let Some(debug) = self.debugs.get_mut(&debug_id)
-            && let DebugKind::Window(..) = debug
-        {
-            *debug = DebugKind::Ignore;
+        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
+            if let Some(debug_id) = self.live_windows.remove(&window_id)
+                && let Some(debug) = self.debugs.get_mut(&debug_id)
+                && let DebugKind::Window(..) = debug
+            {
+                *debug = DebugKind::Ignore;
+            } else {
+                self.dead_windows.remove(&window_id);
+            }
         }
     }
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Message) {
         match event {
             Message::Shutdown => {
                 self.debugs.clear();
-                self.windows.clear();
+                self.live_windows.clear();
                 event_loop.exit();
             }
             Message::HasImage => {
@@ -110,7 +123,7 @@ impl ApplicationHandler<Message> for WinitHandler {
                             image.format,
                         )
                         .map_or(DebugKind::Ignore, DebugKind::Ffmpeg),
-                        DebugMode::Show { mut title } => {
+                        DebugMode::Show { title } => {
                             let res = event_loop.create_window(
                                 Window::default_attributes()
                                     .with_title(format_title(
@@ -123,7 +136,10 @@ impl ApplicationHandler<Message> for WinitHandler {
                             );
                             match res {
                                 Ok(window) => match softbuffer::Surface::new(&self.context, window) {
-                                    Ok(surface) => DebugKind::Window(surface, title.take(), name.clone()),
+                                    Ok(surface) => {
+                                        self.live_windows.insert(surface.window().id(), id);
+                                        DebugKind::Window(surface, title.clone(), name.clone())
+                                    },
                                     Err(err) => {
                                     tracing::error!(%err, "failed to create softbuffer surface");
                                         DebugKind::Ignore
@@ -155,7 +171,9 @@ impl ApplicationHandler<Message> for WinitHandler {
                             );
                             if let Err(err) = res {
                                 tracing::error!(%err, "failed to resize buffer");
-                                *dbg = DebugKind::Ignore;
+                                if let Some(surface) = dbg.take_surface() {
+                                    self.dead_windows.insert(surface.window().id(), surface);
+                                }
                                 return;
                             }
                             let mut had_err = false;
@@ -205,8 +223,8 @@ impl ApplicationHandler<Message> for WinitHandler {
                                     had_err = true;
                                 }
                             }
-                            if had_err {
-                                *dbg = DebugKind::Ignore;
+                            if had_err && let Some(surface) = dbg.take_surface() {
+                                self.dead_windows.insert(surface.window().id(), surface);
                             }
                         }
                     }
@@ -246,8 +264,9 @@ impl Handler {
                                     WinitHandler {
                                         default,
                                         context,
-                                        windows: HashMap::new(),
+                                        live_windows: HashMap::new(),
                                         debugs: HashMap::new(),
+                                        dead_windows: HashMap::new(),
                                         reader,
                                     },
                                     event_loop,
