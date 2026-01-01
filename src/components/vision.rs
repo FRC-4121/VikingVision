@@ -496,10 +496,20 @@ impl ComponentFactory for MedianFilterFactory {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VisionDebugComponent {
     #[serde(flatten)]
-    mode: Option<vision_debug::DebugMode>,
+    pub mode: Option<vision_debug::DebugMode>,
+    #[serde(skip, default = "std::sync::Once::new")]
+    pub logged_warning: std::sync::Once,
+}
+impl Clone for VisionDebugComponent {
+    fn clone(&self) -> Self {
+        Self {
+            mode: self.mode.clone(),
+            logged_warning: std::sync::Once::new(),
+        }
+    }
 }
 impl Component for VisionDebugComponent {
     fn inputs(&self) -> Inputs {
@@ -513,7 +523,8 @@ impl Component for VisionDebugComponent {
             return;
         };
         let Some(sender) = vision_debug::GLOBAL_SENDER.get() else {
-            tracing::warn!("no debug handler registered");
+            self.logged_warning
+                .call_once(|| tracing::warn!("no debug handler registered"));
             return;
         };
         sender.send_image(vision_debug::DebugImage {

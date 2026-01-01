@@ -99,7 +99,7 @@ impl DefaultDebug {
         }
         if self.default_title.is_empty() {
             match std::env::var("VV_DEBUG_WINDOW_TITLE") {
-                Ok(path) if !path.is_empty() => self.default_title = path,
+                Ok(title) if !title.is_empty() => self.default_title = title,
                 Err(std::env::VarError::NotUnicode(path)) => {
                     tracing::error!(
                         ?path,

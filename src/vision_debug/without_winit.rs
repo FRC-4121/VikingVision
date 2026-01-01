@@ -35,10 +35,12 @@ impl FfmpegProcess {
                     "child ffmpeg process stopped"
                 );
                 self.running = false;
+                return;
             }
             Err(err) => {
                 tracing::error!(%err, id = self.child.id(), "failed to read child ffmpeg process's status");
                 self.running = false;
+                return;
             }
         }
         let Some(stdin) = &mut self.child.stdin else {
