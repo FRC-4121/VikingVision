@@ -3,16 +3,22 @@
 
 use crate::buffer::Buffer;
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
 use std::sync::OnceLock;
+
+mod dispatch;
 
 #[cfg(feature = "debug-gui")]
 mod with_winit;
 mod without_winit;
 
 #[cfg(feature = "debug-gui")]
-pub use with_winit::{Handler, Sender};
+use with_winit as backend;
 #[cfg(not(feature = "debug-gui"))]
-pub use without_winit::{Handler, Sender};
+use without_winit as backend;
+
+pub use backend::Handler;
+use backend::Signal;
 
 /// What to do with the image we received.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,14 +129,42 @@ pub struct DebugImage {
     pub mode: DebugMode,
 }
 
+struct ById(DebugImage);
+impl PartialEq for ById {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id == other.0.id
+    }
+}
+impl Eq for ById {}
+impl Hash for ById {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.id.hash(state);
+    }
+}
+
 /// A message to be handled by the debug handler.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Message {
-    DebugImage(DebugImage),
+    HasImage,
     Shutdown,
 }
 
 pub static GLOBAL_SENDER: OnceLock<Sender> = OnceLock::new();
+
+pub struct Sender {
+    signal: Signal,
+    writer: dispatch::Writer,
+}
+impl Sender {
+    pub fn send_image(&self, message: DebugImage) {
+        if self.writer.write(message) {
+            self.signal.send(Message::HasImage);
+        }
+    }
+    pub fn shutdown(&self) {
+        self.signal.send(Message::Shutdown);
+    }
+}
 
 /// A pair of the handler and a sender.
 pub struct HandlerWithSender {

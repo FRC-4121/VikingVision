@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 
 use crate::buffer::PixelFormat;
@@ -10,21 +10,21 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy, OwnedDisplay
 use winit::window::{Window, WindowId};
 
 #[derive(Clone)]
-enum SenderInner {
+enum SignalInner {
     Winit(EventLoopProxy<Message>),
-    Fallback(without_winit::Sender),
+    Fallback(without_winit::Signal),
 }
 
 /// A sender to a handler.
 ///
 /// This can be used from any thread, but the handler needs to be on the main thread.
 #[derive(Clone)]
-pub struct Sender(SenderInner);
-impl Sender {
+pub struct Signal(SignalInner);
+impl Signal {
     pub fn send(&self, msg: Message) {
         match &self.0 {
-            SenderInner::Winit(proxy) => drop(proxy.send_event(msg)),
-            SenderInner::Fallback(fallback) => fallback.send(msg),
+            SignalInner::Winit(proxy) => drop(proxy.send_event(msg)),
+            SignalInner::Fallback(fallback) => fallback.send(msg),
         }
     }
 }
@@ -58,6 +58,7 @@ struct WinitHandler {
     context: softbuffer::Context<OwnedDisplayHandle>,
     windows: HashMap<WindowId, u128>,
     debugs: HashMap<u128, DebugKind>,
+    reader: dispatch::Reader,
 }
 impl ApplicationHandler<Message> for WinitHandler {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
@@ -82,13 +83,17 @@ impl ApplicationHandler<Message> for WinitHandler {
                 self.windows.clear();
                 event_loop.exit();
             }
-            Message::DebugImage(DebugImage {
-                mut image,
-                name,
-                id,
-                mut mode,
-            }) => {
-                let dbg = self.debugs.entry(id).or_insert_with(|| {
+            Message::HasImage => {
+                let mut images = HashSet::new();
+                self.reader.drain(|image| drop(images.replace(ById(image))));
+                for ById(DebugImage {
+                    mut image,
+                    name,
+                    id,
+                    mut mode,
+                }) in images.drain()
+                {
+                    let dbg = self.debugs.entry(id).or_insert_with(|| {
                     if mode == DebugMode::Auto {
                         mode = self.default.mode.map_or(DebugMode::None, From::from);
                     }
@@ -132,72 +137,77 @@ impl ApplicationHandler<Message> for WinitHandler {
                         }
                     }
                 });
-                match dbg {
-                    DebugKind::Ignore => {}
-                    DebugKind::Ffmpeg(proc) => proc.accept(image),
-                    DebugKind::Window(surface, title, last_name) => {
-                        if name != *last_name {
-                            surface.window().set_title(&format_title(
-                                title.as_deref(),
-                                &self.default.default_title,
-                                &name,
-                                id,
-                            ));
-                        }
-                        let res = surface.resize(
-                            NonZero::new(image.width).unwrap_or(ONE),
-                            NonZero::new(image.height).unwrap_or(ONE),
-                        );
-                        if let Err(err) = res {
-                            tracing::error!(%err, "failed to resize buffer");
-                            *dbg = DebugKind::Ignore;
-                            return;
-                        }
-                        let mut had_err = false;
-                        match surface.buffer_mut() {
-                            Ok(mut buf) => {
-                                match image.format {
-                                    PixelFormat::ANON_1 => {
-                                        for (ipx, opx) in image.data.chunks(1).zip(&mut *buf) {
-                                            let [r] = *ipx else { unreachable!() };
-                                            *opx = u32::from_le_bytes([0, 0, r, 0]);
-                                        }
-                                    }
-                                    PixelFormat::ANON_2 => {
-                                        for (ipx, opx) in image.data.chunks(2).zip(&mut *buf) {
-                                            let [r, g] = *ipx else { unreachable!() };
-                                            *opx = u32::from_le_bytes([0, g, r, 0]);
-                                        }
-                                    }
-                                    f => {
-                                        if f.is_anon() || f == PixelFormat::RGBA {
-                                            for (ipx, opx) in
-                                                image.data.chunks(f.pixel_size()).zip(&mut *buf)
-                                            {
-                                                let [r, g, b, ..] = *ipx else { unreachable!() };
-                                                *opx = u32::from_le_bytes([b, g, r, 0]);
-                                            }
-                                        } else {
-                                            image.convert_inplace(PixelFormat::RGB);
-                                            for (ipx, opx) in image.data.chunks(3).zip(&mut *buf) {
-                                                let [r, g, b] = *ipx else { unreachable!() };
-                                                *opx = u32::from_le_bytes([b, g, r, 0]);
+                    match dbg {
+                        DebugKind::Ignore => {}
+                        DebugKind::Ffmpeg(proc) => proc.accept(image),
+                        DebugKind::Window(surface, title, last_name) => {
+                            if name != *last_name {
+                                surface.window().set_title(&format_title(
+                                    title.as_deref(),
+                                    &self.default.default_title,
+                                    &name,
+                                    id,
+                                ));
+                            }
+                            let res = surface.resize(
+                                NonZero::new(image.width).unwrap_or(ONE),
+                                NonZero::new(image.height).unwrap_or(ONE),
+                            );
+                            if let Err(err) = res {
+                                tracing::error!(%err, "failed to resize buffer");
+                                *dbg = DebugKind::Ignore;
+                                return;
+                            }
+                            let mut had_err = false;
+                            match surface.buffer_mut() {
+                                Ok(mut buf) => {
+                                    match image.format {
+                                        PixelFormat::ANON_1 => {
+                                            for (ipx, opx) in image.data.chunks(1).zip(&mut *buf) {
+                                                let [r] = *ipx else { unreachable!() };
+                                                *opx = u32::from_le_bytes([0, 0, r, 0]);
                                             }
                                         }
+                                        PixelFormat::ANON_2 => {
+                                            for (ipx, opx) in image.data.chunks(2).zip(&mut *buf) {
+                                                let [r, g] = *ipx else { unreachable!() };
+                                                *opx = u32::from_le_bytes([0, g, r, 0]);
+                                            }
+                                        }
+                                        f => {
+                                            if f.is_anon() || f == PixelFormat::RGBA {
+                                                for (ipx, opx) in
+                                                    image.data.chunks(f.pixel_size()).zip(&mut *buf)
+                                                {
+                                                    let [r, g, b, ..] = *ipx else {
+                                                        unreachable!()
+                                                    };
+                                                    *opx = u32::from_le_bytes([b, g, r, 0]);
+                                                }
+                                            } else {
+                                                image.convert_inplace(PixelFormat::RGB);
+                                                for (ipx, opx) in
+                                                    image.data.chunks(3).zip(&mut *buf)
+                                                {
+                                                    let [r, g, b] = *ipx else { unreachable!() };
+                                                    *opx = u32::from_le_bytes([b, g, r, 0]);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Err(err) = buf.present() {
+                                        tracing::error!(%err, "failed to present surface buffer");
+                                        had_err = true;
                                     }
                                 }
-                                if let Err(err) = buf.present() {
-                                    tracing::error!(%err, "failed to present surface buffer");
+                                Err(ref err) => {
+                                    tracing::error!(%err, "failed to get surface buffer");
                                     had_err = true;
                                 }
                             }
-                            Err(ref err) => {
-                                tracing::error!(%err, "failed to get surface buffer");
-                                had_err = true;
+                            if had_err {
+                                *dbg = DebugKind::Ignore;
                             }
-                        }
-                        if had_err {
-                            *dbg = DebugKind::Ignore;
                         }
                     }
                 }
@@ -223,6 +233,7 @@ pub struct Handler {
 impl Handler {
     /// Create a new handler and a sender.
     pub fn new(default: DefaultDebug) -> HandlerWithSender {
+        let (writer, reader) = dispatch::pair();
         match EventLoop::with_user_event().build() {
             Ok(event_loop) => {
                 tracing::info!("successfully initialized event loop");
@@ -237,34 +248,49 @@ impl Handler {
                                         context,
                                         windows: HashMap::new(),
                                         debugs: HashMap::new(),
+                                        reader,
                                     },
                                     event_loop,
                                 ),
                             },
-                            sender: Sender(SenderInner::Winit(proxy)),
+                            sender: Sender {
+                                signal: Signal(SignalInner::Winit(proxy)),
+                                writer,
+                            },
                         }
                     }
                     Err(err) => {
                         tracing::error!(%err, "failed to initialize softbuffer context");
-                        Self::no_gui(default)
+                        Self::no_gui_impl(default, writer, reader)
                     }
                 }
             }
             Err(err) => {
                 tracing::error!(%err, "failed to initialize event loop");
-                Self::no_gui(default)
+                Self::no_gui_impl(default, writer, reader)
             }
         }
     }
-    /// Create a new handler that can't create windows.
-    pub fn no_gui(default: DefaultDebug) -> HandlerWithSender {
-        let (handler, sender) = without_winit::Handler::new_impl(default);
+    fn no_gui_impl(
+        default: DefaultDebug,
+        writer: dispatch::Writer,
+        reader: dispatch::Reader,
+    ) -> HandlerWithSender {
+        let (handler, sender) = without_winit::Handler::new_impl(default, reader);
         HandlerWithSender {
             handler: Self {
                 inner: HandlerInner::Fallback(handler),
             },
-            sender: Sender(SenderInner::Fallback(sender)),
+            sender: Sender {
+                signal: Signal(SignalInner::Fallback(sender)),
+                writer,
+            },
         }
+    }
+    /// Create a new handler that can't create windows.
+    pub fn no_gui(default: DefaultDebug) -> HandlerWithSender {
+        let (writer, reader) = dispatch::pair();
+        Self::no_gui_impl(default, writer, reader)
     }
     /// Run the given handler.
     ///

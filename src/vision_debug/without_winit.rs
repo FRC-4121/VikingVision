@@ -1,6 +1,6 @@
 use super::*;
 use crate::buffer::PixelFormat;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -9,8 +9,8 @@ use std::sync::mpsc;
 ///
 /// This can be used from any thread, but the handler needs to be on the main thread.
 #[derive(Clone)]
-pub struct Sender(mpsc::Sender<Message>);
-impl Sender {
+pub struct Signal(mpsc::Sender<Message>);
+impl Signal {
     pub fn send(&self, msg: Message) {
         let _ = self.0.send(msg);
     }
@@ -143,15 +143,20 @@ pub struct Handler {
     default: DefaultDebug,
     recv: mpsc::Receiver<Message>,
     debugs: HashMap<u128, Option<FfmpegProcess>>,
+    reader: dispatch::Reader,
 }
 impl Handler {
     /// Create a new handler and a sender.
     #[cfg(not(feature = "debug-gui"))]
     pub fn new(default: DefaultDebug) -> HandlerWithSender {
-        let (handler, sender) = Self::new_impl(default);
-        HandlerWithSender { handler, sender }
+        let (writer, reader) = dispatch::pair();
+        let (handler, signal) = Self::new_impl(default, reader);
+        HandlerWithSender {
+            handler,
+            sender: Sender { signal, writer },
+        }
     }
-    pub fn new_impl(mut default: DefaultDebug) -> (Self, Sender) {
+    pub fn new_impl(mut default: DefaultDebug, reader: dispatch::Reader) -> (Self, Signal) {
         if default.mode == Some(DefaultDebugMode::Show) {
             tracing::warn!("showing images isn't supported in this environment");
             default.mode = None;
@@ -162,8 +167,9 @@ impl Handler {
                 default,
                 recv,
                 debugs: HashMap::new(),
+                reader,
             },
-            Sender(send),
+            Signal(send),
         )
     }
     /// Create a new handler that can't create windows.
@@ -175,47 +181,52 @@ impl Handler {
     ///
     /// This blocks until a [`Message::Shutdown`] is sent.
     pub fn run(mut self) {
+        let mut images = HashSet::new();
         for msg in self.recv.iter() {
             match msg {
                 Message::Shutdown => {
                     self.debugs.clear();
                     break;
                 }
-                Message::DebugImage(DebugImage {
-                    image,
-                    name,
-                    id,
-                    mut mode,
-                }) => {
-                    let cmd = self.debugs.entry(id).or_insert_with(|| {
-                        match mode {
-                            DebugMode::Auto => {
-                                mode = self.default.mode.map_or(DebugMode::None, From::from);
+                Message::HasImage => {
+                    self.reader.drain(|image| drop(images.replace(ById(image))));
+                    for ById(DebugImage {
+                        image,
+                        name,
+                        id,
+                        mut mode,
+                    }) in images.drain()
+                    {
+                        let cmd = self.debugs.entry(id).or_insert_with(|| {
+                            match mode {
+                                DebugMode::Auto => {
+                                    mode = self.default.mode.map_or(DebugMode::None, From::from);
+                                }
+                                DebugMode::Show { .. } => {
+                                    tracing::warn!(
+                                        "showing images isn't supported in this environment"
+                                    );
+                                    mode = DebugMode::None;
+                                }
+                                _ => {}
                             }
-                            DebugMode::Show { .. } => {
-                                tracing::warn!(
-                                    "showing images isn't supported in this environment"
-                                );
-                                mode = DebugMode::None;
+                            if let DebugMode::Save { path } = mode {
+                                create_ffmpeg_command(
+                                    path.as_deref(),
+                                    &self.default.default_path,
+                                    &name,
+                                    id,
+                                    image.width,
+                                    image.height,
+                                    image.format,
+                                )
+                            } else {
+                                None
                             }
-                            _ => {}
+                        });
+                        if let Some(proc) = cmd {
+                            proc.accept(image);
                         }
-                        if let DebugMode::Save { path } = mode {
-                            create_ffmpeg_command(
-                                path.as_deref(),
-                                &self.default.default_path,
-                                &name,
-                                id,
-                                image.width,
-                                image.height,
-                                image.format,
-                            )
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(proc) = cmd {
-                        proc.accept(image);
                     }
                 }
             }

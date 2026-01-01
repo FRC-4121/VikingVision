@@ -15,6 +15,7 @@ autoexamples = false
 
 [dependencies]
 apriltag-sys = { path = "apriltag-sys", optional = true }
+boxcar = "0.2.14"
 disqualified = "1.0.0"
 humantime-serde = "1.1.1"
 libc = { version = "0.2", optional = true }

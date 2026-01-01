@@ -516,21 +516,19 @@ impl Component for VisionDebugComponent {
             tracing::warn!("no debug handler registered");
             return;
         };
-        sender.send(vision_debug::Message::DebugImage(
-            vision_debug::DebugImage {
-                image: image.clone_static(),
-                name: context
-                    .context
-                    .request::<PipelineName>()
-                    .map_or_else(|| "<anon>".to_string(), |n| n.0.to_string()),
-                id: context
-                    .context
-                    .request::<PipelineId>()
-                    .map_or(0, |id| id.0 as _)
-                    | ((context.comp_id().index() as u128) << 64),
-                mode: self.mode.clone().unwrap_or_default(),
-            },
-        ));
+        sender.send_image(vision_debug::DebugImage {
+            image: image.clone_static(),
+            name: context
+                .context
+                .request::<PipelineName>()
+                .map_or_else(|| "<anon>".to_string(), |n| n.0.to_string()),
+            id: context
+                .context
+                .request::<PipelineId>()
+                .map_or(0, |id| id.0 as _)
+                | ((context.comp_id().index() as u128) << 64),
+            mode: self.mode.clone().unwrap_or_default(),
+        });
     }
 }
 #[typetag::serde(name = "vision-debug")]
