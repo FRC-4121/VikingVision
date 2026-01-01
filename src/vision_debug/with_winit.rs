@@ -50,6 +50,7 @@ enum DebugKind {
         softbuffer::Surface<OwnedDisplayHandle, Window>,
         Option<String>,
         String,
+        (u32, u32),
     ),
 }
 impl DebugKind {
@@ -138,7 +139,7 @@ impl ApplicationHandler<Message> for WinitHandler {
                                 Ok(window) => match softbuffer::Surface::new(&self.context, window) {
                                     Ok(surface) => {
                                         self.live_windows.insert(surface.window().id(), id);
-                                        DebugKind::Window(surface, title.clone(), name.clone())
+                                        DebugKind::Window(surface, title.clone(), name.clone(), (0, 0))
                                     },
                                     Err(err) => {
                                     tracing::error!(%err, "failed to create softbuffer surface");
@@ -156,7 +157,7 @@ impl ApplicationHandler<Message> for WinitHandler {
                     match dbg {
                         DebugKind::Ignore => {}
                         DebugKind::Ffmpeg(proc) => proc.accept(image),
-                        DebugKind::Window(surface, title, last_name) => {
+                        DebugKind::Window(surface, title, last_name, (last_width, last_height)) => {
                             if name != *last_name {
                                 surface.window().set_title(&format_title(
                                     title.as_deref(),
@@ -164,6 +165,13 @@ impl ApplicationHandler<Message> for WinitHandler {
                                     &name,
                                     id,
                                 ));
+                            }
+                            if *last_width != image.width || *last_height != image.height {
+                                let _ = surface.window().request_inner_size(
+                                    winit::dpi::PhysicalSize::new(image.width, image.height),
+                                );
+                                *last_width = image.width;
+                                *last_height = image.height;
                             }
                             let res = surface.resize(
                                 NonZero::new(image.width).unwrap_or(ONE),
