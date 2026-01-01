@@ -5,5 +5,5 @@
 # User Guide
 
 - [Installation](guide/install.md)
-- [Running Piplines](guide/pipelines.md)
+- [Running Pipelines](guide/pipelines.md)
 - [Using the Playgrond](guide/playground.md)
