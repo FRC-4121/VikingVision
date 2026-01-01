@@ -156,8 +156,18 @@ fn main() {
             })
     });
 
+    let mut env_var = "VV_LOG";
+    if std::env::var_os("VV_LOG").is_none() && std::env::var_os("RUST_LOG").is_some() {
+        env_var = "RUST_LOG";
+    }
+
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_env_var(env_var)
+                .with_default_directive(tracing::Level::INFO.into())
+                .from_env_lossy(),
+        )
         .with(tracing_subscriber::fmt::layer().with_ansi(args.color.use_ansi()))
         .with(
             tracing_subscriber::fmt::layer()
