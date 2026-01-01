@@ -1,0 +1,335 @@
+use std::collections::{HashMap, HashSet};
+use std::num::NonZero;
+
+use crate::buffer::PixelFormat;
+
+use super::*;
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy, OwnedDisplayHandle};
+use winit::window::{Window, WindowId};
+
+#[derive(Clone)]
+enum SignalInner {
+    Winit(EventLoopProxy<Message>),
+    Fallback(without_winit::Signal),
+}
+
+/// A sender to a handler.
+///
+/// This can be used from any thread, but the handler needs to be on the main thread.
+#[derive(Clone)]
+pub struct Signal(SignalInner);
+impl Signal {
+    pub fn send(&self, msg: Message) {
+        match &self.0 {
+            SignalInner::Winit(proxy) => drop(proxy.send_event(msg)),
+            SignalInner::Fallback(fallback) => fallback.send(msg),
+        }
+    }
+}
+
+fn format_title(title: Option<&str>, default_title: &str, name: &str, id: u128) -> String {
+    let pattern = match title {
+        None | Some("") => default_title,
+        Some(s) => s,
+    };
+    if pattern.is_empty() {
+        format!("{name} ({id:0>32x})")
+    } else {
+        pattern
+            .replace("%N", name)
+            .replace("%i", &format!("{id:0>32x}"))
+    }
+}
+
+enum DebugKind {
+    Ignore,
+    Ffmpeg(without_winit::FfmpegProcess),
+    Window(
+        softbuffer::Surface<OwnedDisplayHandle, Window>,
+        Option<String>,
+        String,
+        (u32, u32),
+    ),
+}
+impl DebugKind {
+    fn take_surface(&mut self) -> Option<softbuffer::Surface<OwnedDisplayHandle, Window>> {
+        if let DebugKind::Window(surface, ..) = std::mem::replace(self, DebugKind::Ignore) {
+            Some(surface)
+        } else {
+            None
+        }
+    }
+}
+
+struct WinitHandler {
+    default: DefaultDebug,
+    context: softbuffer::Context<OwnedDisplayHandle>,
+    live_windows: HashMap<WindowId, u128>,
+    debugs: HashMap<u128, DebugKind>,
+    dead_windows: HashMap<WindowId, softbuffer::Surface<OwnedDisplayHandle, Window>>,
+    reader: dispatch::Reader,
+}
+impl ApplicationHandler<Message> for WinitHandler {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
+            if let Some(debug_id) = self.live_windows.remove(&window_id)
+                && let Some(debug) = self.debugs.get_mut(&debug_id)
+                && let DebugKind::Window(..) = debug
+            {
+                *debug = DebugKind::Ignore;
+            } else {
+                self.dead_windows.remove(&window_id);
+            }
+        }
+    }
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Message) {
+        match event {
+            Message::Shutdown => {
+                self.debugs.clear();
+                self.live_windows.clear();
+                event_loop.exit();
+            }
+            Message::HasImage => {
+                let mut images = HashSet::new();
+                self.reader.drain(|image| drop(images.replace(ById(image))));
+                for ById(DebugImage {
+                    mut image,
+                    name,
+                    id,
+                    mut mode,
+                }) in images.drain()
+                {
+                    let dbg = self.debugs.entry(id).or_insert_with(|| {
+                    if mode == DebugMode::Auto {
+                        mode = self.default.mode.map_or(DebugMode::None, From::from);
+                    }
+                    match mode {
+                        DebugMode::Auto => unreachable!(),
+                        DebugMode::None => DebugKind::Ignore,
+                        DebugMode::Save { path } => without_winit::create_ffmpeg_command(
+                            path.as_deref(),
+                            &self.default.default_path,
+                            &name,
+                            id,
+                            image.width,
+                            image.height,
+                            image.format,
+                        )
+                        .map_or(DebugKind::Ignore, DebugKind::Ffmpeg),
+                        DebugMode::Show { title } => {
+                            let res = event_loop.create_window(
+                                Window::default_attributes()
+                                    .with_title(format_title(
+                                        title.as_deref(),
+                                        &self.default.default_title,
+                                        &name,
+                                        id,
+                                    ))
+                                    .with_resizable(false),
+                            );
+                            match res {
+                                Ok(window) => match softbuffer::Surface::new(&self.context, window) {
+                                    Ok(surface) => {
+                                        self.live_windows.insert(surface.window().id(), id);
+                                        DebugKind::Window(surface, title.clone(), name.clone(), (0, 0))
+                                    },
+                                    Err(err) => {
+                                    tracing::error!(%err, "failed to create softbuffer surface");
+                                        DebugKind::Ignore
+                                    }
+                                },
+                                Err(err) => {
+                                    tracing::error!(%err, "failed to create window");
+                                    DebugKind::Ignore
+                                }
+                            }
+                        }
+                    }
+                });
+                    match dbg {
+                        DebugKind::Ignore => {}
+                        DebugKind::Ffmpeg(proc) => proc.accept(image),
+                        DebugKind::Window(surface, title, last_name, (last_width, last_height)) => {
+                            if name != *last_name {
+                                surface.window().set_title(&format_title(
+                                    title.as_deref(),
+                                    &self.default.default_title,
+                                    &name,
+                                    id,
+                                ));
+                            }
+                            if *last_width != image.width || *last_height != image.height {
+                                let _ = surface.window().request_inner_size(
+                                    winit::dpi::PhysicalSize::new(image.width, image.height),
+                                );
+                                *last_width = image.width;
+                                *last_height = image.height;
+                            }
+                            let res = surface.resize(
+                                NonZero::new(image.width).unwrap_or(ONE),
+                                NonZero::new(image.height).unwrap_or(ONE),
+                            );
+                            if let Err(err) = res {
+                                tracing::error!(%err, "failed to resize buffer");
+                                if let Some(surface) = dbg.take_surface() {
+                                    self.dead_windows.insert(surface.window().id(), surface);
+                                }
+                                return;
+                            }
+                            let mut had_err = false;
+                            match surface.buffer_mut() {
+                                Ok(mut buf) => {
+                                    match image.format {
+                                        PixelFormat::ANON_1 => {
+                                            for (ipx, opx) in image.data.chunks(1).zip(&mut *buf) {
+                                                let [r] = *ipx else { unreachable!() };
+                                                *opx = u32::from_le_bytes([0, 0, r, 0]);
+                                            }
+                                        }
+                                        PixelFormat::ANON_2 => {
+                                            for (ipx, opx) in image.data.chunks(2).zip(&mut *buf) {
+                                                let [r, g] = *ipx else { unreachable!() };
+                                                *opx = u32::from_le_bytes([0, g, r, 0]);
+                                            }
+                                        }
+                                        f => {
+                                            if f.is_anon() || f == PixelFormat::RGBA {
+                                                for (ipx, opx) in
+                                                    image.data.chunks(f.pixel_size()).zip(&mut *buf)
+                                                {
+                                                    let [r, g, b, ..] = *ipx else {
+                                                        unreachable!()
+                                                    };
+                                                    *opx = u32::from_le_bytes([b, g, r, 0]);
+                                                }
+                                            } else {
+                                                image.convert_inplace(PixelFormat::RGB);
+                                                for (ipx, opx) in
+                                                    image.data.chunks(3).zip(&mut *buf)
+                                                {
+                                                    let [r, g, b] = *ipx else { unreachable!() };
+                                                    *opx = u32::from_le_bytes([b, g, r, 0]);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Err(err) = buf.present() {
+                                        tracing::error!(%err, "failed to present surface buffer");
+                                        had_err = true;
+                                    }
+                                }
+                                Err(ref err) => {
+                                    tracing::error!(%err, "failed to get surface buffer");
+                                    had_err = true;
+                                }
+                            }
+                            if had_err && let Some(surface) = dbg.take_surface() {
+                                self.dead_windows.insert(surface.window().id(), surface);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+const ONE: NonZero<u32> = NonZero::new(1).unwrap();
+
+#[allow(clippy::large_enum_variant)]
+enum HandlerInner {
+    Winit(WinitHandler, EventLoop<Message>),
+    Fallback(without_winit::Handler),
+}
+
+/// The handler for any incoming messages.
+///
+/// This should be run on the main thread through [`Self::run`], which will block it until it receives a [`Message::Shutdown`].
+pub struct Handler {
+    inner: HandlerInner,
+}
+impl Handler {
+    /// Create a new handler and a sender.
+    pub fn new(default: DefaultDebug) -> HandlerWithSender {
+        let (writer, reader) = dispatch::pair();
+        match EventLoop::with_user_event().build() {
+            Ok(event_loop) => {
+                tracing::info!("successfully initialized event loop");
+                match softbuffer::Context::new(event_loop.owned_display_handle()) {
+                    Ok(context) => {
+                        let proxy = event_loop.create_proxy();
+                        HandlerWithSender {
+                            handler: Self {
+                                inner: HandlerInner::Winit(
+                                    WinitHandler {
+                                        default,
+                                        context,
+                                        live_windows: HashMap::new(),
+                                        debugs: HashMap::new(),
+                                        dead_windows: HashMap::new(),
+                                        reader,
+                                    },
+                                    event_loop,
+                                ),
+                            },
+                            sender: Sender {
+                                signal: Signal(SignalInner::Winit(proxy)),
+                                writer,
+                            },
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!(%err, "failed to initialize softbuffer context");
+                        Self::no_gui_impl(default, writer, reader)
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!(%err, "failed to initialize event loop");
+                Self::no_gui_impl(default, writer, reader)
+            }
+        }
+    }
+    fn no_gui_impl(
+        default: DefaultDebug,
+        writer: dispatch::Writer,
+        reader: dispatch::Reader,
+    ) -> HandlerWithSender {
+        let (handler, sender) = without_winit::Handler::new_impl(default, reader);
+        HandlerWithSender {
+            handler: Self {
+                inner: HandlerInner::Fallback(handler),
+            },
+            sender: Sender {
+                signal: Signal(SignalInner::Fallback(sender)),
+                writer,
+            },
+        }
+    }
+    /// Create a new handler that can't create windows.
+    pub fn no_gui(default: DefaultDebug) -> HandlerWithSender {
+        let (writer, reader) = dispatch::pair();
+        Self::no_gui_impl(default, writer, reader)
+    }
+    /// Run the given handler.
+    ///
+    /// This blocks until a [`Message::Shutdown`] is sent.
+    pub fn run(self) {
+        match self.inner {
+            HandlerInner::Winit(mut handler, event_loop) => {
+                if let Err(err) = event_loop.run_app(&mut handler) {
+                    tracing::error!(%err, "event loop exited with an error");
+                }
+            }
+            HandlerInner::Fallback(fallback) => fallback.run(),
+        }
+    }
+}

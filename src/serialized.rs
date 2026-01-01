@@ -1,5 +1,6 @@
 use crate::camera::config::CameraConfig;
 use crate::pipeline::serialized::{ComponentChannel, SerializedGraph};
+use crate::vision_debug::DefaultDebug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -130,6 +131,8 @@ pub struct CameraWithOutputs {
 pub struct ConfigFile {
     #[serde(default)]
     pub run: RunConfig,
+    #[serde(default)]
+    pub debug: DefaultDebug,
     #[cfg_attr(not(feature = "ntable"), serde(skip))]
     pub ntable: Option<NtConfig>,
     #[serde(alias = "camera")]

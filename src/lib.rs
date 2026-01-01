@@ -9,6 +9,7 @@ pub mod pipeline;
 pub mod serialized;
 pub mod utils;
 pub mod vision;
+pub mod vision_debug;
 
 /// Mutexes to be used throughout the crate
 ///
