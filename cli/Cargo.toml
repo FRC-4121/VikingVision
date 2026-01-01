@@ -15,4 +15,9 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 viking-vision.workspace = true
 
 [features]
+default = ["apriltag", "debug-gui", "ntable", "v4l"]
+apriltag = ["viking-vision/apriltag"]
+v4l = ["viking-vision/v4l"]
+ntable = ["viking-vision/ntable"]
 debug-tools = ["viking-vision/debug-tools"]
+debug-gui = ["viking-vision/debug-gui"]
