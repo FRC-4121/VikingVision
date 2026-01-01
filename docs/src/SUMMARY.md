@@ -1,3 +1,9 @@
 # Summary
 
-- [Chapter 1](./chapter_1.md)
+- [Introduction](introduction.md)
+
+# User Guide
+
+- [Installation](guide/install.md)
+- [Running Piplines](guide/pipelines.md)
+- [Using the Playgrond](guide/playground.md)
