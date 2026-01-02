@@ -15,7 +15,7 @@
 - [NetworkTables](config/ntable.md)
 - [Cameras](cameras/overview.md)
   - [V4L](cameras/v4l.md)
-  - [Single Frames](camera/frame.md)
+  - [Single Frames](cameras/frame.md)
 - [Components](components/overview.md)
   - [`apriltag`](components/apriltag.md)
   - [`blob`](components/blob.md)
