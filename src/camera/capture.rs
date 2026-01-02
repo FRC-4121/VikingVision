@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tracing::{error, info};
 use v4l::buffer::Type;
 use v4l::control::{Control, Value};
@@ -166,7 +166,7 @@ impl CameraSource for V4lIndex {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct NoSource;
+pub struct NoSource {}
 #[typetag::serde(name = "unknown")]
 impl CameraSource for NoSource {
     fn resolve(&self) -> io::Result<Device> {
@@ -174,6 +174,8 @@ impl CameraSource for NoSource {
         Err(io::Error::other("unknown source type"))
     }
 }
+
+static NO_SOURCE: LazyLock<Arc<NoSource>> = LazyLock::new(|| Arc::new(NoSource {}));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureCameraConfig {
@@ -237,7 +239,7 @@ impl CaptureCamera {
             decode_jpeg: &format.fourcc.repr == b"MJPG",
             interval: None,
             exposure: None,
-            source: Arc::new(NoSource),
+            source: NO_SOURCE.clone(),
         };
         Ok(Self {
             config,
