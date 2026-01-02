@@ -1,20 +1,9 @@
-use super::CameraImpl;
-use super::config::BasicConfig;
+use super::{CameraFactory, CameraImpl};
 use crate::buffer::{Buffer, PixelFormat};
-use crate::delegate_camera_config;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::io;
 use std::path::PathBuf;
 use tracing::{error, info_span};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ImageSource {
-    #[serde(rename = "path")]
-    Path(PathBuf),
-    #[serde(rename = "color")]
-    Color(Color),
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "ColorShim")]
@@ -51,91 +40,53 @@ impl TryFrom<ColorShim> for Color {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FrameCameraConfig {
-    #[serde(flatten)]
-    pub basic: BasicConfig,
-    #[serde(flatten)]
-    pub source: ImageSource,
-}
-impl FrameCameraConfig {
-    #[inline(always)]
-    fn basic(&self) -> &BasicConfig {
-        &self.basic
-    }
+#[serde(untagged)]
+pub enum FrameCameraConfig {
+    Path {
+        path: PathBuf,
+    },
+    Color {
+        width: u32,
+        height: u32,
+        color: Color,
+    },
 }
 
 #[typetag::serde(name = "frame")]
-impl super::CameraConfig for FrameCameraConfig {
-    delegate_camera_config!(FrameCameraConfig::basic);
-
+impl CameraFactory for FrameCameraConfig {
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>> {
-        let buffer = match &self.source {
-            ImageSource::Color(Color { format, bytes }) => {
-                let width = self.width();
-                let height = self.height();
-                Buffer::monochrome(width, height, *format, bytes)
-            }
-            ImageSource::Path(path) => {
+        let buffer = match self {
+            Self::Path { path } => {
                 let _guard = info_span!("loading image", path = %path.display());
                 let buf =
                     std::fs::read(path).inspect_err(|err| error!(%err, "failed to open file"))?;
                 Buffer::decode_img_data(&buf)?
             }
+            &Self::Color {
+                width,
+                height,
+                color: Color { format, ref bytes },
+            } => Buffer::monochrome(width, height, format, bytes),
         };
-        let mut config = self.clone();
-        config.basic.width = buffer.width;
-        config.basic.height = buffer.height;
-        Ok(Box::new(FrameCamera { config, buffer }))
+        Ok(Box::new(FrameCamera { buffer }))
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct FrameCamera {
-    pub config: FrameCameraConfig,
     pub buffer: Buffer<'static>,
 }
 impl CameraImpl for FrameCamera {
-    fn config(&self) -> &dyn super::CameraConfig {
-        &self.config
-    }
-    fn read_frame(&mut self) -> io::Result<Buffer<'_>> {
-        Ok(self.buffer.borrow())
-    }
-}
-impl FrameCamera {
-    /// Get whether this frame has a monochrome source.
-    pub fn is_monochrome(&self) -> bool {
-        matches!(self.config.source, ImageSource::Color(_))
-    }
-    /// If this image has a monochrome source, reshape it to a new width and height.
-    #[allow(clippy::result_unit_err)]
-    pub fn reshape_monochrome(&mut self, width: u32, height: u32) -> Result<(), ()> {
-        if let ImageSource::Color(Color { format, ref bytes }) = self.config.source {
-            if self.buffer.width == width && self.buffer.height == height {
-                return Ok(());
-            }
-            let new_len = width as usize * height as usize * format.pixel_size();
-            if new_len < self.buffer.data.len() {
-                match &mut self.buffer.data {
-                    Cow::Borrowed(slice) => *slice = &slice[..new_len],
-                    Cow::Owned(vec) => vec.truncate(new_len),
-                }
-            } else {
-                let vec = self.buffer.data.to_mut();
-                let len_diff = new_len - vec.len();
-                vec.reserve(len_diff);
-                let px_diff = len_diff / format.pixel_size();
-                for _ in 0..px_diff {
-                    vec.extend_from_slice(bytes);
-                }
-            }
-            self.buffer.width = width;
-            self.buffer.height = height;
-            self.config.basic.width = width;
-            self.config.basic.height = height;
-            Ok(())
-        } else {
-            Err(())
+    fn frame_size(&self) -> super::FrameSize {
+        super::FrameSize {
+            width: self.buffer.width,
+            height: self.buffer.height,
         }
+    }
+    fn load_frame(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+    fn get_frame(&self) -> Buffer<'_> {
+        self.buffer.borrow()
     }
 }

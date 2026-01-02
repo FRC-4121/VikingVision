@@ -1,8 +1,9 @@
-use crate::camera::config::CameraConfig;
+use crate::camera::CameraConfig;
 use crate::pipeline::serialized::{ComponentChannel, SerializedGraph};
 use crate::vision_debug::DefaultDebug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(feature = "ntable")]
 use std::time::Duration;
 
 fn default_running() -> usize {
@@ -42,9 +43,11 @@ impl std::fmt::Display for NtHost {
     }
 }
 
+#[cfg(feature = "ntable")]
 fn default_port() -> u16 {
     5810
 }
+#[cfg(feature = "ntable")]
 fn default_duration() -> Duration {
     Duration::from_millis(500)
 }
@@ -121,7 +124,7 @@ pub enum NtInitResult {
 #[derive(Serialize, Deserialize)]
 pub struct CameraWithOutputs {
     #[serde(flatten)]
-    pub camera: Box<dyn CameraConfig>,
+    pub camera: CameraConfig,
     pub output: Option<ComponentChannel>,
     #[serde(default)]
     pub outputs: Vec<ComponentChannel>,

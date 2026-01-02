@@ -8,7 +8,6 @@ use tracing::{debug, error, error_span, info};
 use tracing_subscriber::fmt::writer as tsfw;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use viking_vision::camera::Camera;
 use viking_vision::pipeline::prelude::*;
 
 #[cfg(not(windows))]
@@ -273,14 +272,14 @@ fn main() {
 
     info!(cameras = ?config.cameras.keys().collect::<Vec<_>>(), "loading cameras");
 
-    let cameras = config
+    let mut cameras = config
         .cameras
         .into_iter()
         .filter_map(|(name, mut config)| {
             let _guard = error_span!("load", name).entered();
             debug!("loading camera");
-            match config.camera.build_camera() {
-                Ok(inner) => {
+            match config.camera.build_camera(name) {
+                Ok(camera) => {
                     debug!("loaded camera");
                     config.outputs.extend(config.output);
                     let targets = config
@@ -321,7 +320,7 @@ fn main() {
                             }
                         })
                         .collect::<Vec<_>>();
-                    Some((Camera::new(name, inner), targets))
+                    Some((camera.split(), targets))
                 }
                 Err(err) => {
                     error!(%err, "failed to load camera");
@@ -331,11 +330,9 @@ fn main() {
         })
         .collect::<Vec<_>>();
 
-    info!(cameras = ?cameras.iter().map(|c| c.0.name()).collect::<Vec<_>>(), "loaded cameras");
+    info!(cameras = ?cameras.iter().map(|c| &c.0.0.name).collect::<Vec<_>>(), "loaded cameras");
 
     let runner = &runner;
-    let mut refs = Vec::new();
-    refs.resize_with(cameras.len(), || None);
 
     let mut builder = rayon::ThreadPoolBuilder::new();
     if let Some(threads) = args.threads.or(config.run.num_threads) {
@@ -349,48 +346,44 @@ fn main() {
 
     pool.in_place_scope(|rscope| {
         std::thread::scope(|tscope| {
-            for ((mut cam, next), provider) in cameras.into_iter().zip(&mut refs) {
-                let builder = std::thread::Builder::new().name(format!("camera-{}", cam.name()));
-                let cam_name = cam.name().to_string();
-                let provider = &*provider
-                    .get_or_insert(PipelineProvider::from_ptr(cam.inner(), cam_name.clone()));
+            for &mut ((ref meta, ref mut querier), ref next) in cameras.iter_mut() {
+                let builder = std::thread::Builder::new().name(format!("camera-{}", meta.name));
                 let res = builder.spawn_scoped(tscope, move || {
                     use viking_vision::pipeline::runner::{
                         RunError, RunErrorCause, RunErrorWithParams,
                     };
                     loop {
-                        if let Ok(frame) = cam.read() {
-                            let arg = ComponentArgs::single(frame.into_static());
-                            for (id, _chan) in &next {
-                                let res = runner.run(
-                                    RunParams::new(*id)
-                                        .with_args(arg.clone())
-                                        .with_context(provider)
-                                        .with_max_running(config.run.max_running),
-                                    rscope,
-                                );
-                                if let Err(RunError::WithParams(RunErrorWithParams {
-                                    cause, ..
-                                })) = res
-                                {
-                                    match cause {
-                                        RunErrorCause::ArgsMismatch { expected, given } => {
-                                            error!(expected, given, "argument length mismatch");
-                                            return;
-                                        }
-                                        RunErrorCause::NoComponent(id) => {
-                                            error!(%id, "missing component");
-                                            return;
-                                        }
-                                        _ => {}
+                        if querier.load_frame(meta).is_err() {
+                            continue;
+                        }
+                        let arg = ComponentArgs::single(querier.get_frame().into_static());
+                        for (id, _chan) in next {
+                            let res = runner.run(
+                                RunParams::new(*id)
+                                    .with_args(arg.clone())
+                                    .with_context(meta)
+                                    .with_max_running(config.run.max_running),
+                                rscope,
+                            );
+                            if let Err(RunError::WithParams(RunErrorWithParams { cause, .. })) = res
+                            {
+                                match cause {
+                                    RunErrorCause::ArgsMismatch { expected, given } => {
+                                        error!(expected, given, "argument length mismatch");
+                                        return;
                                     }
+                                    RunErrorCause::NoComponent(id) => {
+                                        error!(%id, "missing component");
+                                        return;
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
                     }
                 });
                 if let Err(err) = res {
-                    error!(camera = cam_name, %err, "failed to spawn thread");
+                    error!(camera = meta.name, %err, "failed to spawn thread");
                 }
             }
             handler.run();

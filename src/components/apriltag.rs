@@ -2,7 +2,7 @@
 
 use crate::apriltag;
 use crate::buffer::Buffer;
-use crate::camera::Camera;
+use crate::camera::{Fov, FrameSize};
 use crate::mutex::Mutex;
 use crate::pipeline::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -89,6 +89,9 @@ impl Component for DetectPoseComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
+    fn can_take(&self, input: &str) -> bool {
+        input == "frame"
+    }
     fn output_kind(&self, name: &str) -> OutputKind {
         if name.is_empty() {
             OutputKind::Single
@@ -100,26 +103,20 @@ impl Component for DetectPoseComponent {
         let params = match *self {
             Self::Fixed(p) => p,
             Self::Infer { tag_size } => {
-                if let Some(cam) = context.context.request::<Camera>() {
-                    let cfg = cam.config();
-                    if let Some(fov) = cfg.fov() {
-                        apriltag::PoseParams {
-                            tag_size,
-                            ..apriltag::PoseParams::from_dimensions(
-                                cfg.width(),
-                                cfg.height(),
-                                fov as _,
-                            )
-                        }
-                    } else {
-                        tracing::error!(
-                            "attempted to infer parameters for a camera without an FOV"
-                        );
-                        return;
-                    }
-                } else {
-                    tracing::error!("a camera wasn't passed as context!");
+                let Some(Fov(fov)) = context.context.request::<Fov>() else {
+                    tracing::error!("attempted to infer parameters for a camera without an FOV");
                     return;
+                };
+                let Some(FrameSize { width, height }) = context.context.request::<FrameSize>()
+                else {
+                    tracing::error!(
+                        "attempted to infer parameters for a camera without a frame size"
+                    );
+                    return;
+                };
+                apriltag::PoseParams {
+                    tag_size,
+                    ..apriltag::PoseParams::from_dimensions(width, height, fov)
                 }
             }
         };
