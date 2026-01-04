@@ -155,17 +155,20 @@ impl CameraQuerier {
                     self.backoff = 0;
                 }
             }
-        } else if let Some(size) = meta.resize
-            && size != self.inner.frame_size()
-        {
-            crate::vision::resize(
-                self.inner.get_frame(),
-                self.resized.get_or_insert_default(),
-                size.width,
-                size.height,
-            );
         } else {
-            self.resized = None;
+            self.backoff = 0;
+            if let Some(size) = meta.resize
+                && size != self.inner.frame_size()
+            {
+                crate::vision::resize(
+                    self.inner.get_frame(),
+                    self.resized.get_or_insert_default(),
+                    size.width,
+                    size.height,
+                );
+            } else {
+                self.resized = None;
+            }
         }
         res
     }
