@@ -28,6 +28,10 @@ enum Transform {
     ColorSpace(PixelFormat),
     ColorFilter(FilterKind),
     Swizzle(Vec<u8>),
+    Resize {
+        width: u32,
+        height: u32,
+    },
     BoxBlur {
         format: PixelFormat,
         width: usize,
@@ -113,6 +117,9 @@ impl DerivedFrame {
             }
             Transform::Swizzle(ref s) => {
                 swizzle(from, &mut self.frame, s);
+            }
+            Transform::Resize { width, height } => {
+                resize(from, &mut self.frame, width, height);
             }
             Transform::BoxBlur {
                 format,
@@ -242,6 +249,9 @@ impl DerivedFrame {
             Transform::Swizzle(ref s) => {
                 let _ = write!(self.title, "Swizzle: {s:?}");
             }
+            Transform::Resize { width, height } => {
+                let _ = write!(self.title, "Resize: {width}x{height}");
+            }
             Transform::BoxBlur {
                 format,
                 width,
@@ -336,6 +346,18 @@ pub fn add_button(ui: &mut egui::Ui, title: &str, id: egui::Id, next: &mut Vec<D
         }
         if ui.button("Swizzle").clicked() {
             next.push(DerivedFrame::new(Transform::Swizzle(vec![0]), id).with_updated_title(title));
+        }
+        if ui.button("Resize").clicked() {
+            next.push(
+                DerivedFrame::new(
+                    Transform::Resize {
+                        width: 256,
+                        height: 256,
+                    },
+                    id,
+                )
+                .with_updated_title(title),
+            );
         }
         if ui.button("Box Blur").clicked() {
             next.push(
@@ -613,6 +635,14 @@ pub fn render_frame(ctx: &egui::Context, prev: &str) -> impl Fn(&mut DerivedFram
                         if s.len() < 200 && ui.button("New channel").clicked() {
                             s.push(0);
                         }
+                    }
+                    Transform::Resize { width, height } => {
+                        changed |= ui
+                            .add(egui::Slider::new(width, 1..=1024).text("Width"))
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(height, 1..=1024).text("Height"))
+                            .changed();
                     }
                     Transform::BoxBlur {
                         format,

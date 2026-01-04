@@ -596,9 +596,24 @@ impl<'a> Buffer<'a> {
             }
         }
     }
+
+    /// Get the expected size of the data.
+    pub fn expected_size(&self) -> usize {
+        self.width as usize * self.height as usize * self.format.pixel_size()
+    }
+
+    /// Assert that the data in this buffer has the correct length.
+    #[track_caller]
+    pub fn assert_sized_correctly(&self) {
+        assert_eq!(
+            self.expected_size(),
+            self.data.len(),
+            "buffer size mismatch"
+        );
+    }
     /// Resize the internal data to match the size, shape, and pixel format, returning the mutable buffer.
     pub fn resize_data(&mut self) -> &mut Vec<u8> {
-        let len = self.width as usize * self.height as usize * self.format.pixel_size();
+        let len = self.expected_size();
         let res = polonius::<_, _, ForLt!(&mut Vec<u8>)>(&mut self.data, |data| {
             if len == 0 {
                 if let Cow::Owned(vec) = data {
@@ -640,45 +655,76 @@ impl<'a> Buffer<'a> {
     ///
     /// Note that for YUYV images, it returns the pair of pixels that share the data.
     pub fn pixel(&self, mut x: u32, y: u32) -> Option<&[u8]> {
+        let mut px_len = self.format.pixel_size();
         if self.format == PixelFormat::YUYV {
             x &= !1;
             if x + 1 >= self.width {
                 return None;
             }
+            px_len = 4;
         }
         if x >= self.width || y >= self.height {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;
-        let px_len = self.format.pixel_size();
-        if self.format == PixelFormat::YUYV {
-            let start = px_idx * px_len;
-            self.data.get(start..(start + 4))
-        } else {
-            self.data.get((px_idx * px_len)..((px_idx + 1) * px_len))
-        }
+        let start = px_idx * px_len;
+        self.data.get(start..(start + px_len))
     }
     /// Get the mutable slice of data for a single pixel.
     ///
     /// Note that for YUYV images, it returns the pair of pixels that share the data.
     pub fn pixel_mut(&mut self, mut x: u32, y: u32) -> Option<&mut [u8]> {
+        let mut px_len = self.format.pixel_size();
         if self.format == PixelFormat::YUYV {
             x &= !1;
             if x + 1 >= self.width {
                 return None;
             }
+            px_len = 4;
         }
         if x >= self.width || y >= self.height {
             return None;
         }
         let px_idx = y as usize * self.width as usize + x as usize;
-        let px_len = self.format.pixel_size();
-        let data = self.data.to_mut();
+        let start = px_idx * px_len;
+        self.data.to_mut().get_mut(start..(start + px_len))
+    }
+    /// Get the slice of data for a single pixel.
+    ///
+    /// Note that for YUYV images, it returns the pair of pixels that share the data.
+    ///
+    /// # Safety
+    /// The pixel must be in range of the slice.
+    pub unsafe fn pixel_unchecked(&self, mut x: u32, y: u32) -> &[u8] {
+        let mut px_len = self.format.pixel_size();
         if self.format == PixelFormat::YUYV {
-            let start = px_idx * px_len;
-            data.get_mut(start..(start + 4))
-        } else {
-            data.get_mut((px_idx * px_len)..((px_idx + 1) * px_len))
+            x &= !1;
+            px_len = 4;
+        }
+        let px_idx = y as usize * self.width as usize + x as usize;
+        let start = px_idx * px_len;
+        // SAFETY: the caller's problem
+        unsafe { self.data.get_unchecked(start..(start + px_len)) }
+    }
+    /// Get the mutable slice of data for a single pixel.
+    ///
+    /// Note that for YUYV images, it returns the pair of pixels that share the data.
+    ///
+    /// # Safety
+    /// The pixel must be in range of the slice.
+    pub unsafe fn pixel_unchecked_mut(&mut self, mut x: u32, y: u32) -> &mut [u8] {
+        let mut px_len = self.format.pixel_size();
+        if self.format == PixelFormat::YUYV {
+            x &= !1;
+            px_len = 4;
+        }
+        let px_idx = y as usize * self.width as usize + x as usize;
+        let start = px_idx * px_len;
+        // SAFETY: the caller's problem
+        unsafe {
+            self.data
+                .to_mut()
+                .get_unchecked_mut(start..(start + px_len))
         }
     }
     /// Set the pixel with a given color, if it's available.

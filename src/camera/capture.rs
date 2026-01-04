@@ -1,15 +1,13 @@
 #![cfg(feature = "v4l")]
 
-use super::CameraImpl;
-use super::config::{BasicConfig, CameraConfig};
+use super::{CameraFactory, CameraImpl};
 use crate::buffer::{Buffer, PixelFormat};
-use crate::delegate_camera_config;
 use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tracing::{error, info};
 use v4l::buffer::Type;
 use v4l::control::{Control, Value};
@@ -166,7 +164,7 @@ impl CameraSource for V4lIndex {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct NoSource;
+pub struct NoSource {}
 #[typetag::serde(name = "unknown")]
 impl CameraSource for NoSource {
     fn resolve(&self) -> io::Result<Device> {
@@ -175,10 +173,12 @@ impl CameraSource for NoSource {
     }
 }
 
+static NO_SOURCE: LazyLock<Arc<NoSource>> = LazyLock::new(|| Arc::new(NoSource {}));
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureCameraConfig {
-    #[serde(flatten)]
-    pub basic: BasicConfig,
+    pub width: u32,
+    pub height: u32,
     #[serde(with = "fourcc_serde")]
     pub fourcc: FourCC,
     pub pixel_format: Option<PixelFormat>,
@@ -190,22 +190,15 @@ pub struct CaptureCameraConfig {
     #[serde(flatten)]
     pub source: Arc<dyn CameraSource>,
 }
-impl CaptureCameraConfig {
-    #[inline(always)]
-    fn basic(&self) -> &BasicConfig {
-        &self.basic
-    }
-}
 #[typetag::serde(name = "v4l")]
-impl CameraConfig for CaptureCameraConfig {
-    delegate_camera_config!(Self::basic);
+impl CameraFactory for CaptureCameraConfig {
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>> {
         let device = self.source.resolve()?;
         let mut cam = CaptureCamera {
             config: self.clone(),
             stream: None,
             device,
-            jpeg_buf: None,
+            frame: Buffer::empty_rgb(),
         };
         cam.config_device()?;
         Ok(Box::new(cam))
@@ -216,7 +209,7 @@ pub struct CaptureCamera {
     pub config: CaptureCameraConfig,
     pub device: Device,
     pub stream: Option<MmapStream<'static>>,
-    pub jpeg_buf: Option<Buffer<'static>>,
+    pub frame: Buffer<'static>,
 }
 impl CaptureCamera {
     pub fn from_device(device: Device) -> io::Result<Self> {
@@ -226,24 +219,20 @@ impl CaptureCamera {
             .try_into()
             .map_err(|err| io::Error::new(io::ErrorKind::Unsupported, err))?;
         let config = CaptureCameraConfig {
-            basic: BasicConfig {
-                width: format.width,
-                height: format.height,
-                fov: None,
-                max_fps: None,
-            },
+            width: format.width,
+            height: format.height,
             fourcc: format.fourcc,
             pixel_format: Some(fmt),
             decode_jpeg: &format.fourcc.repr == b"MJPG",
             interval: None,
             exposure: None,
-            source: Arc::new(NoSource),
+            source: NO_SOURCE.clone(),
         };
         Ok(Self {
             config,
             device,
             stream: None,
-            jpeg_buf: None,
+            frame: Buffer::empty_rgb(),
         })
     }
     /// Configure the device based on the configuration.
@@ -273,8 +262,8 @@ impl CaptureCamera {
             })?;
         }
         self.device.set_format(&v4l::Format::new(
-            self.config.width(),
-            self.config.height(),
+            self.config.width,
+            self.config.height,
             self.config.fourcc,
         ))?;
         let interval = self.interval_mut()?;
@@ -320,8 +309,8 @@ impl CaptureCamera {
     }
     /// Set the width and height. Changes won't take effect until `config_device` is called.
     pub const fn set_resolution(&mut self, width: u32, height: u32) {
-        self.config.basic.width = width;
-        self.config.basic.height = height;
+        self.config.width = width;
+        self.config.height = height;
     }
     /// Set the FourCC. Changes won't take effect until `config_device` is called.
     pub const fn set_fourcc(&mut self, fourcc: FourCC) {
@@ -333,11 +322,11 @@ impl CaptureCamera {
     }
     /// Get the configured width.
     pub const fn width(&self) -> u32 {
-        self.config.basic.width
+        self.config.width
     }
     /// Get the configured height.
     pub const fn height(&self) -> u32 {
-        self.config.basic.height
+        self.config.height
     }
     /// Get the configured FourCC.
     pub const fn fourcc(&self) -> FourCC {
@@ -367,33 +356,36 @@ impl Debug for CaptureCamera {
     }
 }
 impl CameraImpl for CaptureCamera {
-    fn config(&self) -> &dyn CameraConfig {
-        &self.config
+    fn frame_size(&self) -> super::FrameSize {
+        super::FrameSize {
+            width: self.width(),
+            height: self.height(),
+        }
     }
-    fn read_frame(&mut self) -> io::Result<Buffer<'_>> {
+    fn load_frame(&mut self) -> io::Result<()> {
         let width = self.width();
         let height = self.height();
         let (frame, _meta) = Self::make_stream(&mut self.stream, &self.device)?
             .next()
             .inspect_err(|err| error!(%err, "failed to read from stream"))?;
+        self.frame.width = width;
+        self.frame.height = height;
         if self.config.decode_jpeg {
-            let px_buf = self.jpeg_buf.get_or_insert_default();
             let mut decoder = JpegDecoder::new_with_options(frame, DecoderOptions::new_fast());
-            px_buf.width = width;
-            px_buf.height = height;
-            px_buf.format = PixelFormat::RGB;
-            let px_data = px_buf.resize_data();
+            self.frame.format = PixelFormat::RGB;
+            let px_data = self.frame.resize_data();
             if let Err(err) = decoder.decode_into(&mut *px_data) {
                 error!(%err, "failed to decode JPEG data");
             }
-            return Ok(px_buf.borrow());
+        } else {
+            self.frame.format = self.config.pixel_format.expect("Unknown pixel format");
+            let px_data = self.frame.resize_data();
+            px_data.copy_from_slice(frame);
         }
-        Ok(Buffer {
-            width,
-            height,
-            format: self.config.pixel_format.unwrap(),
-            data: frame.into(),
-        })
+        Ok(())
+    }
+    fn get_frame(&self) -> Buffer<'_> {
+        self.frame.borrow()
     }
     fn reload(&mut self) -> bool {
         match self.config.source.resolve() {

@@ -1,3 +1,4 @@
+use crate::Monochrome;
 use eframe::egui;
 #[cfg(feature = "v4l")]
 use egui_extras::{Column, TableBuilder};
@@ -12,15 +13,30 @@ use tracing::error;
 use v4l::{Device, FourCC, video::Capture};
 use viking_vision::broadcast::par_broadcast1;
 use viking_vision::buffer::{Buffer, PixelFormat};
-use viking_vision::camera::Camera;
 #[cfg(feature = "v4l")]
 use viking_vision::camera::capture::CaptureCamera;
-use viking_vision::camera::config::{BasicConfig, CameraConfig};
-use viking_vision::camera::frame::{Color, FrameCamera, FrameCameraConfig, ImageSource};
+use viking_vision::camera::{Camera, CameraImpl, FrameSize};
 use viking_vision::pipeline::daemon::{DaemonHandle, Worker};
 use viking_vision::utils::FpsCounter;
 
-use crate::Monochrome;
+struct MonoCamera {
+    color: Option<[u8; 3]>,
+    buffer: Buffer<'static>,
+}
+impl CameraImpl for MonoCamera {
+    fn frame_size(&self) -> FrameSize {
+        FrameSize {
+            width: self.buffer.width,
+            height: self.buffer.height,
+        }
+    }
+    fn load_frame(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn get_frame(&self) -> Buffer<'_> {
+        self.buffer.borrow()
+    }
+}
 
 #[cfg(feature = "v4l")]
 fn enum_cams() -> Vec<PathBuf> {
@@ -371,48 +387,37 @@ fn spawn_from_v4l_path(path: &Path) -> Option<DaemonHandle<Context>> {
 }
 
 fn spawn_from_img_path(path: &Path) -> Option<DaemonHandle<Context>> {
-    FrameCameraConfig {
-        basic: BasicConfig {
-            width: 0,
-            height: 0,
-            fov: None,
-            max_fps: Some(60.0),
-        },
-        source: viking_vision::camera::frame::ImageSource::Path(path.to_path_buf()),
-    }
-    .build_camera()
-    .inspect_err(|err| error!(%err, "error loading image file"))
+    let buf = std::fs::read(path)
+        .inspect_err(|err| error!(%err, "failed to open file"))
+        .ok()?;
+    let buffer = Buffer::decode_img_data(&buf)
+        .inspect_err(|err| error!(%err, "error decoding image file"))
+        .ok()?;
+    DaemonHandle::new(
+        Default::default(),
+        CameraWorker::new(Camera::new(
+            path.display().to_string(),
+            Box::new(MonoCamera {
+                buffer,
+                color: None,
+            }),
+        )),
+    )
     .ok()
-    .and_then(|inner| {
-        let name = path.display().to_string();
-        DaemonHandle::new(
-            Default::default(),
-            CameraWorker::new(Camera::new(name.clone(), inner)),
-        )
-        .ok()
-        .inspect(DaemonHandle::start)
-    })
+    .inspect(DaemonHandle::start)
 }
 
 fn spawn_from_mono(mono: &Monochrome) -> Option<DaemonHandle<Context>> {
     let id = mono.id;
-    let inner = FrameCameraConfig {
-        basic: BasicConfig {
-            width: mono.width,
-            height: mono.height,
-            fov: None,
-            max_fps: Some(60.0),
-        },
-        source: viking_vision::camera::frame::ImageSource::Color(Color {
-            format: viking_vision::buffer::PixelFormat::RGB,
-            bytes: mono.color.to_vec(),
-        }),
-    }
-    .build_camera()
-    .unwrap();
     DaemonHandle::new(
         Default::default(),
-        CameraWorker::new(Camera::new(format!("Monochrome {id}"), inner)),
+        CameraWorker::new(Camera::new(
+            format!("Monochrome {id}"),
+            Box::new(MonoCamera {
+                buffer: Buffer::monochrome(mono.width, mono.height, PixelFormat::RGB, &mono.color),
+                color: Some(mono.color),
+            }),
+        )),
     )
     .ok()
     .inspect(DaemonHandle::start)
@@ -621,29 +626,27 @@ impl Worker<Context> for CameraWorker {
                 } else {
                     state.cap = None;
                 }
-                if let Some(mono) = camera.downcast_mut::<FrameCamera>() {
-                    if let ImageSource::Color(Color {
-                        format: PixelFormat::RGB,
-                        ref mut bytes,
-                    }) = mono.config.source
-                    {
-                        let opts = state.mono.get_or_insert_default();
-                        if opts.recolor {
-                            opts.recolor = false;
-                            bytes.copy_from_slice(&opts.color);
-                            par_broadcast1(|c: &mut [u8; 3]| *c = opts.color, &mut mono.buffer);
-                        } else {
-                            opts.color.copy_from_slice(bytes);
-                        }
-                        if opts.reshape {
-                            opts.reshape = false;
-                            let _ = mono.reshape_monochrome(opts.width, opts.height);
-                        } else {
-                            opts.width = mono.buffer.width;
-                            opts.height = mono.buffer.height;
-                        }
+                if let Some(MonoCamera {
+                    color: Some(color),
+                    buffer,
+                }) = camera.downcast_mut::<MonoCamera>()
+                {
+                    let opts = state.mono.get_or_insert_default();
+                    if opts.reshape {
+                        opts.reshape = false;
+                        buffer.width = opts.width;
+                        buffer.height = opts.height;
+                        opts.recolor = true;
                     } else {
-                        state.mono = None;
+                        opts.width = buffer.width;
+                        opts.height = buffer.height;
+                    }
+                    if opts.recolor {
+                        opts.recolor = false;
+                        *color = opts.color;
+                        par_broadcast1(|c: &mut [u8; 3]| *c = opts.color, buffer.resize_data());
+                    } else {
+                        opts.color = *color;
                     }
                 } else {
                     state.mono = None;
