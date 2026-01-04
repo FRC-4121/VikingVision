@@ -96,6 +96,7 @@ impl CameraConfig {
 #[derive(Debug)]
 pub struct CameraQuerier {
     inner: Box<dyn CameraImpl>,
+    resized: Option<Buffer<'static>>,
     fail_count: usize,
     backoff: usize,
     last_frame: Instant,
@@ -107,6 +108,7 @@ impl CameraQuerier {
             inner,
             fail_count: 0,
             backoff: 1,
+            resized: None,
             last_frame: Instant::now(),
         }
     }
@@ -139,7 +141,8 @@ impl CameraQuerier {
             std::thread::sleep(to_sleep);
             self.last_frame = now;
         }
-        self.inner.load_frame().inspect_err(|err| {
+        let res = self.inner.load_frame();
+        if let Err(err) = &res {
             self.fail_count += 1;
             error!(%err, fail_count = self.fail_count, "failed to read frame");
             if self.fail_count == self.backoff {
@@ -152,13 +155,25 @@ impl CameraQuerier {
                     self.backoff = 0;
                 }
             }
-        })
+        } else if let Some(size) = meta.resize
+            && size != self.inner.frame_size()
+        {
+            crate::vision::resize(
+                self.inner.get_frame(),
+                self.resized.get_or_insert_default(),
+                size.width,
+                size.height,
+            );
+        }
+        res
     }
     /// Get the last frame read.
     ///
     /// There should've been a call to [`Self::load_frame`] first.
     pub fn get_frame(&self) -> Buffer<'_> {
-        self.inner.get_frame()
+        self.resized
+            .as_ref()
+            .map_or_else(|| self.inner.get_frame(), Buffer::borrow)
     }
     /// Fetch a frame, and if it was successful, return it.
     ///
