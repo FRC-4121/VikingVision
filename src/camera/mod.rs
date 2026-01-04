@@ -164,6 +164,8 @@ impl CameraQuerier {
                 size.width,
                 size.height,
             );
+        } else {
+            self.resized = None;
         }
         res
     }
