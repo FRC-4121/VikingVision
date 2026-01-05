@@ -8,6 +8,7 @@ license.workspace = true
 clap = { version = "4.5.48", features = ["derive"] }
 matchers = "0.2.0"
 rayon.workspace = true
+strip-ansi-escapes = "0.2.1"
 time.workspace = true
 toml.workspace = true
 tracing.workspace = true
