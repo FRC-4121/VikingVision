@@ -434,10 +434,14 @@ pub enum DowncastInputError<'a> {
 }
 
 impl LogErr for DowncastInputError<'_> {
+    #[track_caller]
     fn log_err(&self) {
         match self {
             Self::MissingInput(name) => {
+                let location = std::panic::Location::caller();
                 tracing::error!(
+                    "source.file" = location.file(),
+                    "source.line" = location.line(),
                     "Component doesn't have a{}",
                     if let Some(name) = name {
                         format!("n input named {name:?}")

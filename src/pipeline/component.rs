@@ -27,8 +27,16 @@ pub struct TypeMismatch<A> {
     pub additional: A,
 }
 impl<A> LogErr for TypeMismatch<A> {
+    #[track_caller]
     fn log_err(&self) {
-        tracing::error!(id = ?self.id, "couldn't downcast data to {}", self.expected);
+        let location = std::panic::Location::caller();
+        tracing::error!(
+            id = ?self.id,
+            "source.file" = location.file(),
+            "source.line" = location.line(),
+            "couldn't downcast data to {}",
+            self.expected
+        );
     }
 }
 

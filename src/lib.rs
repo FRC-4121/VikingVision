@@ -2,6 +2,7 @@ pub mod apriltag;
 pub mod broadcast;
 pub mod buffer;
 pub mod camera;
+pub mod component_filter;
 pub mod components;
 pub mod draw;
 pub mod geom;

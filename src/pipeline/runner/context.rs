@@ -611,7 +611,14 @@ impl<'r> ComponentContextInner<'r> {
 
     /// Create a tracing span for this component execution.
     pub fn tracing_span(&self) -> tracing::Span {
-        tracing::error_span!("run", name = &**self.name(), run = %self.run_id, component = %self.comp_id())
+        tracing::error_span!(
+            target: crate::component_filter::COMPONENT_RUN_TARGET,
+            "run",
+            name = &**self.name(),
+            run = %self.run_id,
+            component = %self.comp_id(),
+            "component.index" = self.comp_id().index()
+        )
     }
 
     /// Run the component with tracing instrumentation.

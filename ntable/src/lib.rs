@@ -182,8 +182,12 @@ impl NtClient {
         tracing::info!(parent: &span, %uri, "resolved URI");
         let req = tungstenite::ClientRequestBuilder::new(uri)
             .with_sub_protocol("v4.1.networktables.first.wpi.edu");
+        let mut lce = true;
         loop {
-            let res = self.connect_req(req.clone()).instrument(span.clone()).await;
+            let res = self
+                .connect_req(req.clone(), &mut lce)
+                .instrument(span.clone())
+                .await;
             if !reconnect {
                 return res;
             }
@@ -193,10 +197,17 @@ impl NtClient {
     async fn connect_req(
         &mut self,
         req: tungstenite::ClientRequestBuilder,
+        log_connect_error: &mut bool,
     ) -> tungstenite::Result<()> {
         let (ws, _resp) = tokio_tungstenite::connect_async(req)
             .await
-            .inspect_err(|err| tracing::error!(%err, "failed to connect"))?;
+            .inspect_err(|err| {
+                if std::mem::take(log_connect_error) {
+                    tracing::error!(%err, "failed to connect")
+                }
+            })?;
+        *log_connect_error = true;
+        tracing::info!("successfully connected to server");
         let (mut ws_tx, _ws_rx) = ws.split();
         if !self.types.is_empty() {
             let mut msg = Vec::with_capacity(1 + 42 * self.types.len()); // 24 bytes for field names, 8 for quotes, 4 for colons, 4 for commas (including trailing), 2 for braces = a minimum of 42 bytes/entry, +2 because of the surrounding brackets, -1 because no trailing comma

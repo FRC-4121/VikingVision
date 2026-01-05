@@ -107,6 +107,12 @@ struct Cli {
     /// the number of CPU cores if none are specified.
     #[arg(short, long)]
     threads: Option<usize>,
+    /// Allow noisy events
+    ///
+    /// By default, events from the same component at the same position will be ignored
+    /// to avoid filling log files. To disable this filtering, this flag can be passed.
+    #[arg(short, long)]
+    allow_noisy_events: bool,
 }
 
 fn format_log_file(arg: &str, now: time::OffsetDateTime) -> String {
@@ -127,11 +133,12 @@ fn format_log_file(arg: &str, now: time::OffsetDateTime) -> String {
 
 struct Writer(Option<File>);
 impl<'a> tsfw::MakeWriter<'a> for Writer {
-    type Writer = tsfw::OptionalWriter<&'a File>;
+    type Writer = tsfw::OptionalWriter<strip_ansi_escapes::Writer<&'a File>>;
 
     fn make_writer(&'a self) -> Self::Writer {
         self.0
             .as_ref()
+            .map(strip_ansi_escapes::Writer::new)
             .map_or_else(tsfw::OptionalWriter::none, tsfw::OptionalWriter::some)
     }
 }
@@ -161,17 +168,20 @@ fn main() {
     }
 
     tracing_subscriber::registry()
+        .with(viking_vision::component_filter::ComponentEventFilter::new(
+            !args.allow_noisy_events,
+        ))
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_env_var(env_var)
                 .with_default_directive(tracing::Level::INFO.into())
                 .from_env_lossy(),
         )
-        .with(tracing_subscriber::fmt::layer().with_ansi(args.color.use_ansi()))
         .with(
             tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(Writer(log_file)),
+                .with_ansi(args.color.use_ansi())
+                .with_writer(tsfw::Tee::new(std::io::stderr, Writer(log_file)))
+                .fmt_fields(viking_vision::component_filter::FilteredFields::default_fields()),
         )
         .init();
 
