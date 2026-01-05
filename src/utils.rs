@@ -106,8 +106,10 @@ impl FpsCounter {
 /// A convenience trait to log an error.
 pub trait LogErr {
     /// Log an error with [`tracing`].
+    #[track_caller]
     fn log_err(&self);
     /// Log an error, then return self. This is for convenience with method chaining.
+    #[track_caller]
     fn and_log_err(self) -> Self
     where
         Self: Sized,
@@ -117,6 +119,7 @@ pub trait LogErr {
     }
 }
 impl<T, E: LogErr> LogErr for Result<T, E> {
+    #[track_caller]
     fn log_err(&self) {
         if let Err(err) = self {
             err.log_err();
