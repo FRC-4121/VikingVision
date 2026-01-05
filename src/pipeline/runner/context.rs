@@ -617,7 +617,7 @@ impl<'r> ComponentContextInner<'r> {
             name = &**self.name(),
             run = %self.run_id,
             component = %self.comp_id(),
-            _index = self.comp_id().index()
+            "component.index" = self.comp_id().index()
         )
     }
 

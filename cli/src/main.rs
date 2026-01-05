@@ -176,11 +176,16 @@ fn main() {
                 .with_default_directive(tracing::Level::INFO.into())
                 .from_env_lossy(),
         )
-        .with(tracing_subscriber::fmt::layer().with_ansi(args.color.use_ansi()))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(args.color.use_ansi())
+                .fmt_fields(viking_vision::component_filter::FilteredFields::default_fields()),
+        )
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
-                .with_writer(Writer(log_file)),
+                .with_writer(Writer(log_file))
+                .fmt_fields(viking_vision::component_filter::FilteredFields::default_fields()),
         )
         .init();
 
