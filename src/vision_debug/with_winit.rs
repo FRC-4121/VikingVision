@@ -1,9 +1,7 @@
+use super::*;
+use crate::buffer::PixelFormat;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
-
-use crate::buffer::PixelFormat;
-
-use super::*;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy, OwnedDisplayHandle};

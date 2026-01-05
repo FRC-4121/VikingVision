@@ -2,10 +2,9 @@
 //! All functions have the convention of `<input format>2<output format>`, with `i` being used as a function prefix for in-place operations.
 //! Note that any YUYV conversions need two pixels to operate on rather than just one.
 
-use std::cmp::Ordering;
-
 use crate::broadcast::{Broadcast2, ParBroadcast2};
 use crate::buffer::PixelFormat;
+use std::cmp::Ordering;
 
 #[cfg(test)]
 mod tests;

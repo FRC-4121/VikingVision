@@ -2,10 +2,9 @@
 //!
 //! Operations across all pixels in a buffer are very common, and this module defines a generic way to get chunks of data, along with helper funtions to apply a function across chunks.
 
-use std::sync::OnceLock;
-
 use crate::buffer::Buffer;
 use rayon::prelude::*;
+use std::sync::OnceLock;
 
 /// A collection that can have chunks taken. This is done as a trait to generically allow broadcasts across both shared and mutable slices.
 pub trait Chunks {
