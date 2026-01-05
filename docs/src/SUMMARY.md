@@ -32,6 +32,7 @@
   - [`gaussian-blur`](components/gaussian-blur.md)
   - [`ntable`](components/ntable.md)
   - [`percent-filter` / `erode` / `dilate` / `median-filter`](components/percent-filter.md)
+  - [`resize`](components/resize.md)
   - [`select-last`](components/select-last.md)
   - [`unpack`](components/unpack.md)
   - [`vision-debug`](components/vision-debug.md)
