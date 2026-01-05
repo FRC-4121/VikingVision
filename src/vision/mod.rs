@@ -1,6 +1,6 @@
 //! Vision algorithms and utilities
 
-use crate::broadcast::{Broadcast2, ParBroadcast2, par_broadcast2};
+use crate::broadcast::{Broadcast2, ParBroadcast2, broadcast_pool, par_broadcast2};
 use crate::buffer::{Buffer, PixelFormat};
 use rayon::prelude::*;
 use std::cell::Cell;
@@ -116,38 +116,43 @@ pub fn percentile_filter(
     let data = dst.resize_data();
     if width == 1 && height == 1 {
         data.copy_from_slice(&src.data);
+        return;
     }
-    let pxlen = src.format.pixel_size();
-    let buf_len = width * height;
-    let buf_width = src.width as usize;
-    let buf_height = src.height as usize;
-    let half_width = width / 2;
-    let half_height = height / 2;
-    data.par_chunks_mut(pxlen).enumerate().for_each_init(
-        || vec![Vec::with_capacity(buf_len); pxlen],
-        |bufs, (n, px)| {
-            bufs.iter_mut().for_each(Vec::clear);
-            let y = n / buf_width;
-            let x = n % buf_width;
-            for y in y.saturating_sub(half_height)..=std::cmp::min(y + half_height, buf_height - 1)
-            {
-                for x in x.saturating_sub(half_width)..=std::cmp::min(x + half_width, buf_width - 1)
+    broadcast_pool().install(|| {
+        let pxlen = src.format.pixel_size();
+        let buf_len = width * height;
+        let buf_width = src.width as usize;
+        let buf_height = src.height as usize;
+        let half_width = width / 2;
+        let half_height = height / 2;
+        data.par_chunks_mut(pxlen).enumerate().for_each_init(
+            || vec![Vec::with_capacity(buf_len); pxlen],
+            |bufs, (n, px)| {
+                bufs.iter_mut().for_each(Vec::clear);
+                let y = n / buf_width;
+                let x = n % buf_width;
+                for y in
+                    y.saturating_sub(half_height)..=std::cmp::min(y + half_height, buf_height - 1)
                 {
-                    for (buf, &val) in bufs.iter_mut().zip(src.pixel(x as _, y as _).unwrap()) {
-                        buf.push(val);
+                    for x in
+                        x.saturating_sub(half_width)..=std::cmp::min(x + half_width, buf_width - 1)
+                    {
+                        for (buf, &val) in bufs.iter_mut().zip(src.pixel(x as _, y as _).unwrap()) {
+                            buf.push(val);
+                        }
                     }
                 }
-            }
-            for (buf, val) in bufs.iter_mut().zip(px) {
-                let idx = if buf.len() == buf_len {
-                    index
-                } else {
-                    index * buf.len() / buf_len
-                };
-                *val = *buf.select_nth_unstable(idx).1;
-            }
-        },
-    );
+                for (buf, val) in bufs.iter_mut().zip(px) {
+                    let idx = if buf.len() == buf_len {
+                        index
+                    } else {
+                        index * buf.len() / buf_len
+                    };
+                    *val = *buf.select_nth_unstable(idx).1;
+                }
+            },
+        );
+    });
 }
 
 #[repr(transparent)]
@@ -175,76 +180,78 @@ pub fn box_blur(img: &mut Buffer<'_>, aux: &mut Buffer<'_>, width: usize, height
     if width <= 1 && height <= 1 {
         return;
     }
-    aux.width = img.width;
-    aux.height = img.height;
-    aux.format = img.format;
-    let pxlen = img.format.pixel_size();
-    let buf_width = img.width as usize;
-    let buf_height = img.height as usize;
-    let src = img.resize_data();
-    let dst = aux.resize_data();
-    let xmul = pxlen;
-    let ymul = buf_width * pxlen;
-    if height > 1 {
-        let half = height / 2;
-        let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
-        (0..buf_width).into_par_iter().for_each_init(
-            || [0; 256],
-            |buf, x| {
-                for y in 0..buf_height {
-                    let px_start = y * ymul + x * xmul;
-                    let px_end = px_start + pxlen;
-                    let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
-                    let min = y.saturating_sub(half);
-                    let max = y.saturating_add(half + 1).min(buf_height);
-                    buf[..pxlen].fill(0);
-                    for y2 in min..max {
-                        let px_start = y2 * ymul + x * xmul;
+    broadcast_pool().install(|| {
+        aux.width = img.width;
+        aux.height = img.height;
+        aux.format = img.format;
+        let pxlen = img.format.pixel_size();
+        let buf_width = img.width as usize;
+        let buf_height = img.height as usize;
+        let src = img.resize_data();
+        let dst = aux.resize_data();
+        let xmul = pxlen;
+        let ymul = buf_width * pxlen;
+        if height > 1 {
+            let half = height / 2;
+            let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
+            (0..buf_width).into_par_iter().for_each_init(
+                || [0; 256],
+                |buf, x| {
+                    for y in 0..buf_height {
+                        let px_start = y * ymul + x * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
-                        for (sum, chan) in buf.iter_mut().zip(px) {
-                            *sum += *chan as usize;
+                        let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
+                        let min = y.saturating_sub(half);
+                        let max = y.saturating_add(half + 1).min(buf_height);
+                        buf[..pxlen].fill(0);
+                        for y2 in min..max {
+                            let px_start = y2 * ymul + x * xmul;
+                            let px_end = px_start + pxlen;
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
+                            for (sum, chan) in buf.iter_mut().zip(px) {
+                                *sum += *chan as usize;
+                            }
+                        }
+                        let size = max - min;
+                        for (sum, chan) in buf.iter().zip(px) {
+                            chan.set((sum / size) as u8);
                         }
                     }
-                    let size = max - min;
-                    for (sum, chan) in buf.iter().zip(px) {
-                        chan.set((sum / size) as u8);
-                    }
-                }
-            },
-        );
-        std::mem::swap(src, dst);
-    }
-    if width > 1 {
-        let half = width / 2;
-        let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
-        (0..buf_height).into_par_iter().for_each_init(
-            || [0; 256],
-            |buf, y| {
-                for x in 0..buf_width {
-                    let px_start = y * ymul + x * xmul;
-                    let px_end = px_start + pxlen;
-                    let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
-                    let min = x.saturating_sub(half);
-                    let max = x.saturating_add(half + 1).min(buf_width);
-                    buf[..pxlen].fill(0);
-                    for x2 in min..max {
-                        let px_start = y * ymul + x2 * xmul;
+                },
+            );
+            std::mem::swap(src, dst);
+        }
+        if width > 1 {
+            let half = width / 2;
+            let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
+            (0..buf_height).into_par_iter().for_each_init(
+                || [0; 256],
+                |buf, y| {
+                    for x in 0..buf_width {
+                        let px_start = y * ymul + x * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
-                        for (sum, chan) in buf.iter_mut().zip(px) {
-                            *sum += *chan as usize;
+                        let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
+                        let min = x.saturating_sub(half);
+                        let max = x.saturating_add(half + 1).min(buf_width);
+                        buf[..pxlen].fill(0);
+                        for x2 in min..max {
+                            let px_start = y * ymul + x2 * xmul;
+                            let px_end = px_start + pxlen;
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
+                            for (sum, chan) in buf.iter_mut().zip(px) {
+                                *sum += *chan as usize;
+                            }
+                        }
+                        let size = max - min;
+                        for (sum, chan) in buf.iter().zip(px) {
+                            chan.set((sum / size) as u8);
                         }
                     }
-                    let size = max - min;
-                    for (sum, chan) in buf.iter().zip(px) {
-                        chan.set((sum / size) as u8);
-                    }
-                }
-            },
-        );
-        std::mem::swap(src, dst);
-    }
+                },
+            );
+            std::mem::swap(src, dst);
+        }
+    });
 }
 
 const GAUSSIAN_SCALE: f32 = 26145.082; // 65536/sqrt(2pi)
@@ -276,86 +283,88 @@ pub fn gaussian_blur(
     aux.width = img.width;
     aux.height = img.height;
     aux.format = img.format;
-    let pxlen = img.format.pixel_size();
-    let buf_width = img.width as usize;
-    let buf_height = img.height as usize;
-    let src = img.resize_data();
-    let dst = aux.resize_data();
-    let xmul = pxlen;
-    let ymul = buf_width * pxlen;
-    let scale = GAUSSIAN_SCALE / sigma;
-    let half_width = width / 2;
-    let half_height = height / 2;
-    let coeffs = (0..=half_width.max(half_height))
-        .map(|v| ((-((v as f32).powi(2)) / (2.0 * sigma * sigma)).exp() * scale) as usize)
-        .collect::<Vec<_>>();
-    let cums = coeffs
-        .iter()
-        .scan(0, |acc, x| {
-            *acc += x;
-            Some(*acc)
-        })
-        .collect::<Vec<_>>();
-    if height > 1 {
-        let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
-        (0..buf_width).into_par_iter().for_each_init(
-            || [0; 256],
-            |buf, x| {
-                for y in 0..buf_height {
-                    let px_start = y * ymul + x * xmul;
-                    let px_end = px_start + pxlen;
-                    let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
-                    let min = y.saturating_sub(half_height);
-                    let max = y.saturating_add(half_height + 1).min(buf_height);
-                    buf[..pxlen].fill(0);
-                    for y2 in min..max {
-                        let px_start = y2 * ymul + x * xmul;
+    broadcast_pool().install(|| {
+        let pxlen = img.format.pixel_size();
+        let buf_width = img.width as usize;
+        let buf_height = img.height as usize;
+        let src = img.resize_data();
+        let dst = aux.resize_data();
+        let xmul = pxlen;
+        let ymul = buf_width * pxlen;
+        let scale = GAUSSIAN_SCALE / sigma;
+        let half_width = width / 2;
+        let half_height = height / 2;
+        let coeffs = (0..=half_width.max(half_height))
+            .map(|v| ((-((v as f32).powi(2)) / (2.0 * sigma * sigma)).exp() * scale) as usize)
+            .collect::<Vec<_>>();
+        let cums = coeffs
+            .iter()
+            .scan(0, |acc, x| {
+                *acc += x;
+                Some(*acc)
+            })
+            .collect::<Vec<_>>();
+        if height > 1 {
+            let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
+            (0..buf_width).into_par_iter().for_each_init(
+                || [0; 256],
+                |buf, x| {
+                    for y in 0..buf_height {
+                        let px_start = y * ymul + x * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
-                        let c = coeffs[y2.abs_diff(y)];
-                        for (sum, chan) in buf.iter_mut().zip(px) {
-                            *sum += *chan as usize * c;
+                        let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
+                        let min = y.saturating_sub(half_height);
+                        let max = y.saturating_add(half_height + 1).min(buf_height);
+                        buf[..pxlen].fill(0);
+                        for y2 in min..max {
+                            let px_start = y2 * ymul + x * xmul;
+                            let px_end = px_start + pxlen;
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
+                            let c = coeffs[y2.abs_diff(y)];
+                            for (sum, chan) in buf.iter_mut().zip(px) {
+                                *sum += *chan as usize * c;
+                            }
+                        }
+                        let total = cums[max - y - 1] + cums[y - min] - cums[0];
+                        for (sum, chan) in buf.iter().zip(px) {
+                            chan.set((sum / total) as u8);
                         }
                     }
-                    let total = cums[max - y - 1] + cums[y - min] - cums[0];
-                    for (sum, chan) in buf.iter().zip(px) {
-                        chan.set((sum / total) as u8);
-                    }
-                }
-            },
-        );
-        std::mem::swap(src, dst);
-    }
-    if width > 1 {
-        let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
-        (0..buf_height).into_par_iter().for_each_init(
-            || [0; 256],
-            |buf, y| {
-                for x in 0..buf_width {
-                    let px_start = y * ymul + x * xmul;
-                    let px_end = px_start + pxlen;
-                    let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
-                    let min = x.saturating_sub(half_width);
-                    let max = x.saturating_add(half_width + 1).min(buf_width);
-                    buf[..pxlen].fill(0);
-                    for x2 in min..max {
-                        let px_start = y * ymul + x2 * xmul;
+                },
+            );
+            std::mem::swap(src, dst);
+        }
+        if width > 1 {
+            let dst_cells = AssertSync(Cell::from_mut(dst.as_mut_slice()).as_slice_of_cells());
+            (0..buf_height).into_par_iter().for_each_init(
+                || [0; 256],
+                |buf, y| {
+                    for x in 0..buf_width {
+                        let px_start = y * ymul + x * xmul;
                         let px_end = px_start + pxlen;
-                        let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
-                        let c = coeffs[x2.abs_diff(x)];
-                        for (sum, chan) in buf.iter_mut().zip(px) {
-                            *sum += *chan as usize * c;
+                        let px = unsafe { dst_cells.inner().get_unchecked(px_start..px_end) }; // already bounds checked
+                        let min = x.saturating_sub(half_width);
+                        let max = x.saturating_add(half_width + 1).min(buf_width);
+                        buf[..pxlen].fill(0);
+                        for x2 in min..max {
+                            let px_start = y * ymul + x2 * xmul;
+                            let px_end = px_start + pxlen;
+                            let px = unsafe { src.get_unchecked(px_start..px_end) }; // already bounds checked
+                            let c = coeffs[x2.abs_diff(x)];
+                            for (sum, chan) in buf.iter_mut().zip(px) {
+                                *sum += *chan as usize * c;
+                            }
+                        }
+                        let total = cums[max - x - 1] + cums[x - min] - cums[0];
+                        for (sum, chan) in buf.iter().zip(px) {
+                            chan.set((sum / total) as u8);
                         }
                     }
-                    let total = cums[max - x - 1] + cums[x - min] - cums[0];
-                    for (sum, chan) in buf.iter().zip(px) {
-                        chan.set((sum / total) as u8);
-                    }
-                }
-            },
-        );
-        std::mem::swap(src, dst);
-    }
+                },
+            );
+            std::mem::swap(src, dst);
+        }
+    });
 }
 
 /// Resize an image.
@@ -376,18 +385,20 @@ pub fn resize(from: Buffer<'_>, to: &mut Buffer<'_>, mut new_width: u32, new_hei
     let xdiv = to.width as usize;
     let ymul = from.height as usize;
     let ydiv = to.height as usize;
-    to.resize_data()
-        .par_chunks_mut(chunk_size)
-        .enumerate()
-        .for_each(|(n, px)| {
-            let y = n / xdiv;
-            let x = n % xdiv;
-            // We love removing bounds checks to halve the time this takes
-            unsafe {
-                let old = from.pixel_unchecked((x * xmul / xdiv) as _, (y * ymul / ydiv) as _);
-                std::ptr::copy_nonoverlapping(old.as_ptr(), px.as_mut_ptr(), chunk_size);
-            }
-        });
+    broadcast_pool().install(|| {
+        to.resize_data()
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(n, px)| {
+                let y = n / xdiv;
+                let x = n % xdiv;
+                // We love removing bounds checks to halve the time this takes
+                unsafe {
+                    let old = from.pixel_unchecked((x * xmul / xdiv) as _, (y * ymul / ydiv) as _);
+                    std::ptr::copy_nonoverlapping(old.as_ptr(), px.as_mut_ptr(), chunk_size);
+                }
+            });
+    });
 }
 
 /// A [`Broadcast2`] implementor that reorders the channels of an image
