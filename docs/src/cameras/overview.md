@@ -31,3 +31,7 @@ If reading from a frame fails, the camera tries reloading the camera and then tr
 Especially with the static cameras, it's very easy to have the camera send input way faster than it can be processed. FPS throttling sleeps if the real framerate exceeds to configured one, which frees up CPU time for other, more important things.
 
 A maximum framerate can be set with the `max_fps` field for a camera.
+
+### Resizing
+
+If the frame size isn't desirable, it can be resized through the camera config itself. The `resize.width` and `resize.height` keys allow a new size to be set for the camera. Resizing uses nearest-neighbor scaling for simplicity.

@@ -6,7 +6,7 @@ V4L2 is the primary way that we read from physical cameras. It allows for camera
 
 ## Configuration
 
-The following keys are recognized:
+A V4L camera must have its source, frame shape, and FourCC set. All other configuration is optional.
 
 ### Source
 
