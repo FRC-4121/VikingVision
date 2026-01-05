@@ -14,9 +14,15 @@ use std::time::Duration;
 use supply::{Request, prelude::*};
 use tracing::{error, info};
 
+const fn true_default() -> bool {
+    true
+}
 /// A simple component that prints an info-level span with the information in it.
-#[derive(Debug, Clone, Copy)]
-pub struct DebugComponent;
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DebugComponent {
+    #[serde(default = "true_default")]
+    pub noisy: bool,
+}
 impl Component for DebugComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
@@ -28,17 +34,13 @@ impl Component for DebugComponent {
         let Ok(val) = context.get_res(None).and_log_err() else {
             return;
         };
-        info!(?val, "debug");
+        info!(?val, allow_noisy = self.noisy, "debug");
     }
 }
-
-/// A factory to build a [`DebugComponent`].
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DebugFactory {}
 #[typetag::serde(name = "debug")]
-impl ComponentFactory for DebugFactory {
+impl ComponentFactory for DebugComponent {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
-        Box::new(DebugComponent)
+        Box::new(*self)
     }
 }
 
