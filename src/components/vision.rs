@@ -496,6 +496,38 @@ impl ComponentFactory for MedianFilterFactory {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResizeComponent {
+    pub width: u32,
+    pub height: u32,
+}
+impl Component for ResizeComponent {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: &str) -> OutputKind {
+        if name.is_empty() {
+            OutputKind::Single
+        } else {
+            OutputKind::None
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
+            return;
+        };
+        let mut new = Buffer::empty_rgb();
+        resize(img.borrow(), &mut new, self.width, self.height);
+        context.submit("", new);
+    }
+}
+#[typetag::serde(name = "resize")]
+impl ComponentFactory for ResizeComponent {
+    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+        Box::new(*self)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VisionDebugComponent {
     #[serde(flatten)]
