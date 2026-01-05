@@ -107,6 +107,12 @@ struct Cli {
     /// the number of CPU cores if none are specified.
     #[arg(short, long)]
     threads: Option<usize>,
+    /// Allow noisy events
+    ///
+    /// By default, events from the same component at the same position will be ignored
+    /// to avoid filling log files. To disable this filtering, this flag can be passed.
+    #[arg(short, long)]
+    allow_noisy_events: bool,
 }
 
 fn format_log_file(arg: &str, now: time::OffsetDateTime) -> String {
@@ -161,6 +167,9 @@ fn main() {
     }
 
     tracing_subscriber::registry()
+        .with(viking_vision::component_filter::ComponentEventFilter::new(
+            !args.allow_noisy_events,
+        ))
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_env_var(env_var)
