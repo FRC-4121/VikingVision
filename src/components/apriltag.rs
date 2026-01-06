@@ -93,10 +93,9 @@ impl Component for DetectPoseComponent {
         input == "frame"
     }
     fn output_kind(&self, name: &str) -> OutputKind {
-        if name.is_empty() {
-            OutputKind::Single
-        } else {
-            OutputKind::None
+        match name {
+            "" | "pose" | "error" => OutputKind::Single,
+            _ => OutputKind::None,
         }
     }
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
@@ -123,7 +122,10 @@ impl Component for DetectPoseComponent {
         let Ok(detection) = context.get_as::<apriltag::Detection>(None).and_log_err() else {
             return;
         };
-        context.submit("", detection.estimate_pose(params));
+        let pose = detection.estimate_pose(params);
+        context.submit_if_listening("", || pose);
+        context.submit_if_listening("pose", || pose.pose);
+        context.submit_if_listening("error", || pose.error);
     }
 }
 #[typetag::serde(name = "april-pose")]
