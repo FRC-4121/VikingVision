@@ -95,6 +95,10 @@ const fn max_usize() -> usize {
 const fn max_f32() -> f32 {
     f32::INFINITY
 }
+#[inline(always)]
+const fn one_f32() -> f32 {
+    1.0
+}
 
 /// A component that detects and filters blobs in binary images.
 ///
@@ -121,6 +125,12 @@ pub struct BlobsComponent {
     /// Maximum pixel count of blobs to emit.
     #[serde(default = "max_usize")]
     pub max_px: usize,
+    /// Minimum fill ratio (pixels / (width * height)) of blobs to emit.
+    #[serde(default)]
+    pub min_fill: f32,
+    /// Maximum fill ratio (pixels / (width * height)) of blobs to emit.
+    #[serde(default = "one_f32")]
+    pub max_fill: f32,
     /// Minimum aspect ratio (height / width) of blobs to emit.
     #[serde(default)]
     pub min_aspect: f32,
@@ -137,6 +147,8 @@ impl Default for BlobsComponent {
             max_h: u32::MAX,
             min_px: 0,
             max_px: usize::MAX,
+            min_fill: 0.0,
+            max_fill: 1.0,
             min_aspect: 0.0,
             max_aspect: f32::INFINITY,
         }
@@ -178,6 +190,12 @@ impl Component for BlobsComponent {
                 if frac.is_nan() {
                     frac = f32::INFINITY;
                 }
+                if frac < self.min_aspect || frac > self.max_aspect {
+                    continue;
+                }
+            }
+            if self.min_fill > 0.0 || self.max_fill < 1.0 {
+                let frac = blob.pixels as f32 / (w as f32 * h as f32);
                 if frac < self.min_aspect || frac > self.max_aspect {
                     continue;
                 }
