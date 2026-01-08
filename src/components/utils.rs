@@ -153,7 +153,7 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
 
 /// Convenience component factory to make a `WrapMutexComponent<Buffer>`
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct CanvasFactory;
+pub struct CanvasFactory {}
 #[typetag::serde(name = "canvas")]
 impl ComponentFactory for CanvasFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
