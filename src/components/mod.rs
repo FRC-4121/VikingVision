@@ -48,7 +48,7 @@ pub mod prelude {
         ChannelComponent, CloneComponent, DebugComponent, FpsComponent, WrapMutexComponent,
     };
     pub use super::vision::{
-        BlobComponent, ColorFilterComponent, ColorSpaceComponent, GaussianBlurComponent,
+        BlobsComponent, ColorFilterComponent, ColorSpaceComponent, GaussianBlurComponent,
         PercentileFilterComponent,
     };
 }

@@ -35,7 +35,7 @@ impl Component for ColorSpaceComponent {
         context.submit("", buffer.convert(self.format));
     }
 }
-#[typetag::serde(name = "colorspace")]
+#[typetag::serde(name = "color-space")]
 impl ComponentFactory for ColorSpaceComponent {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
@@ -47,6 +47,7 @@ impl ComponentFactory for ColorSpaceComponent {
 /// It outputs a [`Buffer`] with the [`Gray`](PixelFormat::Gray) format, with a value of 255 for pixels within the range and 0 for pixels
 /// outside of it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct ColorFilterComponent {
     pub filter: ColorFilter,
 }
@@ -92,7 +93,7 @@ const fn max_usize() -> usize {
 }
 #[inline(always)]
 const fn max_f32() -> f32 {
-    1.0
+    f32::INFINITY
 }
 
 /// A component that detects and filters blobs in binary images.
@@ -101,33 +102,33 @@ const fn max_f32() -> f32 {
 /// blobs on the "elem" channel, filtered by size, pixel count, and aspect ratio constraints.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct BlobComponent {
+pub struct BlobsComponent {
     /// Minimum width of blobs to emit.
     #[serde(default)]
-    min_w: u32,
+    pub min_w: u32,
     /// Maximum width of blobs to emit.
     #[serde(default = "max_u32")]
-    max_w: u32,
+    pub max_w: u32,
     /// Minimum height of blobs to emit.
     #[serde(default)]
-    min_h: u32,
+    pub min_h: u32,
     /// Maximum height of blobs to emit.
     #[serde(default = "max_u32")]
-    max_h: u32,
+    pub max_h: u32,
     /// Minimum pixel count of blobs to emit.
     #[serde(default)]
-    min_px: usize,
+    pub min_px: usize,
     /// Maximum pixel count of blobs to emit.
     #[serde(default = "max_usize")]
-    max_px: usize,
+    pub max_px: usize,
     /// Minimum aspect ratio (height / width) of blobs to emit.
     #[serde(default)]
-    min_aspect: f32,
+    pub min_aspect: f32,
     /// Maximum aspect ratio (height / width) of blobs to emit.
     #[serde(default = "max_f32")]
-    max_aspect: f32,
+    pub max_aspect: f32,
 }
-impl Default for BlobComponent {
+impl Default for BlobsComponent {
     fn default() -> Self {
         Self {
             min_w: 0,
@@ -141,14 +142,14 @@ impl Default for BlobComponent {
         }
     }
 }
-impl Component for BlobComponent {
+impl Component for BlobsComponent {
     fn inputs(&self) -> Inputs {
         Inputs::Primary
     }
     fn output_kind(&self, name: &str) -> OutputKind {
         match name {
-            "" => OutputKind::Single,
-            "elem" => OutputKind::Multiple,
+            "" => OutputKind::Multiple,
+            "vec" => OutputKind::Single,
             _ => OutputKind::None,
         }
     }
@@ -157,8 +158,8 @@ impl Component for BlobComponent {
             return;
         };
         let blobs = BlobsIterator::from_buffer(&img);
-        let collect = context.listening("");
-        let stream = context.listening("elem");
+        let collect = context.listening("vec");
+        let stream = context.listening("");
         let mut vec = Vec::new();
         for blob in blobs {
             let w = blob.width();
@@ -193,8 +194,8 @@ impl Component for BlobComponent {
         }
     }
 }
-#[typetag::serde(name = "blob")]
-impl ComponentFactory for BlobComponent {
+#[typetag::serde(name = "blobs")]
+impl ComponentFactory for BlobsComponent {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(*self)
     }
