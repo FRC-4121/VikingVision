@@ -13,3 +13,14 @@ A pixel format is a string, with the following known recognized values:
 - `ycc`, `YCC`, `ycbcr`, `YCbCr`: three channels: luma, blue chrominance, red chrominance. All channels are in the 0-255 range.
 - `rgba`, `RGBA`: four channels: red, green, blue, alpha. Because VikingVision doesn't typically care about the alpha, the alpha is unmultiplied.
 - `yuyv`, `YUYV`: four channels every two pixels, YUYV 4:2:2.
+
+## Types
+
+A type of a generic argument can be specified as a generic string. The following values are recognized:
+
+- `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, `usize`, `f32`, f64`: all the same as their Rust equivalent
+- `buffer`: a Rust `Buffer`
+- `string`: a Rust `String`
+- `blob`: a Rust `Blob`
+- `apriltag`: a Rust `Detection` (requires the `apriltag` feature)
+- any of the previous, wrapped in brackets, like `[usize]`: a `Vec` of the contained type
