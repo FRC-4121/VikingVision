@@ -6,7 +6,7 @@ Converts a `Detection` into a `PoseEstimation`.
 
 ## Inputs
 
-Primary input: a `Detection` to process.
+Primary input (`Detection`): a detected tag to process.
 
 ## Outputs
 

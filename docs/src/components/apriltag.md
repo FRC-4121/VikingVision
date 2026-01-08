@@ -6,11 +6,11 @@ Detects AprilTags on its input channel.
 
 ## Inputs
 
-Primary input: a frame to process.
+Primary input (`Buffer`): a frame to process.
 
 ## Outputs
 
-- Default channel (broadcast, `Detection`): the tags detected
+- Default channel (multiple, `Detection`): the tags detected
 - `vec` (single, `Vec<Detection>`): the tags detected, collected into a vector
 - `found` (single, `usize`): the number of tags detected
 

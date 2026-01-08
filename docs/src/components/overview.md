@@ -30,9 +30,9 @@ These all focus around manipulating an image or detecting features in it.
 
 - [`apriltag`](apriltag.md) (requires the `apriltag` feature)
 - [`detect-pose`](detect-pose.md) (requires the `apriltag` feature)
-- [`color-space`](color-space.md)
 - [`color-filter`](color-filter.md)
-- [`blob`](blob.md)
+- [`color-space`](color-space.md)
+- [`blobs`](blobs.md)
 - [`resize`](resize.md)
 - [`percent-filter` / `erode` / `dilate` / `median-filter`](percent-filter.md)
 - [`box-blur`](box-blur.md)
