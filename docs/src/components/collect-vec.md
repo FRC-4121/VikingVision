@@ -20,4 +20,4 @@ Appears in configuration with `type = "collect-vec"`.
 
 Additional fields:
 
-- `inner`: ([Type](../config/types.md)): the inner element type.
+- `inner`: ([Type](../config/types.md#types)): the inner element type.

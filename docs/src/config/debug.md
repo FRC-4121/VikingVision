@@ -14,7 +14,7 @@ Debug modes can be overridden through components, but they're optional. A global
 
 ### `debug.default_path`
 
-The default path to save videos to. This supports all of the `strftime` escapes, along with `%i` for a unique ID (32 hex characters) and `%N` for a pretty, human-readable name.
+The default path to save videos to. This supports all of the `strftime` escapes, along with `%i` for a unique ID (32 hex characters) and `%N` for a pretty, human-readable name. The video will be saved as an MP4 video.
 
 ### `debug.default_title`
 
