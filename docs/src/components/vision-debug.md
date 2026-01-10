@@ -20,5 +20,6 @@ Additional fields:
   - `auto`: use the configured default, or `none`
   - `none`: ignore this image
   - `save`: save this image to a given path
+  - `show`: create a new window showing this image
 - `path` (string, requires `mode = "save"`): see the [`debug.default_path`](../config/debug.md#debugdefault_path) documentation
 - `show` (string, requires `mode = "show"`): see the [`debug.default_title`](../config/debug.md#debugdefault_title) documentation

@@ -1,6 +1,6 @@
 # Frame Cameras
 
-For testing purposes, rather than deal with physical cameras, it can be more useful to show a single, static frame. These can easily run at hundreds or even thousands of frames per second because no actual work is done reading the frame.
+For testing purposes, rather than dealing with physical cameras, it can be more useful to show a single, static frame. These can easily run at hundreds or even thousands of frames per second because no actual work is done reading the frame.
 
 ## Configuration
 

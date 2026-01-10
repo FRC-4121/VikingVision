@@ -1,6 +1,6 @@
 # Camera Overview
 
-Cameras are the entry point for a program. When a configuration is run with the CLI, each camera gets its own thread to read from (which is crucial for performance since reading from a camera is a blocking operation). Each camera that creates a pipeline run with its frame sent to each of the outputs _independently_ (note that this is not ideal behavior and subject to change). This is prone to issues like more expensive pipelines being starved and components unexpectedly not running, so it will be fixed soon.
+Cameras are the entry point for a program. When a configuration is run with the CLI, each camera gets its own thread to read from (which is crucial for performance since reading from a camera is a blocking operation). For each camera, a new pipeline run will be created from its frame for each of the components specified in the camera's outputs (note that this is not ideal behavior and subject to change). This is prone to issues like more expensive pipelines being starved and components unexpectedly not running, so it will be fixed soon.
 
 ## In the config file
 
@@ -11,7 +11,7 @@ A camera config might look like this:
 ```toml
 [camera.front] # we call this our front camera
 type = "v4l" # we want to use the V4L2 backend
-outputs = ["detect-tags"] # send out output to a component called detect-tags
+outputs = ["detect-tags"] # send out the frame to a component called detect-tags
 width = 640 # V4L2-specific options
 height = 320
 fourcc = "YUYV"
@@ -28,7 +28,7 @@ If reading from a frame fails, the camera tries reloading the camera and then tr
 
 ### FPS throttling
 
-Especially with the static cameras, it's very easy to have the camera send input way faster than it can be processed. FPS throttling sleeps if the real framerate exceeds to configured one, which frees up CPU time for other, more important things.
+Especially with the static cameras, the camera can send input significantly faster than it can be processed. FPS throttling sleeps if the real framerate exceeds the configured one, which frees up CPU time for other, more important things.
 
 A maximum framerate can be set with the `max_fps` field for a camera.
 

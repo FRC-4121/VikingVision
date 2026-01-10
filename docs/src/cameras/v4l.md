@@ -18,7 +18,7 @@ The camera's dimensions are specified in the `width` and `height` fields. If the
 
 ### FourCC
 
-FourCC is the format in which data is sent over the camera. It should be a four-character string, typically uppercase letters and numbers. For most cameras, either `YUVY` or `MJPG` should be used. The following codes are recognized by VikingVision:
+FourCC is the format in which data is sent over the camera. It should be a four-character string, typically uppercase letters and numbers. For most cameras, either `YUYV` or `MJPG` should be used. The following codes are recognized by VikingVision:
 
 - `YUYV`
 - `RGB8`

@@ -15,9 +15,9 @@ Also, this is done in Rust, so it's 🔥blazingly fast🔥 or whatever.
 
 ### Why not OpenCV?
 
-OpenCV killed my parents.
+Using it from Python leads to performance bottlenecks, and unless you're working with the latest Python version, has almost no capability for parallel processing. In any language, writing and maintaining complex programs for requirements that change every year is also a significant overhead, especially for teams without many programmers. By using VikingVision, that work is gone, and only a small configuration file needs to be maintained.
 
-Jokes aside, using it from Python leads to performance bottlenecks, and unless you're working with the latest Python version, has almost no capability for parallel processing. In any language, writing and maintaining complex programs for requirements that change every year is also a significant overhead, especially for teams without many programmers. By using VikingVision, that work is gone, and only a small configuration file needs to be maintained.
+OpenCV's spotty documentation and lack of safety (it caused a memory error in a _Java_ program once) were enough for me (the person writing this documentation, hi!!!) to want to avoid it in favor of lower-level system bindings and reimplementations of the needed algorithms.
 
 ### Why not Limelight?
 
@@ -33,7 +33,7 @@ PhotonVision has way more features, but VikingVision's smaller feature set is su
 - Build vision pipelines that can track game pieces by color and estimate their positions
 - Run multiple camera feeds simultaneously
 
-## Quick Example
+## Example
 
 Want to detect all of the AprilTags that a camera can see and publish it to NetworkTables? A basic config looks like this:
 

@@ -7,7 +7,7 @@ Draws data on a canvas.
 - `canvas` (`Mutex<Buffer>`): a mutable canvas to draw on
 - `elem` (`T`): the element to draw on the canvas
 
-## Ouptputs
+## Outputs
 
 None.
 
@@ -19,4 +19,4 @@ Additional fields:
 
 - `draw` ([Type](../config/types.md#types)): the types of elements to draw. Only `blob`, `apriltag`, `line`, and their bracketed variants are recognized.
 - `space` (`luma` | `rgb` | `hsv` | `yuyv` | `ycc`): the color space to filter in.
-- Channels of the color. These depend on the `space` parameter. For `yuyv`, the channels are `y`, `u`, and `v`, for example.
+- Channel names for the color components. These vary by color space. For example, with `yuyv` the channels are `y`, `u`, and `v`; with `rgb` they are `r`, `g`, and `b`.

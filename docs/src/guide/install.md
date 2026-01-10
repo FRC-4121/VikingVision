@@ -4,7 +4,7 @@ Right now, the only option for installation is to build from source. This requir
 
 ## Quick installation
 
-With everything needed installed, you can run `cargo install --git https://github.com/FRC-4121/VikingVision <bins>`, where `<bins>` is the binary targets to install, passed as separate arguments. For example, to install just the CLI and playground, you'd run `cargo install --git https://github.com/FRC-4121/VikingVision vv-cli vv-pg`. The available targets are:
+With all of the prerequisites installed, you can run `cargo install --git https://github.com/FRC-4121/VikingVision <bins>`, where `<bins>` is the binary targets to install, passed as separate arguments. For example, to install just the CLI and playground, you'd run `cargo install --git https://github.com/FRC-4121/VikingVision vv-cli vv-pg`. The available targets are:
 
 - `vv-cli` - The command-line interface for the library, which handles loading and running pipelines. It doesn't have any fancy features, but can run without a desktop environment and only using the minimal resources.
 - `vv-gui` - Currently a stub that just prints, "Hello, World!". Development is ongoing, and hopefully it'll be usable by March 2026.

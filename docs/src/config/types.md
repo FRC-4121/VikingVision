@@ -18,7 +18,7 @@ A pixel format is a string, with the following known recognized values:
 
 A type of a generic argument can be specified as a generic string. The following values are recognized:
 
-- `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, `usize`, `f32`, f64`: all the same as their Rust equivalent
+- `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, `usize`, `f32`, `f64`: all the same as their Rust equivalent
 - `buffer`: a Rust `Buffer`
 - `string`: a Rust `String`
 - `blob`: a Rust `Blob`

@@ -8,7 +8,7 @@ Primary input (any): the data to get fields of.
 
 ## Outputs
 
-Any output (single, any): the value of a field in the input with the channel's name.
+Any output (single, any): a field extracted from the input. The channel's name is the extracted field's name.
 
 ## Configuration
 
