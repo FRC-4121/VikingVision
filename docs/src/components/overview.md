@@ -20,6 +20,14 @@ Part of the added flexibility of channels is that multiple outputs can be sent o
 
 Broadcasting is a powerful feature, and its dual is aggregation. Aggregating components get access to all of the inputs (either relative to their least split input or through the whole pipeline run). Because they take all of the inputs and only run once for the group, aggregating components are considered to at their least split input when checking the pipeline graph for multi-output components.
 
+## Configuration
+
+All components in the configuration must have a `type` field, with the value determining the type of component. The rest of the configuration for the components can be found on their respective pages.
+
+In addition, components need to have their inputs set. For components that take a primary input, they should have a single `input` field with a string containing the name of the component to take input from, if receiving from the default output channel, or with the component name and channel name separated with a `.`, like `component-name.channel-name` to use a non-default outputs. For components that take named inputs, the configuration should have a table called `inputs` with similar strings as the values.
+
+Each component can have at most one input from multiple sources. For this, rather than a single string, an array of strings should be used. The outputs of each of the specified components will be sent on the channel. For broadcasting analysis, it must be valid to have a component that would take all of the specified inputs separately at that position (there wouldn't be any ambiguous broadcasting), and a branch point is inserted before the input.
+
 ## Available Components
 
 The following components are available for use in pipelines:
