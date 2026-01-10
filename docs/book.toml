@@ -1,0 +1,5 @@
+[book]
+authors = ["Matthew Cornell"]
+language = "en"
+src = "src"
+title = "VikingVision Docs"
