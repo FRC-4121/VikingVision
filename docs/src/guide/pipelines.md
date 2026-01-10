@@ -1,6 +1,6 @@
 # Running Pipelines
 
-Pipelines are the most powerful feature of VikingVision, and they enable easily composable and parallel processing through something similar to the actor model. To run a pipeline, create a pipeline config file (more information about that can be found in the [configuration section](placeholder.md)) and run it with `vv-cli path/to/pipeline/config.toml`.
+Pipelines are the most powerful feature of VikingVision, and they enable easily composable and parallel processing through something similar to the actor model. To run a pipeline, create a pipeline config file (more information about that can be found in the [configuration section](../config/overview.md)) and run it with `vv-cli path/to/pipeline/config.toml`.
 
 ## Filtering cameras
 

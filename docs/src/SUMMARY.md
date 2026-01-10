@@ -10,6 +10,7 @@
 
 # Configuration
 
+- [Configuration Files](config/overview.md)
 - [Run Parameters](config/run.md)
 - [Vision Debugging](config/debug.md)
 - [NetworkTables](config/ntable.md)
