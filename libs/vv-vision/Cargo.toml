@@ -1,0 +1,7 @@
+[package]
+name = "vv-vision"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]

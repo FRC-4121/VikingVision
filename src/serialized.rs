@@ -31,7 +31,7 @@ impl Default for RunConfig {
 #[serde(rename_all = "lowercase")]
 pub enum NtHost {
     Host(String),
-    Team(ntable::team::TeamNumber),
+    Team(vv_ntable::team::TeamNumber),
 }
 #[cfg(feature = "ntable")]
 impl std::fmt::Display for NtHost {
@@ -81,11 +81,11 @@ impl NtConfig {
     #[cfg(feature = "ntable")]
     pub fn init(self) -> NtInitResult {
         let _guard = tracing::error_span!("init").entered();
-        let mut client = ntable::NtClient::new(self.identity);
+        let mut client = vv_ntable::NtClient::new(self.identity);
         client.port = self.port;
         client.keepalive = self.keepalive;
         let mut set = false;
-        ntable::GLOBAL_HANDLE.get_or_init(|| {
+        vv_ntable::GLOBAL_HANDLE.get_or_init(|| {
             set = true;
             client.handle().clone()
         });

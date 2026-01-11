@@ -1,15 +1,15 @@
 #![cfg(feature = "ntable")]
 
+use crate::pipeline::prelude::*;
 use crate::pipeline::PipelineId;
 use crate::pipeline::PipelineName;
-use crate::pipeline::prelude::*;
-use ntable::NtHandle;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Display;
+use vv_ntable::NtHandle;
 
 thread_local! {
     static CLIENT_HANDLE: Cell<*const NtHandle> = const { Cell::new(std::ptr::null()) };
@@ -29,7 +29,7 @@ pub fn handle_in_scope<R, F: FnOnce() -> R>(handle: &NtHandle, f: F) -> R {
 /// Access the client handle passed to [`handle_in_scope`] from inside the closure body.
 pub fn with_handle<R, F: FnOnce(&NtHandle) -> R>(f: F) -> Option<R> {
     unsafe { CLIENT_HANDLE.get().as_ref() }
-        .or_else(|| ntable::GLOBAL_HANDLE.get())
+        .or_else(|| vv_ntable::GLOBAL_HANDLE.get())
         .map(f)
 }
 /// Shorthand for [`with_handle(Clone::clone)`](with_handle) to clone the current client handle.

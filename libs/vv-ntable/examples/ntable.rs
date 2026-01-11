@@ -5,7 +5,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let mut client = ntable::NtClient::new("tester".to_string());
+    let mut client = vv_ntable::NtClient::new("tester".to_string());
     let publisher = client.handle().publish("/counter");
     let counter_loop = async move {
         let mut timer = tokio::time::interval(Duration::from_secs(1));
