@@ -5,3 +5,22 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+boxcar = "0.2.14"
+polonius-the-crab.workspace = true
+rayon.workspace = true
+serde = { workspace = true, optional = true }
+softbuffer = { version = "0.4.8", optional = true }
+smallvec.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tracing.workspace = true
+winit = { version = "0.30.12", optional = true }
+v4l = { workspace = true, optional = true }
+zune-jpeg = "0.4.14"
+zune-png = "0.4.10"
+
+[features]
+default = ["debug-gui"]
+debug-gui = ["dep:softbuffer", "dep:winit"]
+serde = ["dep:serde"]
+v4l = ["dep:v4l"]

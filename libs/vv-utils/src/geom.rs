@@ -1,13 +1,16 @@
 //! 3D geometry utilities
 
-use crate::pipeline::prelude::Data;
+// use crate::pipeline::prelude::Data;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
-use std::fmt::{self, Debug, Formatter};
+// use std::borrow::Cow;
+// use std::fmt::{self, Debug, Formatter};
 use std::ops::{Add, Mul, Neg, Sub};
-use std::sync::Arc;
+// use std::sync::Arc;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Vec3(pub [f64; 3]);
 impl Vec3 {
     pub const ZERO: Self = Self([0.0, 0.0, 0.0]);
@@ -64,30 +67,32 @@ impl Neg for Vec3 {
         self.neg()
     }
 }
-impl Data for Vec3 {
-    fn debug(&self, f: &mut Formatter) -> fmt::Result {
-        Debug::fmt(self, f)
-    }
-    fn clone_to_arc(&self) -> Arc<dyn Data> {
-        Arc::new(*self)
-    }
-    fn known_fields(&self) -> &'static [&'static str] {
-        &["x", "y", "z"]
-    }
-    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
-        match field {
-            "x" => Some(Cow::Borrowed(&self.0[0])),
-            "y" => Some(Cow::Borrowed(&self.0[1])),
-            "z" => Some(Cow::Borrowed(&self.0[2])),
-            _ => None,
-        }
-    }
-}
+// impl Data for Vec3 {
+//     fn debug(&self, f: &mut Formatter) -> fmt::Result {
+//         Debug::fmt(self, f)
+//     }
+//     fn clone_to_arc(&self) -> Arc<dyn Data> {
+//         Arc::new(*self)
+//     }
+//     fn known_fields(&self) -> &'static [&'static str] {
+//         &["x", "y", "z"]
+//     }
+//     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+//         match field {
+//             "x" => Some(Cow::Borrowed(&self.0[0])),
+//             "y" => Some(Cow::Borrowed(&self.0[1])),
+//             "z" => Some(Cow::Borrowed(&self.0[2])),
+//             _ => None,
+//         }
+//     }
+// }
 
 /// A 3x3 double-precision matrix.
 ///
 /// This is stored internally in row-major order.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Mat3(pub [f64; 9]);
 impl Mat3 {
     /// The identity matrix.
@@ -228,27 +233,29 @@ impl Mul<Vec3> for Mat3 {
         self.mul_vec(rhs)
     }
 }
-impl Data for Mat3 {
-    fn debug(&self, f: &mut Formatter) -> fmt::Result {
-        Debug::fmt(self, f)
-    }
-    fn clone_to_arc(&self) -> Arc<dyn Data> {
-        Arc::new(*self)
-    }
-    fn known_fields(&self) -> &'static [&'static str] {
-        &["quat", "euler"]
-    }
-    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
-        match field {
-            "quat" => Some(Cow::Owned(Arc::new(self.to_quat()) as _)),
-            "euler" => Some(Cow::Owned(Arc::new(self.to_euler()) as _)),
-            _ => None,
-        }
-    }
-}
+// impl Data for Mat3 {
+//     fn debug(&self, f: &mut Formatter) -> fmt::Result {
+//         Debug::fmt(self, f)
+//     }
+//     fn clone_to_arc(&self) -> Arc<dyn Data> {
+//         Arc::new(*self)
+//     }
+//     fn known_fields(&self) -> &'static [&'static str] {
+//         &["quat", "euler"]
+//     }
+//     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+//         match field {
+//             "quat" => Some(Cow::Owned(Arc::new(self.to_quat()) as _)),
+//             "euler" => Some(Cow::Owned(Arc::new(self.to_euler()) as _)),
+//             _ => None,
+//         }
+//     }
+// }
 
 /// A quaternion, stored in XYZW order.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Quat(pub [f64; 4]);
 impl Quat {
     pub const fn x(self) -> f64 {
@@ -264,29 +271,31 @@ impl Quat {
         self.0[3]
     }
 }
-impl Data for Quat {
-    fn debug(&self, f: &mut Formatter) -> fmt::Result {
-        Debug::fmt(self, f)
-    }
-    fn clone_to_arc(&self) -> Arc<dyn Data> {
-        Arc::new(*self)
-    }
-    fn known_fields(&self) -> &'static [&'static str] {
-        &["x", "y", "z", "w"]
-    }
-    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
-        match field {
-            "x" => Some(Cow::Borrowed(&self.0[0])),
-            "y" => Some(Cow::Borrowed(&self.0[1])),
-            "z" => Some(Cow::Borrowed(&self.0[2])),
-            "w" => Some(Cow::Borrowed(&self.0[3])),
-            _ => None,
-        }
-    }
-}
+// impl Data for Quat {
+//     fn debug(&self, f: &mut Formatter) -> fmt::Result {
+//         Debug::fmt(self, f)
+//     }
+//     fn clone_to_arc(&self) -> Arc<dyn Data> {
+//         Arc::new(*self)
+//     }
+//     fn known_fields(&self) -> &'static [&'static str] {
+//         &["x", "y", "z", "w"]
+//     }
+//     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+//         match field {
+//             "x" => Some(Cow::Borrowed(&self.0[0])),
+//             "y" => Some(Cow::Borrowed(&self.0[1])),
+//             "z" => Some(Cow::Borrowed(&self.0[2])),
+//             "w" => Some(Cow::Borrowed(&self.0[3])),
+//             _ => None,
+//         }
+//     }
+// }
 
 /// XYZ intrinsic euler angles (roll, pitch, yaw).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct EulerXYZ(pub [f64; 3]);
 impl EulerXYZ {
     #[doc(alias = "roll")]
@@ -302,25 +311,25 @@ impl EulerXYZ {
         self.0[2]
     }
 }
-impl Data for EulerXYZ {
-    fn debug(&self, f: &mut Formatter) -> fmt::Result {
-        Debug::fmt(self, f)
-    }
-    fn clone_to_arc(&self) -> Arc<dyn Data> {
-        Arc::new(*self)
-    }
-    fn known_fields(&self) -> &'static [&'static str] {
-        &["x", "y", "z"]
-    }
-    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
-        match field {
-            "x" => Some(Cow::Borrowed(&self.0[0])),
-            "y" => Some(Cow::Borrowed(&self.0[1])),
-            "z" => Some(Cow::Borrowed(&self.0[2])),
-            _ => None,
-        }
-    }
-}
+// impl Data for EulerXYZ {
+//     fn debug(&self, f: &mut Formatter) -> fmt::Result {
+//         Debug::fmt(self, f)
+//     }
+//     fn clone_to_arc(&self) -> Arc<dyn Data> {
+//         Arc::new(*self)
+//     }
+//     fn known_fields(&self) -> &'static [&'static str] {
+//         &["x", "y", "z"]
+//     }
+//     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+//         match field {
+//             "x" => Some(Cow::Borrowed(&self.0[0])),
+//             "y" => Some(Cow::Borrowed(&self.0[1])),
+//             "z" => Some(Cow::Borrowed(&self.0[2])),
+//             _ => None,
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

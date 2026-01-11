@@ -104,7 +104,7 @@ impl TryFrom<CVFShim> for CollectVecFactory {
             "f64" => CollectVecComponent::<f64>::new_boxed,
             "blob" => CollectVecComponent::<Blob>::new_boxed,
             #[cfg(feature = "apriltag")]
-            "apriltag" => CollectVecComponent::<crate::apriltag::Detection>::new_boxed,
+            "apriltag" => CollectVecComponent::<vv_apriltag::Detection>::new_boxed,
             "buffer" => CollectVecComponent::<Buffer>::new_boxed,
             "string" => CollectVecComponent::<String>::new_boxed,
             "[i8]" => CollectVecComponent::<Vec<i8>>::new_boxed,
@@ -121,7 +121,7 @@ impl TryFrom<CVFShim> for CollectVecFactory {
             "[f64]" => CollectVecComponent::<Vec<f64>>::new_boxed,
             "[blob]" => CollectVecComponent::<Vec<Blob>>::new_boxed,
             #[cfg(feature = "apriltag")]
-            "[apriltag]" => CollectVecComponent::<Vec<crate::apriltag::Detection>>::new_boxed,
+            "[apriltag]" => CollectVecComponent::<Vec<vv_apriltag::Detection>>::new_boxed,
             "[buffer]" => CollectVecComponent::<Vec<Buffer>>::new_boxed,
             "[string]" => CollectVecComponent::<Vec<String>>::new_boxed,
             name => return Err(format!("Unrecognized type {name:?}")),

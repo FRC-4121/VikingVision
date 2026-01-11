@@ -1,4 +1,5 @@
 use super::PixelFormat;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display, Formatter};
 use std::ops::{Deref, DerefMut, RangeInclusive};
@@ -51,11 +52,15 @@ macro_rules! color_bytes {
 }
 
 /// A filter, along with a color space to filter in.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(
-    rename_all = "lowercase",
-    rename_all_fields = "kebab-case",
-    tag = "space"
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(
+        rename_all = "lowercase",
+        rename_all_fields = "kebab-case",
+        tag = "space"
+    )
 )]
 pub enum ColorFilter {
     Luma {
@@ -86,7 +91,7 @@ pub enum ColorFilter {
         min_v: u8,
         max_v: u8,
     },
-    #[serde(rename = "ycc")]
+    #[cfg_attr(feature = "serde", serde(rename = "ycc"))]
     YCbCr {
         min_y: u8,
         max_y: u8,
@@ -196,8 +201,9 @@ impl Display for ColorFilter {
 }
 
 /// A color, along with its color space.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase", tag = "space")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase", tag = "space"))]
 pub enum Color {
     Luma {
         l: u8,
@@ -217,7 +223,7 @@ pub enum Color {
         u: u8,
         v: u8,
     },
-    #[serde(rename = "ycc")]
+    #[cfg_attr(feature = "serde", serde(rename = "ycc"))]
     YCbCr {
         y: u8,
         b: u8,

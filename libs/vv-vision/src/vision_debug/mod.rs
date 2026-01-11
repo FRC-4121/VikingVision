@@ -2,6 +2,7 @@
 #![allow(clippy::new_ret_no_self)]
 
 use crate::buffer::Buffer;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 use std::sync::OnceLock;
@@ -21,8 +22,9 @@ pub use backend::Handler;
 use backend::Signal;
 
 /// What to do with the image we received.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "lowercase")]
+#[derive(Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "mode", rename_all = "lowercase"))]
 pub enum DebugMode {
     /// Auto-select based on global configuration.
     #[default]
@@ -48,8 +50,9 @@ impl From<DefaultDebugMode> for DebugMode {
 }
 
 /// How we should handle images that are sent with [`DebugMode::Auto`].
-#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum DefaultDebugMode {
     #[default]
     None,
@@ -57,12 +60,13 @@ pub enum DefaultDebugMode {
     Show,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DefaultDebug {
     pub mode: Option<DefaultDebugMode>,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub default_path: String,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub default_title: String,
 }
 impl DefaultDebug {

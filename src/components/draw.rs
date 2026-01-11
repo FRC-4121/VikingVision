@@ -95,11 +95,11 @@ impl TryFrom<DrawShim> for DrawFactory {
             "blob" => DrawComponent::<Blob>::new_boxed,
             "line" => DrawComponent::<Line>::new_boxed,
             #[cfg(feature = "apriltag")]
-            "apriltag" => DrawComponent::<crate::apriltag::Detection>::new_boxed,
+            "apriltag" => DrawComponent::<vv_apriltag::Detection>::new_boxed,
             "[blob]" => DrawComponent::<Vec<Blob>>::new_boxed,
             "[line]" => DrawComponent::<Vec<Line>>::new_boxed,
             #[cfg(feature = "apriltag")]
-            "[apriltag]" => DrawComponent::<Vec<crate::apriltag::Detection>>::new_boxed,
+            "[apriltag]" => DrawComponent::<Vec<vv_apriltag::Detection>>::new_boxed,
             name => return Err(format!("Unrecognized type {name:?}")),
         };
         Ok(DrawFactory {

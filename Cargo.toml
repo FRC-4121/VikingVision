@@ -6,7 +6,7 @@ members = [
     "libs/vv-vision",
     "bins/vv-cli",
     "bins/vv-gui"
-]
+, "libs/vv-utils"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,23 +21,18 @@ license.workspace = true
 autoexamples = false
 
 [dependencies]
-apriltag-sys = { path = "./libs/apriltag-sys", optional = true }
-boxcar = "0.2.14"
 disqualified = "1.0.0"
 humantime-serde = "1.1.1"
-libc = { version = "0.2", optional = true }
 litemap = "0.8.1"
 no_deadlocks = { version = "1.3.2", optional = true }
-vv-ntable = { path = "./libs/vv-ntable", optional = true }
 papaya = "0.2.3"
-polonius-the-crab = "0.5.0"
+polonius-the-crab.workspace = true
 rayon.workspace = true
 serde.workspace = true
-smallvec = { version = "1.15.1", features = ["const_new", "drain_filter"] }
+smallvec.workspace = true
 smol_str = { workspace = true, features = ["serde"] }
-softbuffer = { version = "0.4.8", optional = true }
 supply = "0.3.1"
-thiserror = "2.0"
+thiserror.workspace = true
 time.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -45,9 +40,10 @@ triomphe.workspace = true
 ty-tag = "0.1.1"
 typetag = "0.2.21"
 v4l = { workspace = true, optional = true }
-winit = { version = "0.30.12", optional = true }
-zune-jpeg = "0.4.14"
-zune-png = "0.4.10"
+vv-apriltag = { workspace = true, optional = true, features = ["serde"] }
+vv-ntable = { workspace = true, optional = true }
+vv-vision = { workspace = true, default-features = false, features = ["serde"] }
+zune-jpeg = "0.5.8"
 
 [dev-dependencies]
 anyhow = "1.0"
@@ -55,18 +51,21 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [features]
 default = ["apriltag", "debug-gui", "ntable", "v4l"]
-apriltag = ["dep:apriltag-sys", "dep:libc"]
-v4l = ["dep:v4l"]
+apriltag = ["dep:vv-apriltag"]
+debug-gui = ["vv-vision/debug-gui"]
+v4l = ["dep:v4l", "vv-vision/v4l"]
 ntable = ["dep:vv-ntable"]
 debug-tools = ["dep:no_deadlocks"]
-debug-gui = ["dep:softbuffer", "dep:winit"]
 
 [workspace.dependencies]
 eframe = { version = "0.33.2", features = ["persistence"] }
+polonius-the-crab = "0.5.0"
 rayon = "1.11.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+smallvec = { version = "1.15.1", features = ["const_new", "drain_filter"] }
 smol_str = "0.3.4"
+thiserror = "2.0"
 time = { version = "0.3.44", features = ["formatting", "local-offset"] }
 toml = "0.9.8"
 tracing = "0.1.43"
@@ -74,6 +73,10 @@ tracing-subscriber = "0.3.20"
 triomphe = "0.1.15"
 v4l = "0.14.0"
 viking-vision = { path = ".", default-features = false }
+vv-apriltag = { path = "./libs/vv-apriltag", default-features = false }
+vv-ntable = { path = "./libs/vv-ntable", default-features = false }
+vv-utils = { path = "./libs/vv-utils" }
+vv-vision = { path = "./libs/vv-vision", default-features = false }
 
 [[example]]
 name = "pipelines"

@@ -5,3 +5,12 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+apriltag-sys = { path = "../apriltag-sys" }
+serde = { workspace = true, optional = true }
+thiserror.workspace = true
+libc = "0.2"
+vv-utils.workspace = true
+vv-vision.workspace = true
+
+[features]
+serde = ["dep:serde"]

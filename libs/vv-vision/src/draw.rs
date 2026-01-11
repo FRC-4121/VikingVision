@@ -1,11 +1,11 @@
 use crate::buffer::{Buffer, PixelFormat};
-use crate::pipeline::component::Data;
+// use crate::pipeline::component::Data;
 use crate::vision::Blob;
-use std::borrow::Cow;
+// use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt::{self, Display, Formatter};
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
-use std::sync::Arc;
+// use std::sync::Arc;
 
 pub trait SignedCoordinate:
     Copy
@@ -89,26 +89,26 @@ impl Display for Line {
         write!(f, "({x0}, {y0})..({x1}, {y1})")
     }
 }
-impl Data for Line {
-    fn debug(&self, f: &mut Formatter) -> fmt::Result {
-        Display::fmt(self, f)
-    }
-    fn clone_to_arc(&self) -> Arc<dyn Data> {
-        Arc::new(*self)
-    }
-    fn known_fields(&self) -> &'static [&'static str] {
-        &["x0", "y0", "x1", "y1"]
-    }
-    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
-        match field {
-            "x0" => Some(Cow::Borrowed(&self.x0)),
-            "y0" => Some(Cow::Borrowed(&self.y0)),
-            "x1" => Some(Cow::Borrowed(&self.x1)),
-            "y1" => Some(Cow::Borrowed(&self.y1)),
-            _ => None,
-        }
-    }
-}
+// impl Data for Line {
+//     fn debug(&self, f: &mut Formatter) -> fmt::Result {
+//         Display::fmt(self, f)
+//     }
+//     fn clone_to_arc(&self) -> Arc<dyn Data> {
+//         Arc::new(*self)
+//     }
+//     fn known_fields(&self) -> &'static [&'static str] {
+//         &["x0", "y0", "x1", "y1"]
+//     }
+//     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
+//         match field {
+//             "x0" => Some(Cow::Borrowed(&self.x0)),
+//             "y0" => Some(Cow::Borrowed(&self.y0)),
+//             "x1" => Some(Cow::Borrowed(&self.x1)),
+//             "y1" => Some(Cow::Borrowed(&self.y1)),
+//             _ => None,
+//         }
+//     }
+// }
 impl Drawable for Line {
     fn draw(&self, color: &[u8], buffer: &mut Buffer) {
         let Line { x0, y0, x1, y1 } = *self;
@@ -208,7 +208,7 @@ impl<T: PixelCoordinate> ExactSizeIterator for DrawLineIterator<T> {
     }
 }
 
-pub trait Drawable: Data {
+pub trait Drawable {
     fn draw(&self, color: &[u8], buffer: &mut Buffer);
 }
 impl Drawable for Blob {
@@ -272,24 +272,7 @@ impl Drawable for Blob {
         }
     }
 }
-#[cfg(feature = "apriltag")]
-impl Drawable for crate::apriltag::Detection {
-    fn draw(&self, color: &[u8], buffer: &mut Buffer) {
-        let corners = self.corners();
-        for i in 0..4 {
-            let [x0, y0] = corners[i];
-            let [x1, y1] = corners[(i + 1) % 4];
-            let Ok(it) = DrawLineIterator::new(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
-            for (x, y) in it {
-                let (Ok(x), Ok(y)) = (x.try_into(), y.try_into()) else {
-                    continue;
-                };
-                buffer.set_pixel(x, y, color);
-            }
-        }
-    }
-}
-impl<T: Drawable + Clone> Drawable for Vec<T> {
+impl<T: Drawable> Drawable for Vec<T> {
     fn draw(&self, color: &[u8], buffer: &mut Buffer) {
         for elem in self {
             elem.draw(color, buffer);

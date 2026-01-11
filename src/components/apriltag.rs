@@ -1,6 +1,5 @@
 #![cfg(feature = "apriltag")]
 
-use crate::apriltag;
 use crate::buffer::Buffer;
 use crate::camera::{Fov, FrameSize};
 use crate::mutex::Mutex;
@@ -10,7 +9,7 @@ use supply::ProviderExt;
 
 #[derive(Debug)]
 pub struct AprilTagComponent {
-    pub detector: Mutex<apriltag::Detector>,
+    pub detector: Mutex<vv_apriltag::Detector>,
 }
 impl Component for AprilTagComponent {
     fn inputs(&self) -> Inputs {
@@ -65,13 +64,13 @@ impl Component for AprilTagComponent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AprilTagFactory {
     #[serde(flatten)]
-    pub config: apriltag::DetectorConfig,
+    pub config: vv_apriltag::DetectorConfig,
 }
-#[typetag::serde(name = "apriltag")]
+#[typetag::serde(name = "vv_apriltag")]
 impl ComponentFactory for AprilTagFactory {
     fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
         Box::new(AprilTagComponent {
-            detector: Mutex::new(apriltag::Detector::from_config(&self.config)),
+            detector: Mutex::new(vv_apriltag::Detector::from_config(&self.config)),
         })
     }
 }
@@ -79,9 +78,9 @@ impl ComponentFactory for AprilTagFactory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "spec", rename_all = "lowercase")]
 pub enum DetectPoseComponent {
-    Fixed(apriltag::PoseParams),
+    Fixed(vv_apriltag::PoseParams),
     Infer {
-        #[serde(deserialize_with = "apriltag::tag_size::deserialize")]
+        #[serde(deserialize_with = "vv_apriltag::tag_size::deserialize")]
         tag_size: f64,
     },
 }
@@ -113,13 +112,13 @@ impl Component for DetectPoseComponent {
                     );
                     return;
                 };
-                apriltag::PoseParams {
+                vv_apriltag::PoseParams {
                     tag_size,
-                    ..apriltag::PoseParams::from_dimensions(width, height, fov)
+                    ..vv_apriltag::PoseParams::from_dimensions(width, height, fov)
                 }
             }
         };
-        let Ok(detection) = context.get_as::<apriltag::Detection>(None).and_log_err() else {
+        let Ok(detection) = context.get_as::<vv_apriltag::Detection>(None).and_log_err() else {
             return;
         };
         let pose = detection.estimate_pose(params);

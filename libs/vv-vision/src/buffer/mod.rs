@@ -1,5 +1,6 @@
 use crate::broadcast::*;
 use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::error::Error;
@@ -208,6 +209,7 @@ impl PixelFormat {
         }
     }
 }
+#[cfg(feature = "serde")]
 impl Serialize for PixelFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -220,6 +222,7 @@ impl Serialize for PixelFormat {
         }
     }
 }
+#[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for PixelFormat {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
