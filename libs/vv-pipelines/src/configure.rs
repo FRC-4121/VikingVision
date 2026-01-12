@@ -46,15 +46,9 @@ impl<C, S, T> Configurable<C, S, T> {
         }
     }
     pub fn get_config(&self) -> Option<&C> {
-        let mut out = None;
-        self.once.call_once_force(|s| {
-            if !s.is_poisoned() {
-                unsafe {
-                    out = Some(&*(*self.inner.get()).config);
-                }
-            }
-        });
-        out
+        self.once
+            .is_completed()
+            .then(|| unsafe { &*(*self.inner.get()).config })
     }
     pub fn get_state(&self) -> Option<&S> {
         if self.once.is_completed() {

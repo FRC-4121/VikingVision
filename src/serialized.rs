@@ -96,7 +96,7 @@ impl<'de> Deserialize<'de> for NtConfig {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(NtConfig)
+        serde::de::IgnoredAny::deserialize(deserializer).map(|_| NtConfig)
     }
 }
 
@@ -162,7 +162,7 @@ pub struct ConfigFile {
     pub run: RunConfig,
     #[cfg_attr(feature = "serde", serde(default))]
     pub debug: DefaultDebug,
-    #[cfg_attr(all(feature = "ntable", not(feature = "ntable")), serde(skip))]
+    #[cfg_attr(all(feature = "serde", not(feature = "ntable")), serde(skip))]
     pub ntable: Option<NtConfig>,
     #[cfg_attr(feature = "serde", serde(alias = "camera"))]
     pub cameras: HashMap<String, CameraWithOutputs>,

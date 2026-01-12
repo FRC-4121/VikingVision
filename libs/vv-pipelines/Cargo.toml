@@ -31,7 +31,7 @@ all-components = ["apriltag", "components", "ntable", "supply", "vision"]
 apriltag = ["dep:vv-apriltag", "vision"]
 components = ["dep:time"]
 ntable = ["dep:vv-ntable"]
-serde = ["dep:humantime-serde", "dep:serde", "dep:typetag", "smol_str/serde", "vv-apriltag/serde", "vv-utils/serde", "vv-vision/serde"]
+serde = ["dep:humantime-serde", "dep:serde", "dep:typetag", "smol_str/serde", "vv-apriltag?/serde", "vv-utils/serde", "vv-vision?/serde"]
 supply = ["dep:supply", "vv-utils/supply"]
 vision = ["dep:vv-vision"]
 
