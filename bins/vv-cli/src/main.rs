@@ -1,0 +1,399 @@
+use clap::{Parser, ValueEnum};
+use std::fmt::{self, Display, Formatter};
+use std::fs::File;
+use std::io::{IsTerminal, Write};
+use std::path::PathBuf;
+use std::process::exit;
+use tracing::{debug, error, error_span, info};
+use tracing_subscriber::fmt::writer as tsfw;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use viking_vision::pipeline::prelude::*;
+
+#[cfg(not(windows))]
+fn env_allows_color() -> bool {
+    match std::env::var_os("TERM") {
+        // If TERM isn't set, then we are in a weird environment that
+        // probably doesn't support colors.
+        None => return false,
+        Some(k) => {
+            if k == "dumb" {
+                return false;
+            }
+        }
+    }
+    // If TERM != dumb, then the only way we don't allow colors at this
+    // point is if NO_COLOR is set.
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    true
+}
+
+#[cfg(windows)]
+fn env_allows_color() -> bool {
+    // On Windows, if TERM isn't set, then we shouldn't automatically
+    // assume that colors aren't allowed. This is unlike Unix environments
+    // where TERM is more rigorously set.
+    if let Some(k) = std::env::var_os("TERM") {
+        if k == "dumb" {
+            return false;
+        }
+    }
+    // If TERM != dumb, then the only way we don't allow colors at this
+    // point is if NO_COLOR is set.
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    true
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Color {
+    Auto,
+    Always,
+    Never,
+}
+impl Color {
+    const fn to_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
+    fn use_ansi(&self) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::Auto => env_allows_color() && std::io::stdout().is_terminal(),
+        }
+    }
+}
+impl Display for Color {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.to_str())
+    }
+}
+
+#[derive(Parser)]
+struct Cli {
+    /// The TOML config file to load
+    config: PathBuf,
+    /// The log file to write to
+    ///
+    /// This can be formatted with strftime placeholders.
+    log_file: Option<String>,
+    /// Whether or not colored output should be used
+    ///
+    /// Log files never have color, and by default, color support is auto-detected.
+    #[arg(short, long, default_value_t = Color::Auto)]
+    color: Color,
+    /// Regex to match cameras against
+    ///
+    /// If unspecified, all available cameras will be used.
+    #[arg(short, long)]
+    filter: Option<String>,
+    /// A file to dump graph and runner representations to
+    ///
+    /// This is primarily for debugging, to see the state of the graph after parsing
+    /// and compilation. The contents of the written file will have the `Debug`
+    /// representation of the graph and runner.
+    #[arg(short, long)]
+    dump: Option<PathBuf>,
+    /// The number of worker threads to use for the runner
+    ///
+    /// This defaults to the value specified in the config file, or
+    /// the number of CPU cores if none are specified.
+    #[arg(short, long)]
+    threads: Option<usize>,
+    /// Allow noisy events
+    ///
+    /// By default, events from the same component at the same position will be ignored
+    /// to avoid filling log files. To disable this filtering, this flag can be passed.
+    #[arg(short, long)]
+    allow_noisy_events: bool,
+}
+
+fn format_log_file(arg: &str, now: time::OffsetDateTime) -> String {
+    match time::format_description::parse_strftime_borrowed(arg) {
+        Ok(desc) => match now.format(&desc) {
+            Ok(fmt) => fmt,
+            Err(err) => {
+                eprintln!("failed to format argument: {err}");
+                exit(1);
+            }
+        },
+        Err(err) => {
+            eprintln!("invalid format description: {err}");
+            exit(1);
+        }
+    }
+}
+
+struct Writer(Option<File>);
+impl<'a> tsfw::MakeWriter<'a> for Writer {
+    type Writer = tsfw::OptionalWriter<strip_ansi_escapes::Writer<&'a File>>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.0
+            .as_ref()
+            .map(strip_ansi_escapes::Writer::new)
+            .map_or_else(tsfw::OptionalWriter::none, tsfw::OptionalWriter::some)
+    }
+}
+
+fn main() {
+    let args = Cli::parse();
+    let startup_time =
+        time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let path = args
+        .log_file
+        .as_ref()
+        .map(|a| format_log_file(a, startup_time));
+    let log_file = path.as_ref().map(|path| {
+        File::options()
+            .append(true)
+            .create(true)
+            .open(path)
+            .unwrap_or_else(|err| {
+                eprintln!("failed to open log file at {path}: {err}");
+                exit(2);
+            })
+    });
+
+    let mut env_var = "VV_LOG";
+    if std::env::var_os("VV_LOG").is_none() && std::env::var_os("RUST_LOG").is_some() {
+        env_var = "RUST_LOG";
+    }
+
+    tracing_subscriber::registry()
+        .with(viking_vision::component_filter::ComponentEventFilter::new(
+            !args.allow_noisy_events,
+        ))
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_env_var(env_var)
+                .with_default_directive(tracing::Level::INFO.into())
+                .from_env_lossy(),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(args.color.use_ansi())
+                .with_writer(tsfw::Tee::new(std::io::stderr, Writer(log_file)))
+                .fmt_fields(viking_vision::component_filter::FilteredFields::default_fields()),
+        )
+        .init();
+
+    let _guard = error_span!("main").entered();
+
+    info!(path = path.as_deref(), "starting logging at {startup_time}");
+
+    let config_file = match std::fs::read(&args.config) {
+        Ok(file) => {
+            info!(path = ?args.config, "loaded config file");
+            file
+        }
+        Err(err) => {
+            error!(path = ?args.config, %err, "failed to load config file");
+            exit(2);
+        }
+    };
+    let mut config = match toml::from_slice::<viking_vision::serialized::ConfigFile>(&config_file) {
+        Ok(config) => {
+            info!(
+                cameras = config.cameras.len(),
+                components = config.components.0.len(),
+                "loaded config file"
+            );
+            config
+        }
+        Err(err) => {
+            error!(%err, "failed to parse config file");
+            exit(3);
+        }
+    };
+
+    config.debug.update_from_env();
+    let handler = viking_vision::vision_debug::Handler::new(config.debug).init_global_sender();
+
+    if let Some(nt) = config.ntable {
+        nt.init();
+    }
+
+    if let Some(filter) = &args.filter {
+        info!(filter, "filtering cameras with regex");
+        match matchers::Pattern::new(filter) {
+            Ok(pat) => {
+                debug!("compiled pattern");
+                config.cameras.retain(|k, _| pat.matches(k));
+            }
+            Err(err) => {
+                error!(%err, "failed to compile pattern, no cameras will be matched");
+                config.cameras.clear();
+            }
+        }
+    } else {
+        info!("no filter specified, using all available cameras");
+    }
+
+    let mut dump = args.dump.as_ref().and_then(|path| {
+        info!(path = %path.display(), "dumping internal representations");
+        std::fs::File::create(path)
+            .inspect_err(|err| error!(path = %path.display(), %err, "failed to open dump file"))
+            .ok()
+    });
+
+    let graph = match config.components.build_graph() {
+        Ok(graph) => {
+            info!("built pipeline graph");
+            graph
+        }
+        Err(err) => {
+            error!(%err, "failed to build pipeline graph");
+            exit(3);
+        }
+    };
+    if let Some(file) = &mut dump
+        && let Err(err) = writeln!(file, "{graph:#?}")
+    {
+        let path = args.dump.as_ref().unwrap();
+        error!(path = %path.display(), %err, "error when writing writing to dump file");
+    }
+    let (_, runner) = match graph.compile() {
+        Ok(runner) => {
+            info!("built pipeline runner");
+            runner
+        }
+        Err(err) => {
+            error!(%err, "failed to compile runner");
+            exit(3);
+        }
+    };
+    if let Some(file) = &mut dump
+        && let Err(err) = writeln!(file, "{runner:#?}")
+    {
+        let path = args.dump.as_ref().unwrap();
+        error!(path = %path.display(), %err, "error when writing writing to dump file");
+    }
+
+    info!(cameras = ?config.cameras.keys().collect::<Vec<_>>(), "loading cameras");
+
+    let mut cameras = config
+        .cameras
+        .into_iter()
+        .filter_map(|(name, mut config)| {
+            let _guard = error_span!("load", name).entered();
+            debug!("loading camera");
+            match config.camera.build_camera(name) {
+                Ok(camera) => {
+                    debug!("loaded camera");
+                    config.outputs.extend(config.output);
+                    let targets = config
+                        .outputs
+                        .into_iter()
+                        .filter_map(|ch| {
+                            let opt = runner.lookup.get(&ch.component);
+                            if let Some(&id) = opt {
+                                debug!(name = &*ch.component, %id, "found component to send frames to");
+                                let Some(comp) = runner.component(id) else {
+                                    error!("lookup table points to a nonexistent component");
+                                    return None;
+                                };
+                                let inputs = comp.component.inputs();
+                                if inputs.expecting() > 1 {
+                                    error!(expecting = inputs.expecting(), "sending input to a component that doesn't expect one input");
+                                    return None;
+                                }
+                                if !inputs.can_take(ch.channel.as_deref(), Some(&*comp.component)) {
+                                    match &inputs {
+                                        Inputs::Named(v) | Inputs::MinTree(v) | Inputs::FullTree(v) => {
+                                            if let Some(c) = &ch.channel {
+                                                error!(component = &*ch.component, channel = &**c, %id, known_expected = ?v, "component can't take input on the given channel");
+                                            } else {
+                                                error!(component = &*ch.component, %id, "component can't take input on the primary channel because it expects inputs on named channels");
+                                            }
+                                        }
+                                        Inputs::Primary => {
+                                            error!(component = &*ch.component, c = ch.channel.as_deref().unwrap(), %id, "component can't take input on a named channel because it expects inputs on the primary channel");
+                                        }
+                                    }
+                                    return None;
+                                }
+                                Some((id, ch.channel))
+                            } else {
+                                error!(name = &*ch.component, "couldn't find a component with the given name");
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    Some((camera.split(), targets))
+                }
+                Err(err) => {
+                    error!(%err, "failed to load camera");
+                    None
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    info!(cameras = ?cameras.iter().map(|c| &c.0.0.name).collect::<Vec<_>>(), "loaded cameras");
+
+    let runner = &runner;
+
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(threads) = args.threads.or(config.run.num_threads) {
+        builder = builder.num_threads(threads);
+    }
+
+    let pool = builder.build().unwrap_or_else(|err| {
+        error!(%err, "failed to build thread pool");
+        exit(101);
+    });
+
+    pool.in_place_scope(|rscope| {
+        std::thread::scope(|tscope| {
+            for &mut ((ref meta, ref mut querier), ref next) in cameras.iter_mut() {
+                let builder = std::thread::Builder::new().name(format!("camera-{}", meta.name));
+                let res = builder.spawn_scoped(tscope, move || {
+                    use viking_vision::pipeline::runner::{
+                        RunError, RunErrorCause, RunErrorWithParams,
+                    };
+                    loop {
+                        if querier.load_frame(meta).is_err() {
+                            continue;
+                        }
+                        let arg = ComponentArgs::single(querier.get_frame().into_static());
+                        for (id, _chan) in next {
+                            let res = runner.run(
+                                RunParams::new(*id)
+                                    .with_args(arg.clone())
+                                    .with_context(meta)
+                                    .with_max_running(config.run.max_running),
+                                rscope,
+                            );
+                            if let Err(RunError::WithParams(RunErrorWithParams { cause, .. })) = res
+                            {
+                                match cause {
+                                    RunErrorCause::ArgsMismatch { expected, given } => {
+                                        error!(expected, given, "argument length mismatch");
+                                        return;
+                                    }
+                                    RunErrorCause::NoComponent(id) => {
+                                        error!(%id, "missing component");
+                                        return;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                });
+                if let Err(err) = res {
+                    error!(camera = meta.name, %err, "failed to spawn thread");
+                }
+            }
+            handler.run();
+        });
+    });
+}

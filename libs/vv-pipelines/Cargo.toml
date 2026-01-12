@@ -1,0 +1,48 @@
+[package]
+name = "vv-pipelines"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+autoexamples = false
+
+[dependencies]
+disqualified.workspace = true
+humantime-serde = { workspace = true, optional = true }
+litemap = "0.8.1"
+papaya = "0.2.3"
+rayon.workspace = true
+smallvec.workspace = true
+smol_str.workspace = true
+serde = { workspace = true, optional = true }
+supply = { workspace = true, optional = true }
+thiserror.workspace = true
+time = { workspace = true, optional = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+typetag = { workspace = true, optional = true }
+vv-apriltag = { workspace = true, optional = true }
+vv-ntable = { workspace = true, optional = true }
+vv-utils.workspace = true
+vv-vision = { workspace = true, optional = true }
+
+[features]
+default = ["all-components"]
+all-components = ["apriltag", "components", "ntable", "supply", "vision"]
+apriltag = ["dep:vv-apriltag", "vision"]
+components = ["dep:time"]
+ntable = ["dep:vv-ntable"]
+serde = ["dep:humantime-serde", "dep:serde", "dep:typetag", "smol_str/serde", "vv-apriltag?/serde", "vv-utils/serde", "vv-vision?/serde"]
+supply = ["dep:supply", "vv-utils/supply"]
+vision = ["dep:vv-vision"]
+
+[dev-dependencies]
+anyhow = "1.0"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[[example]]
+name = "pipelines"
+required-features = ["components"]
+
+[[example]]
+name = "collect"
+required-features = ["components"]
