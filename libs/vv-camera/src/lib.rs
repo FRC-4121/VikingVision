@@ -1,36 +1,20 @@
-use crate::buffer::Buffer;
-use crate::pipeline::{PipelineId, PipelineName};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
+#[cfg(feature = "supply")]
 use supply::prelude::*;
 use tracing::{debug, error, info, info_span};
+use vv_utils::common_types::{Fov, FrameSize};
+#[cfg(feature = "supply")]
+use vv_utils::common_types::{PipelineId, PipelineName};
+use vv_vision::buffer::Buffer;
 
 pub mod capture;
 pub mod frame;
-
-/// Typed identifier for the field of view for a camera.
-///
-/// This is given in degrees.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Fov(pub f64);
-
-/// Typed identifier for the expected size from a camera.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct FrameSize {
-    pub width: u32,
-    pub height: u32,
-}
-
-#[ty_tag::tag]
-pub type FovTag = Fov;
-
-#[ty_tag::tag]
-pub type ExpectedSizeTag = FrameSize;
 
 pub trait CameraImpl: Any + Send + Sync {
     /// Get the expected size of the frame.
@@ -56,17 +40,17 @@ impl Debug for dyn CameraImpl {
 }
 
 /// Serializable configuration for a camera.
-#[typetag::serde(tag = "type")]
+#[cfg_attr(feature = "serde", typetag::serde(tag = "type"))]
 pub trait CameraFactory {
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>>;
 }
 
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CameraConfig {
     pub fov: Option<Fov>,
     pub resize: Option<FrameSize>,
     pub max_fps: Option<f64>,
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub factory: Box<dyn CameraFactory>,
 }
 impl CameraConfig {
@@ -160,7 +144,7 @@ impl CameraQuerier {
             if let Some(size) = meta.resize
                 && size != self.inner.frame_size()
             {
-                crate::vision::resize(
+                vv_vision::vision::resize(
                     self.inner.get_frame(),
                     self.resized.get_or_insert_default(),
                     size.width,
@@ -211,6 +195,7 @@ impl CameraMetadata {
         }
     }
 }
+#[cfg(feature = "supply")]
 impl<'r> Provider<'r> for CameraMetadata {
     type Lifetimes = l!['r];
     fn provide(&'r self, want: &mut dyn Want<Self::Lifetimes>) {
@@ -242,6 +227,7 @@ impl DerefMut for FullCameraMetadata {
         &mut self.meta
     }
 }
+#[cfg(feature = "supply")]
 impl<'r> Provider<'r> for FullCameraMetadata {
     type Lifetimes = l!['r];
     fn provide(&'r self, want: &mut dyn Want<Self::Lifetimes>) {
@@ -325,6 +311,7 @@ impl Camera {
     }
 }
 
+#[cfg(feature = "supply")]
 impl<'r> Provider<'r> for Camera {
     type Lifetimes = l!['r];
 

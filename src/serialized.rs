@@ -1,10 +1,10 @@
-use crate::camera::CameraConfig;
 use crate::pipeline::serialized::{ComponentChannel, SerializedGraph};
-use crate::vision_debug::DefaultDebug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(feature = "ntable")]
 use std::time::Duration;
+use vv_camera::CameraConfig;
+use vv_vision::vision_debug::DefaultDebug;
 
 fn default_running() -> usize {
     rayon::current_num_threads().div_ceil(2)

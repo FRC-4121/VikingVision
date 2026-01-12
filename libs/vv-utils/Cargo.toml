@@ -6,6 +6,9 @@ edition.workspace = true
 
 [dependencies]
 serde = { workspace = true, optional = true }
+supply = { workspace = true, optional = true }
+ty-tag = { workspace = true, optional = true }
 
 [features]
 serde = ["dep:serde"]
+supply = ["dep:supply", "dep:ty-tag"]

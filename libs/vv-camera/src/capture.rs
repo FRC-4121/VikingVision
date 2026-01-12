@@ -1,8 +1,8 @@
 #![cfg(feature = "v4l")]
 
 use super::{CameraFactory, CameraImpl};
-use crate::buffer::{Buffer, PixelFormat};
 use polonius_the_crab::{ForLt, Placeholder, PoloniusResult, polonius};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Formatter};
 use std::io;
@@ -16,8 +16,10 @@ use v4l::prelude::MmapStream;
 use v4l::video::Capture;
 use v4l::video::capture::Parameters;
 use v4l::{Device, FourCC, Fraction};
+use vv_vision::buffer::{Buffer, PixelFormat};
 use zune_jpeg::{JpegDecoder, zune_core::options::DecoderOptions};
 
+#[cfg(feature = "serde")]
 mod fourcc_serde {
     use serde::de::{Deserializer, Error, Unexpected, Visitor};
     use serde::ser::{Error as _, Serializer};
@@ -77,6 +79,7 @@ mod fourcc_serde {
         deserializer.deserialize_bytes(FourCCVisitor)
     }
 }
+#[cfg(feature = "serde")]
 mod interval_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use v4l::Fraction;
@@ -141,31 +144,34 @@ pub mod control_ids {
     pub const EXPOSURE_DYNAMIC_FRAMERATE: u32 = 0x009a0903;
 }
 
-#[typetag::serde]
+#[cfg_attr(feature = "serde", typetag::serde)]
 pub trait CameraSource: Debug + Send + Sync {
     fn resolve(&self) -> io::Result<Device>;
 }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct V4lPath(pub PathBuf);
-#[typetag::serde(name = "path")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "path"))]
 impl CameraSource for V4lPath {
     fn resolve(&self) -> io::Result<Device> {
         info!(path = %self.0.display(), "loading device");
         Device::with_path(&self.0)
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct V4lIndex(pub usize);
-#[typetag::serde(name = "index")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "index"))]
 impl CameraSource for V4lIndex {
     fn resolve(&self) -> io::Result<Device> {
         info!(index = self.0, "loading device");
         Device::new(self.0)
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NoSource {}
-#[typetag::serde(name = "unknown")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "unknown"))]
 impl CameraSource for NoSource {
     fn resolve(&self) -> io::Result<Device> {
         error!("unknown source");
@@ -175,22 +181,23 @@ impl CameraSource for NoSource {
 
 static NO_SOURCE: LazyLock<Arc<NoSource>> = LazyLock::new(|| Arc::new(NoSource {}));
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CaptureCameraConfig {
     pub width: u32,
     pub height: u32,
-    #[serde(with = "fourcc_serde")]
+    #[cfg_attr(feature = "serde", serde(with = "fourcc_serde"))]
     pub fourcc: FourCC,
     pub pixel_format: Option<PixelFormat>,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub decode_jpeg: bool,
     pub exposure: Option<i64>,
-    #[serde(with = "interval_serde", flatten)]
+    #[cfg_attr(feature = "serde", serde(with = "interval_serde", flatten))]
     pub interval: Option<Fraction>,
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub source: Arc<dyn CameraSource>,
 }
-#[typetag::serde(name = "v4l")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "v4l"))]
 impl CameraFactory for CaptureCameraConfig {
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>> {
         let device = self.source.resolve()?;

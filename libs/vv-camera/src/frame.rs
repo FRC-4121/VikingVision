@@ -1,17 +1,20 @@
 use super::{CameraFactory, CameraImpl};
-use crate::buffer::{Buffer, PixelFormat};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
 use tracing::{error, info_span};
+use vv_vision::buffer::{Buffer, PixelFormat};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "ColorShim")]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "ColorShim"))]
 pub struct Color {
     pub format: PixelFormat,
     pub bytes: Vec<u8>,
 }
 
+#[cfg(feature = "serde")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum ColorShim {
@@ -19,6 +22,7 @@ enum ColorShim {
     String(String),
 }
 
+#[cfg(feature = "serde")]
 impl TryFrom<ColorShim> for Color {
     type Error = String;
 
@@ -39,8 +43,9 @@ impl TryFrom<ColorShim> for Color {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 pub enum FrameCameraConfig {
     Path {
         path: PathBuf,
@@ -52,7 +57,7 @@ pub enum FrameCameraConfig {
     },
 }
 
-#[typetag::serde(name = "frame")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "frame"))]
 impl CameraFactory for FrameCameraConfig {
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>> {
         let buffer = match self {

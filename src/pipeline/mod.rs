@@ -49,9 +49,8 @@
 
 use smol_str::SmolStr;
 use std::fmt::{self, Debug, Display, Formatter};
-use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hash};
+use std::hash::Hash;
 use std::marker::PhantomData;
-use supply::prelude::*;
 use thiserror::Error;
 
 pub mod component;
@@ -64,98 +63,8 @@ pub use graph::PipelineGraph;
 pub use runner::PipelineRunner;
 pub use serialized::SerializedGraph;
 
-/// A comparable ID for pipeline runs.
-///
-/// This can be used to help components hold state between runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PipelineId(pub u64);
-impl PipelineId {
-    /// Create a pipeline ID from a hashable value.
-    pub fn from_hash(val: impl Hash) -> Self {
-        Self(BuildHasherDefault::<DefaultHasher>::new().hash_one(val))
-    }
-    /// Create a pipeline ID form a pointer.
-    ///
-    /// This gives a different value from [`from_hash`](Self::from_hash) being used with a pointer argument.
-    pub fn from_ptr(val: *const impl ?Sized) -> Self {
-        Self(val as *const () as usize as u64)
-    }
-}
-impl Display for PipelineId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:0>16x}", self.0)
-    }
-}
-
-/// A pretty name for a pipeline run.
-#[derive(Clone, Copy)]
-pub struct PipelineName<'a>(pub &'a dyn Display);
-impl Debug for PipelineName<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        struct AsDebug<'a>(&'a dyn Display);
-        impl Debug for AsDebug<'_> {
-            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-                Display::fmt(self.0, f)
-            }
-        }
-        f.debug_tuple("PipelineName")
-            .field(&AsDebug(self.0))
-            .finish()
-    }
-}
-impl Display for PipelineName<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(self.0, f)
-    }
-}
-
-/// A [`Provider`] implementation that provides a [`PipelineName`] and [`PipelineId`] for requests through [`supply`].
-pub struct PipelineProvider<T> {
-    pub id: PipelineId,
-    pub name: T,
-}
-impl<T> PipelineProvider<T> {
-    pub fn from_ptr(ptr: *const impl ?Sized, name: T) -> Self {
-        Self {
-            id: PipelineId::from_ptr(ptr),
-            name,
-        }
-    }
-    pub fn from_hash(val: impl Hash, name: T) -> Self {
-        Self {
-            id: PipelineId::from_hash(val),
-            name,
-        }
-    }
-    pub const fn from_raw(id: u64, name: T) -> Self {
-        Self {
-            id: PipelineId(id),
-            name,
-        }
-    }
-}
-impl<'r, T: Display> Provider<'r> for PipelineProvider<T> {
-    type Lifetimes = l!['r];
-
-    fn provide(&'r self, want: &mut dyn supply::Want<Self::Lifetimes>) {
-        want.provide_value(PipelineName(&self.name))
-            .provide_value(self.id);
-    }
-}
-
-/// Type tag for [`PipelineId`].
-#[ty_tag::tag]
-pub type PipelineIdTag = PipelineId;
-
-/// Type tag for [`PipelineName`].
-#[ty_tag::tag]
-pub type PipelineNameTag<'a> = PipelineName<'a>;
-
 const IDX_MASK: usize = usize::MAX >> 1;
 const FLAG_MASK: usize = !IDX_MASK;
-
-/// Marker for component IDs used in a [`PipelineRunner`].
-pub struct RunnerMarker;
 
 /// A unique identifier for components within a [`PipelineRunner`].
 ///
@@ -402,13 +311,13 @@ pub struct InvalidComponentId<T>(pub ComponentId<T>);
 pub struct UnknownComponentName(pub SmolStr);
 
 pub mod prelude {
+    pub use super::ComponentId;
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
     pub use super::graph::{GraphComponentId, PipelineGraph};
     pub use super::runner::{
         ComponentArgs, ComponentContext, InputIndex, InputTree, PipelineRunner, ProviderRef,
         ProviderTrait, RunParams, RunnerComponentId,
     };
-    pub use super::{ComponentId, PipelineProvider};
     pub use crate::utils::LogErr;
     pub use supply::prelude::*;
 

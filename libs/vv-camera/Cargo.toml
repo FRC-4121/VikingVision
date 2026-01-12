@@ -1,0 +1,24 @@
+[package]
+name = "vv-camera"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+disqualified.workspace = true
+polonius-the-crab = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+supply = { workspace = true, optional = true }
+tracing.workspace = true
+ty-tag = { workspace = true, optional = true }
+typetag = { workspace = true, optional = true }
+v4l = { workspace = true, optional = true }
+vv-utils.workspace = true
+vv-vision.workspace = true
+zune-jpeg = "0.4.14"
+
+[features]
+default = ["supply", "v4l"]
+serde = ["dep:serde", "dep:typetag", "vv-utils/serde"]
+supply = ["dep:supply", "dep:ty-tag", "vv-utils/supply"]
+v4l = ["dep:polonius-the-crab", "dep:v4l"]

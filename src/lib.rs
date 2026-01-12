@@ -1,10 +1,10 @@
-pub mod camera;
 pub mod component_filter;
 pub mod components;
 pub mod pipeline;
 pub mod serialized;
 pub mod utils;
 
+pub use vv_camera as camera;
 pub use vv_vision::*;
 
 /// Mutexes to be used throughout the crate
