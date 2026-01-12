@@ -147,6 +147,7 @@ pub enum NtInitResult {
     Good,
 }
 
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CameraWithOutputs {
     #[cfg_attr(feature = "serde", serde(flatten))]

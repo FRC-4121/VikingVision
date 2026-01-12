@@ -40,16 +40,25 @@ impl Debug for dyn CameraImpl {
 /// Serializable configuration for a camera.
 #[cfg_attr(feature = "serde", typetag::serde(tag = "type"))]
 pub trait CameraFactory {
+    fn debug(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        disqualified::ShortName::of::<Self>().fmt(f)
+    }
     fn build_camera(&self) -> io::Result<Box<dyn CameraImpl>>;
 }
+impl Debug for dyn CameraFactory {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.debug(f)
+    }
+}
 
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CameraConfig {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    pub factory: Box<dyn CameraFactory>,
     pub fov: Option<Fov>,
     pub resize: Option<FrameSize>,
     pub max_fps: Option<f64>,
-    #[cfg_attr(feature = "serde", serde(flatten))]
-    pub factory: Box<dyn CameraFactory>,
 }
 impl CameraConfig {
     /// Get the metadata for this configuration.
