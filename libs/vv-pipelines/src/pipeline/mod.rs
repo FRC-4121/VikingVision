@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust
-//! # use viking_vision::pipeline::prelude::for_test::{*, consume_component as process_component};
+//! # use vv_pipelines::pipeline::prelude::for_test::{*, consume_component as process_component};
 //! # use std::sync::Arc;
 //! # fn input_component() -> Arc<dyn Component> {
 //! #     pub struct EchoComponent;

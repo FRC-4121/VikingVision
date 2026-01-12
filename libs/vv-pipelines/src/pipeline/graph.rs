@@ -375,7 +375,7 @@ impl PipelineGraph {
     /// # Example
     ///
     /// ```rust
-    /// # use viking_vision::pipeline::prelude::for_test::{*, ProduceComponent as ImageProcessor, ConsumeComponent as OtherProcessor};
+    /// # use vv_pipelines::pipeline::prelude::for_test::{*, ProduceComponent as ImageProcessor, ConsumeComponent as OtherProcessor};
     ///
     /// let mut graph = PipelineGraph::new();
     ///

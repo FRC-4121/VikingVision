@@ -728,7 +728,7 @@ impl PipelineRunner {
     /// # Example
     ///
     /// ```rust
-    /// # use viking_vision::pipeline::prelude::for_test::{*, produce_component as some_component_no_args, consume_component as some_component_with_primary};
+    /// # use vv_pipelines::pipeline::prelude::for_test::{*, produce_component as some_component_no_args, consume_component as some_component_with_primary};
     /// # use std::sync::Arc;
     /// # fn some_component_with_named() -> Arc<dyn Component> {
     /// #     struct NamedInput;

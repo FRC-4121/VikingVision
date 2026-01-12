@@ -60,7 +60,7 @@ impl<A> LogErr for TypeMismatch<A> {
 ///
 /// ```rust
 /// use std::sync::Arc;
-/// use viking_vision::pipeline::component::Data;
+/// use vv_pipelines::pipeline::component::Data;
 ///
 /// // Primitive types implement Data
 /// let num: Arc<dyn Data> = Arc::new(42i32);
@@ -406,8 +406,20 @@ impl Inputs {
 /// # Example
 ///
 /// ```rust
-/// use viking_vision::pipeline::prelude::*;
-/// use viking_vision::buffer::Buffer;
+/// # #[cfg(not(feature = "vision"))]
+/// # mod vv_vision {
+/// #     pub mod buffer {
+/// #         use std::sync::Arc;
+/// #         use vv_pipelines::pipeline::prelude::Data;
+/// #         #[derive(Clone, Copy)]
+/// #         pub struct Buffer<'a>(&'a ());
+/// #         impl Data for Buffer<'static> {
+/// #             fn clone_to_arc(&self) -> Arc<dyn Data> { Arc::new(*self) }
+/// #         }
+/// #     }
+/// # }
+/// use vv_pipelines::pipeline::prelude::*;
+/// use vv_vision::buffer::Buffer;
 /// use std::sync::Arc;
 /// # fn process_image(_: &Buffer<'static>) {}
 /// struct ImageProcessor;
