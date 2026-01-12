@@ -9,7 +9,6 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Display;
 use vv_ntable::NtHandle;
-use vv_utils::common_types::{PipelineId, PipelineName};
 
 thread_local! {
     static CLIENT_HANDLE: Cell<*const NtHandle> = const { Cell::new(std::ptr::null()) };
@@ -126,13 +125,9 @@ impl Component for NtPrimitiveComponent {
         let Some(handle) = &self.nt_handle else {
             return;
         };
-        let id = context.context.request::<PipelineId>();
+        let id = context.pipeline_id();
         let id = id.as_ref().map_or(&"anon" as _, |v| v as &dyn Display);
-        let name = context
-            .context
-            .request::<PipelineName>()
-            .map(|n| n.0)
-            .unwrap_or(id);
+        let name = context.pipeline_name().map(|n| n.0).unwrap_or(id);
 
         macro_rules! define_ids {
             ($($type:ty => $name:ident as $nt:ty,)*) => {

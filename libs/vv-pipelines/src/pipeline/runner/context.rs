@@ -4,6 +4,7 @@ use litemap::LiteMap;
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
+use vv_utils::common_types::{PipelineId, PipelineName};
 
 static UNIT_ARC: LazyLock<Arc<dyn Data>> = LazyLock::new(|| Arc::new(()));
 
@@ -83,6 +84,41 @@ impl<'r> ComponentContextInner<'r> {
     #[inline(always)]
     pub fn finished(&self) -> bool {
         self.callback.is_none()
+    }
+
+    /// Request the [`PipelineId`] from the context.
+    ///
+    /// This is a convenience function to avoid having to import and name
+    /// [`PipelineId`], along with not having to feature-gate based on `supply`'s presence.
+    #[cfg(feature = "supply")]
+    pub fn pipeline_id(&self) -> Option<PipelineId> {
+        use supply::ProviderExt;
+        self.context.request::<PipelineId>()
+    }
+    /// Request the [`PipelineName`] from the context.
+    ///
+    /// This is a convenience function to avoid having to import and name
+    /// [`PipelineName`], along with not having to feature-gate based on `supply`'s presence.
+    #[cfg(feature = "supply")]
+    pub fn pipeline_name(&self) -> Option<PipelineName<'_>> {
+        use supply::ProviderExt;
+        self.context.request::<PipelineName>()
+    }
+    /// Request the [`PipelineId`] from the context.
+    ///
+    /// This is a convenience function to avoid having to import and name
+    /// [`PipelineId`], along with not having to feature-gate based on `supply`'s presence.
+    #[cfg(not(feature = "supply"))]
+    pub fn pipeline_id(&self) -> Option<PipelineId> {
+        None
+    }
+    /// Request the [`PipelineName`] from the context.
+    ///
+    /// This is a convenience function to avoid having to import and name
+    /// [`PipelineName`], along with not having to feature-gate based on `supply`'s presence.
+    #[cfg(not(feature = "supply"))]
+    pub fn pipeline_name(&self) -> Option<PipelineName<'_>> {
+        None
     }
 
     /// Get the set of inputs for this component.

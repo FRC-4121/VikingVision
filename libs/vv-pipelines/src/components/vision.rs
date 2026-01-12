@@ -5,7 +5,6 @@ use crate::pipeline::prelude::*;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use thiserror::Error;
-use vv_utils::common_types::{PipelineId, PipelineName};
 use vv_vision::buffer::{Buffer, PixelFormat};
 use vv_vision::vision::*;
 use vv_vision::vision_debug;
@@ -611,13 +610,9 @@ impl Component for VisionDebugComponent {
         sender.send_image(vision_debug::DebugImage {
             image: image.clone_static(),
             name: context
-                .context
-                .request::<PipelineName>()
+                .pipeline_name()
                 .map_or_else(|| "<anon>".to_string(), |n| n.0.to_string()),
-            id: context
-                .context
-                .request::<PipelineId>()
-                .map_or(0, |id| id.0 as _)
+            id: context.pipeline_id().map_or(0, |id| id.0 as _)
                 | ((context.comp_id().index() as u128) << 64),
             mode: self.mode.clone().unwrap_or_default(),
         });

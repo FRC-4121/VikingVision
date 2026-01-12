@@ -382,7 +382,7 @@ impl Component for FpsComponent {
             return;
         };
         let fps = lock
-            .entry(context.context.request::<PipelineId>())
+            .entry(context.pipeline_id())
             .or_insert(FpsCounter::new(self.max_duration));
         fps.tick();
         let mut minmax = None;

@@ -8,7 +8,7 @@ use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::PoisonError;
 use tracing::{error, info, warn};
-use vv_utils::common_types::{PipelineId, PipelineName};
+use vv_utils::common_types::PipelineId;
 use vv_utils::mutex::{Mutex, RwLock};
 use vv_vision::buffer::{Buffer, PixelFormat};
 
@@ -146,8 +146,8 @@ impl Component for FfmpegComponent {
             PixelFormat::HSV => frame.convert(PixelFormat::RGB),
             _ => frame.convert(PixelFormat::ANON_3),
         };
-        let id = context.context.request::<PipelineId>();
-        let name = context.context.request::<PipelineName>().map(|n| n.0);
+        let id = context.pipeline_id();
+        let name = context.pipeline_name().map(|n| n.0);
         {
             let read_lock = self
                 .running
