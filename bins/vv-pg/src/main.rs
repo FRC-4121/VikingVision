@@ -5,6 +5,7 @@ use std::io;
 use std::pin::Pin;
 
 mod camera;
+mod daemon;
 mod derived;
 mod range_slider;
 

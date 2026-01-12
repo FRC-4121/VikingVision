@@ -1,4 +1,5 @@
 use crate::Monochrome;
+use crate::daemon::{DaemonHandle, Worker};
 use eframe::egui;
 #[cfg(feature = "v4l")]
 use egui_extras::{Column, TableBuilder};
@@ -11,13 +12,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::error;
 #[cfg(feature = "v4l")]
 use v4l::{Device, FourCC, video::Capture};
-use viking_vision::broadcast::par_broadcast1;
-use viking_vision::buffer::{Buffer, PixelFormat};
 #[cfg(feature = "v4l")]
-use viking_vision::camera::capture::CaptureCamera;
-use viking_vision::camera::{Camera, CameraImpl, FrameSize};
-use viking_vision::pipeline::daemon::{DaemonHandle, Worker};
-use viking_vision::utils::FpsCounter;
+use vv_camera::capture::CaptureCamera;
+use vv_camera::{Camera, CameraImpl};
+use vv_utils::common_types::FrameSize;
+use vv_utils::utils::FpsCounter;
+use vv_vision::broadcast::par_broadcast1;
+use vv_vision::buffer::{Buffer, PixelFormat};
 
 struct MonoCamera {
     color: Option<[u8; 3]>,
@@ -175,7 +176,7 @@ pub fn show_camera(
     monochrome: &mut Vec<super::Monochrome>,
 ) -> impl FnOnce(&mut egui::Ui) {
     move |ui| {
-        use viking_vision::pipeline::daemon::states::*;
+        use crate::daemon::states::*;
         let run_state = data.handle.context().run_state.load(Ordering::Relaxed);
         let mut lock = data.handle.context().context.locked.lock().unwrap();
         ui.horizontal(|ui| {

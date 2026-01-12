@@ -8,9 +8,7 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "supply")]
 use supply::prelude::*;
 use tracing::{debug, error, info, info_span};
-use vv_utils::common_types::{Fov, FrameSize};
-#[cfg(feature = "supply")]
-use vv_utils::common_types::{PipelineId, PipelineName};
+use vv_utils::common_types::*;
 use vv_vision::buffer::Buffer;
 
 pub mod capture;

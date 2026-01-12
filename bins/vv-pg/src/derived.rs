@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZero;
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "apriltag")]
-use viking_vision::apriltag;
-use viking_vision::broadcast::par_broadcast2;
-use viking_vision::buffer::*;
-use viking_vision::draw::*;
-use viking_vision::vision::*;
+use vv_apriltag as apriltag;
+use vv_vision::broadcast::par_broadcast2;
+use vv_vision::buffer::*;
+use vv_vision::draw::*;
+use vv_vision::vision::*;
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 

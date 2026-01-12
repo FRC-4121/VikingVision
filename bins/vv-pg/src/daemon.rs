@@ -25,9 +25,7 @@ pub mod states {
 /// Some kind of worker to run on a daemon, that can take a given task
 pub trait Worker<T> {
     /// Get a name for the thread
-    fn name(&self) -> String {
-        format!("{}@{self:p}", disqualified::ShortName::of::<Self>())
-    }
+    fn name(&self) -> String;
     /// Execute one "step" of work
     fn work(&mut self, context: &T);
     /// Gracefully clean up any resources after a shutdown was requested
@@ -105,9 +103,5 @@ impl<T: Send + Sync + 'static> DaemonHandle<T> {
     /// Return whether or not the thread has completely finished.
     pub fn is_finished(&self) -> bool {
         self.handle.is_finished()
-    }
-    /// Get a handle to the worker thread.
-    pub fn thread(&self) -> &thread::Thread {
-        self.handle.thread()
     }
 }

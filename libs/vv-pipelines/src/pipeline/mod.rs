@@ -54,7 +54,6 @@ use std::marker::PhantomData;
 use thiserror::Error;
 
 pub mod component;
-pub mod daemon;
 pub mod graph;
 pub mod runner;
 pub mod serialized;
