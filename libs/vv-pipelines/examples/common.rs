@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Stderr;
 use tracing_subscriber::fmt::writer::{MakeWriter, OptionalWriter, Tee};
-use viking_vision::pipeline::prelude::*;
+use vv_pipelines::pipeline::prelude::*;
 
 pub struct Print;
 // Print is a simple component that takes a value on its pimary input and prints it.

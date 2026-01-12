@@ -244,10 +244,7 @@ fn main() {
             .ok()
     });
 
-    let graph = match config
-        .components
-        .build_graph(&mut viking_vision::utils::NoContext)
-    {
+    let graph = match config.components.build_graph() {
         Ok(graph) => {
             info!("built pipeline graph");
             graph

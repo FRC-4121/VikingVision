@@ -3,6 +3,7 @@ name = "vv-pipelines"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
+autoexamples = false
 
 [dependencies]
 disqualified.workspace = true
@@ -29,3 +30,15 @@ components = []
 serde = ["dep:humantime-serde", "dep:serde", "dep:typetag", "smol_str/serde"]
 supply = ["dep:supply"]
 vision = ["dep:vv-vision"]
+
+[dev-dependencies]
+anyhow = "1.0"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[[example]]
+name = "pipelines"
+required-features = ["components"]
+
+[[example]]
+name = "collect"
+required-features = ["components"]

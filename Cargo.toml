@@ -21,30 +21,27 @@ name = "viking-vision"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-autoexamples = false
 
 [dependencies]
+humantime-serde = { workspace = true, optional = true }
 rayon.workspace = true
 serde = { workspace = true, optional = true }
 tracing.workspace = true
-vv-apriltag = { workspace = true, optional = true, features = ["serde"] }
-vv-camera = { workspace = true, features = ["serde", "supply"] }
+vv-apriltag = { workspace = true, optional = true }
+vv-camera = { workspace = true, features = ["supply"] }
 vv-ntable = { workspace = true, optional = true }
-vv-pipelines = { workspace = true, features = ["serde", "supply"] }
+vv-pipelines = { workspace = true, features = ["supply", "vision"] }
 vv-utils = { workspace = true, optional = true }
-vv-vision = { workspace = true, default-features = false, features = ["serde"] }
-
-[dev-dependencies]
-anyhow = "1.0"
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+vv-vision = { workspace = true, default-features = false }
 
 [features]
-default = ["apriltag", "debug-gui", "ntable", "v4l"]
-apriltag = ["dep:vv-apriltag"]
+default = ["apriltag", "debug-gui", "ntable", "serde", "v4l"]
+apriltag = ["dep:vv-apriltag", "vv-pipelines/apriltag"]
 debug-gui = ["vv-vision/debug-gui"]
 debug-tools = ["vv-utils/debug-tools"]
-v4l = ["vv-camera/v4l", "vv-vision/v4l"]
 ntable = ["dep:vv-ntable"]
+serde = ["dep:serde", "dep:humantime-serde", "vv-apriltag/serde", "vv-camera/serde", "vv-pipelines/serde", "vv-vision/serde"]
+v4l = ["vv-camera/v4l", "vv-vision/v4l"]
 
 [workspace.dependencies]
 disqualified = "1.0.0"
@@ -73,8 +70,3 @@ vv-pipelines = { path = "./libs/vv-pipelines", default-features = false }
 vv-utils = { path = "./libs/vv-utils" }
 vv-vision = { path = "./libs/vv-vision", default-features = false }
 
-[[example]]
-name = "pipelines"
-
-[[example]]
-name = "collect"

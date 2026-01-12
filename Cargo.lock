@@ -2217,12 +2217,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stable_deref_trait"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
-
-[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2561,10 +2555,6 @@ name = "triomphe"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
-dependencies = [
- "serde",
- "stable_deref_trait",
-]
 
 [[package]]
 name = "ttf-parser"
@@ -2711,11 +2701,10 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "viking-vision"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "humantime-serde",
  "rayon",
  "serde",
  "tracing",
- "tracing-subscriber",
  "vv-apriltag",
  "vv-camera",
  "vv-ntable",
@@ -2802,6 +2791,7 @@ dependencies = [
 name = "vv-pipelines"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "disqualified",
  "humantime-serde",
  "litemap",

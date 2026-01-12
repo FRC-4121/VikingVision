@@ -7,7 +7,6 @@ use vv_camera::CameraConfig;
 use vv_pipelines::pipeline::serialized::{ComponentChannel, SerializedGraph};
 use vv_vision::vision_debug::DefaultDebug;
 
-#[cfg(feature = "serde")]
 fn default_running() -> usize {
     rayon::current_num_threads().div_ceil(2)
 }
@@ -47,11 +46,11 @@ impl std::fmt::Display for NtHost {
     }
 }
 
-#[cfg(feature = "ntable")]
+#[cfg(all(feature = "serde", feature = "ntable"))]
 fn default_port() -> u16 {
     5810
 }
-#[cfg(feature = "ntable")]
+#[cfg(all(feature = "serde", feature = "ntable"))]
 fn default_duration() -> Duration {
     Duration::from_millis(500)
 }
