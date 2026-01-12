@@ -166,6 +166,11 @@ pub enum AddDependencyError<E1, E2> {
 pub enum GenericAddDependencyError {
     #[error("Source and destination components cannot be the same")]
     SelfLoop,
+    #[error("Component {dst_id} ({dst_name:?}) is an entrypoint and can't be a destination")]
+    DestIsEntrypoint {
+        dst_id: GraphComponentId,
+        dst_name: SmolStr,
+    },
     #[error("Component {src_id} ({src_name:?}) doesn't take an input on channel {src_chan:?}")]
     NoOutputChannel {
         src_id: GraphComponentId,
@@ -312,10 +317,11 @@ impl std::ops::Index<GraphComponentId> for IdResolver {
 #[derive(Clone)]
 pub struct ComponentData {
     pub component: Arc<dyn Component>,
-    pub name: SmolStr,
+    name: SmolStr,
     inputs: InputKind,
     outputs: BTreeMap<SmolStr, Vec<GraphComponentChannel>>,
     in_lookup: bool,
+    is_entrypoint: bool,
     input_count: LiteMap<GraphComponentId, usize>,
 }
 impl ComponentData {
@@ -326,6 +332,18 @@ impl ComponentData {
     pub fn is_placeholder(&self) -> bool {
         Arc::ptr_eq(&self.component, &DEFAULT_COMPONENT)
     }
+    /// Check if this component is an entrypoint.
+    ///
+    /// If it is, a pipeline can be started through this component.
+    #[inline(always)]
+    pub fn is_entrypoint(&self) -> bool {
+        self.is_entrypoint
+    }
+    /// Get the name of this component.
+    #[inline(always)]
+    pub fn name(&self) -> &SmolStr {
+        &self.name
+    }
 }
 impl Debug for ComponentData {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -334,8 +352,49 @@ impl Debug for ComponentData {
             .field("inputs", &self.inputs)
             .field("outputs", &self.outputs)
             .field("in_lookup", &self.in_lookup)
+            .field("is_entrypoint", &self.is_entrypoint)
             .field("is_placeholder", &self.is_placeholder())
             .finish_non_exhaustive()
+    }
+}
+
+/// An in-progress component to be added to a pipeline graph.
+#[derive(Clone)]
+pub struct GraphComponentBuilder {
+    pub component: Arc<dyn Component>,
+    pub name: SmolStr,
+    pub is_entrypoint: bool,
+    pub in_lookup: bool,
+}
+impl Debug for GraphComponentBuilder {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GraphComponentBuilder")
+            .field("name", &self.name)
+            .field("is_entrypoint", &self.is_entrypoint)
+            .field("in_lookup", &self.in_lookup)
+            .finish_non_exhaustive()
+    }
+}
+impl GraphComponentBuilder {
+    /// Create a new in-progrss component.
+    ///
+    /// It will be visible and not an entrypoint.
+    pub fn new(component: Arc<dyn Component>, name: impl Into<SmolStr>) -> Self {
+        Self {
+            component,
+            name: name.into(),
+            is_entrypoint: false,
+            in_lookup: true,
+        }
+    }
+    /// Mark this component as hidden.
+    pub fn hidden(mut self) -> Self {
+        self.in_lookup = false;
+        self
+    }
+    pub fn entrypoint(mut self) -> Self {
+        self.is_entrypoint = true;
+        self
     }
 }
 
@@ -389,6 +448,7 @@ impl PipelineGraph {
     /// assert!(graph.add_named_component(Arc::new(OtherProcessor), "image_processor").is_err());
     /// ```
     #[inline(always)]
+    #[deprecated(note = "use Self::add_component instead")]
     pub fn add_named_component(
         &mut self,
         component: Arc<dyn Component>,
@@ -406,9 +466,12 @@ impl PipelineGraph {
                 let comp = Self::add_component_impl(
                     &mut self.components,
                     &mut self.first_free,
-                    component.clone(),
-                    name,
-                    true,
+                    GraphComponentBuilder {
+                        component: component.clone(),
+                        name,
+                        is_entrypoint: false,
+                        in_lookup: true,
+                    },
                 );
                 e.insert(comp);
                 comp
@@ -423,6 +486,7 @@ impl PipelineGraph {
     /// They participate in dependencies like normal components, making them useful for internal components that shouldn't
     /// be publicly accessible, dynamically generated components, or components with non-unique names.
     #[inline(always)]
+    #[deprecated(note = "use Self::add_component instead")]
     pub fn add_hidden_component(
         &mut self,
         component: Arc<dyn Component>,
@@ -431,20 +495,62 @@ impl PipelineGraph {
         let comp = Self::add_component_impl(
             &mut self.components,
             &mut self.first_free,
-            component.clone(),
-            name.into(),
-            false,
+            GraphComponentBuilder {
+                component: component.clone(),
+                name: name.into(),
+                is_entrypoint: false,
+                in_lookup: false,
+            },
         );
         component.initialize(self, comp);
         comp
     }
+    /// Add a component to the graph.
+    ///
+    /// If `builder.in_lookup` is true, this component will be inserted into the lookup table.
+    /// If it's false, this function can't fail. A component can be set as an entry point to the graph,
+    /// which will allow inputs to be submitted to it. Trying to run a pipeline graph through a non-entrypoint
+    /// component will fail.
+    pub fn add_component(
+        &mut self,
+        builder: GraphComponentBuilder,
+    ) -> Result<GraphComponentId, DuplicateNamedComponent> {
+        let to_init = builder.component.clone();
+        let comp = if builder.in_lookup {
+            match self.lookup.entry(builder.name.clone()) {
+                Entry::Occupied(e) => {
+                    return Err(DuplicateNamedComponent {
+                        old: *e.get(),
+                        name: builder.name,
+                    });
+                }
+                Entry::Vacant(e) => {
+                    let comp = Self::add_component_impl(
+                        &mut self.components,
+                        &mut self.first_free,
+                        builder,
+                    );
+                    e.insert(comp);
+                    comp
+                }
+            }
+        } else {
+            Self::add_component_impl(&mut self.components, &mut self.first_free, builder)
+        };
+        to_init.initialize(self, comp);
+        Ok(comp)
+    }
     fn add_component_impl(
         components: &mut Vec<ComponentData>,
         first_free: &mut usize,
-        component: Arc<dyn Component>,
-        name: SmolStr,
-        in_lookup: bool,
+        component: GraphComponentBuilder,
     ) -> GraphComponentId {
+        let GraphComponentBuilder {
+            component,
+            name,
+            is_entrypoint,
+            in_lookup,
+        } = component;
         let inputs = match component.inputs() {
             Inputs::Primary => InputKind::Single(SmallVec::new()),
             Inputs::Named(i) => InputKind::Multiple {
@@ -478,6 +584,7 @@ impl PipelineGraph {
             inputs,
             outputs: BTreeMap::new(),
             in_lookup,
+            is_entrypoint,
             input_count: LiteMap::new(),
         };
         let idx = *first_free;
@@ -516,6 +623,12 @@ impl PipelineGraph {
                 .components
                 .get_disjoint_mut([s_id.index(), d_id.index()])
                 .map_err(|_| GenericAddDependencyError::SelfLoop)?;
+            if dst.is_entrypoint {
+                return Err(GenericAddDependencyError::DestIsEntrypoint {
+                    dst_id: d_id,
+                    dst_name: dst.name.clone(),
+                });
+            }
             let is_multi =
                 match crate::pipeline::component::component_output(&*src.component, &s_chan) {
                     OutputKind::None => {
@@ -811,6 +924,7 @@ impl PipelineGraph {
                         ),
                         name: std::mem::replace(&mut component.name, DEFAULT_NAME.clone()),
                         dependents: HashMap::new(),
+                        is_entrypoint: component.is_entrypoint,
                         input_mode: match &input {
                             InputKind::Single(_) => runner::InputMode::Single { name: None },
                             InputKind::Multiple {

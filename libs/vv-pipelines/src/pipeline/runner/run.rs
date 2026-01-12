@@ -269,6 +269,7 @@ impl RunId {
 pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
+    pub(crate) is_entrypoint: bool,
     pub(crate) dependents: HashMap<SmolStr, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
     pub(crate) input_mode: InputMode,
 }
