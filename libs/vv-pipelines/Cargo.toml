@@ -1,0 +1,31 @@
+[package]
+name = "vv-pipelines"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+disqualified.workspace = true
+humantime-serde = { workspace = true, optional = true }
+litemap = "0.8.1"
+papaya = "0.2.3"
+rayon.workspace = true
+smallvec.workspace = true
+smol_str.workspace = true
+serde = { workspace = true, optional = true }
+supply = { workspace = true, optional = true }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+typetag = { workspace = true, optional = true }
+vv-apriltag = { workspace = true, optional = true }
+vv-utils.workspace = true
+vv-vision = { workspace = true, optional = true }
+
+[features]
+default = ["apriltag"]
+apriltag = ["dep:vv-apriltag", "vision"]
+components = []
+serde = ["dep:humantime-serde", "dep:serde", "dep:typetag", "smol_str/serde"]
+supply = ["dep:supply"]
+vision = ["dep:vv-vision"]

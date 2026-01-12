@@ -3,7 +3,6 @@
 
 use super::component::{Component, Data};
 use super::{ComponentChannel, ComponentId};
-use crate::mutex::Mutex;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -11,6 +10,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use thiserror::Error;
+use vv_utils::mutex::Mutex;
 
 mod context;
 mod input;

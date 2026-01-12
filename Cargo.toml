@@ -4,6 +4,7 @@ members = [
     "libs/vv-apriltag",
     "libs/vv-camera",
     "libs/vv-ntable",
+    "libs/vv-pipelines",
     "libs/vv-utils",
     "libs/vv-vision",
     "bins/vv-cli",
@@ -23,26 +24,14 @@ license.workspace = true
 autoexamples = false
 
 [dependencies]
-disqualified.workspace = true
-humantime-serde = "1.1.1"
-litemap = "0.8.1"
-no_deadlocks = { version = "1.3.2", optional = true }
-papaya = "0.2.3"
 rayon.workspace = true
-serde.workspace = true
-smallvec.workspace = true
-smol_str = { workspace = true, features = ["serde"] }
-supply.workspace = true
-thiserror.workspace = true
-time.workspace = true
+serde = { workspace = true, optional = true }
 tracing.workspace = true
-tracing-subscriber.workspace = true
-triomphe.workspace = true
-ty-tag.workspace = true
-typetag.workspace = true
 vv-apriltag = { workspace = true, optional = true, features = ["serde"] }
 vv-camera = { workspace = true, features = ["serde", "supply"] }
 vv-ntable = { workspace = true, optional = true }
+vv-pipelines = { workspace = true, features = ["serde", "supply"] }
+vv-utils = { workspace = true, optional = true }
 vv-vision = { workspace = true, default-features = false, features = ["serde"] }
 
 [dev-dependencies]
@@ -53,13 +42,14 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 default = ["apriltag", "debug-gui", "ntable", "v4l"]
 apriltag = ["dep:vv-apriltag"]
 debug-gui = ["vv-vision/debug-gui"]
+debug-tools = ["vv-utils/debug-tools"]
 v4l = ["vv-camera/v4l", "vv-vision/v4l"]
 ntable = ["dep:vv-ntable"]
-debug-tools = ["dep:no_deadlocks"]
 
 [workspace.dependencies]
 disqualified = "1.0.0"
 eframe = { version = "0.33.2", features = ["persistence"] }
+humantime-serde = "1.1.1"
 polonius-the-crab = "0.5.0"
 rayon = "1.11.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -72,7 +62,6 @@ time = { version = "0.3.44", features = ["formatting", "local-offset"] }
 toml = "0.9.8"
 tracing = "0.1.43"
 tracing-subscriber = "0.3.20"
-triomphe = "0.1.15"
 ty-tag = "0.1.1"
 typetag = "0.2.21"
 v4l = "0.14.0"
@@ -80,6 +69,7 @@ viking-vision = { path = ".", default-features = false }
 vv-apriltag = { path = "./libs/vv-apriltag", default-features = false }
 vv-camera = { path = "./libs/vv-camera", default-features = false }
 vv-ntable = { path = "./libs/vv-ntable", default-features = false }
+vv-pipelines = { path = "./libs/vv-pipelines", default-features = false }
 vv-utils = { path = "./libs/vv-utils" }
 vv-vision = { path = "./libs/vv-vision", default-features = false }
 

@@ -1,3 +1,5 @@
+#![cfg(feature = "components")]
+
 use crate::pipeline::graph::GraphComponentId;
 use smol_str::SmolStr;
 

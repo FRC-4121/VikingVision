@@ -1,11 +1,11 @@
 use crate::pipeline::UnknownComponentName;
 use crate::pipeline::component::ComponentFactory;
 use crate::pipeline::graph::{AddDependencyError, DuplicateNamedComponent, PipelineGraph};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
-use supply::prelude::*;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -104,6 +104,7 @@ impl TryFrom<String> for ComponentChannel {
         }
     }
 }
+#[cfg(feature = "serde")]
 impl Serialize for ComponentChannel {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -112,6 +113,7 @@ impl Serialize for ComponentChannel {
         serializer.serialize_str(&self.to_string())
     }
 }
+#[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for ComponentChannel {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -141,8 +143,7 @@ impl<'de> Deserialize<'de> for ComponentChannel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OneOrMany {
     One(ComponentChannel),
     Many(Vec<ComponentChannel>),
@@ -155,6 +156,19 @@ impl OneOrMany {
         }
     }
 }
+#[cfg(feature = "serde")]
+impl Serialize for OneOrMany {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::One(s) => s.serialize(serializer),
+            Self::Many(s) => s.serialize(serializer),
+        }
+    }
+}
+#[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for OneOrMany {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -198,8 +212,7 @@ impl<'de> Deserialize<'de> for OneOrMany {
 }
 
 /// Which inputs to use for the given component
-#[derive(Debug, Default, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub enum InputConfig {
     /// No pre-configured input; instead an input will be passed externally
     #[default]
@@ -209,6 +222,20 @@ pub enum InputConfig {
     /// Multiple named inputs
     Multiple(HashMap<SmolStr, OneOrMany>),
 }
+#[cfg(feature = "serde")]
+impl Serialize for InputConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::None => serializer.serialize_none(),
+            Self::Single(s) => s.serialize(serializer),
+            Self::Multiple(s) => s.serialize(serializer),
+        }
+    }
+}
+#[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for InputConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -277,12 +304,12 @@ impl<'de> Deserialize<'de> for InputConfig {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ComponentConfig {
     /// Inputs for this component
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub input: InputConfig,
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub factory: Box<dyn ComponentFactory>,
 }
 
@@ -296,46 +323,14 @@ pub enum BuildGraphError<'a> {
     NoComponent(&'a str),
 }
 
-/// The name of a component, able to be requested from the context.
-pub struct ComponentName<'a>(pub &'a str);
-
-/// Type tag for [`ComponentName`].
-#[ty_tag::tag]
-pub type ComponentNameTag<'a> = ComponentName<'a>;
-
-pub struct InjectName<'a, 'b> {
-    inner: &'a mut dyn ProviderDyn<'b>,
-    name: &'a str,
-}
-impl<'r, 'a> Provider<'r> for InjectName<'a, 'r> {
-    type Lifetimes = l!['r];
-
-    fn provide(&'r self, want: &mut dyn Want<Self::Lifetimes>) {
-        want.provide_value(ComponentName(self.name));
-        self.inner.provide(want);
-    }
-
-    fn provide_mut(&'r mut self, want: &mut dyn Want<Self::Lifetimes>) {
-        want.provide_value(ComponentName(self.name));
-        self.inner.provide_mut(want);
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(transparent)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct SerializedGraph(pub HashMap<SmolStr, ComponentConfig>);
 
 impl SerializedGraph {
-    pub fn add_to_graph(
-        &self,
-        graph: &mut PipelineGraph,
-        context: &mut dyn ProviderDyn,
-    ) -> Result<(), BuildGraphError<'_>> {
+    pub fn add_to_graph(&self, graph: &mut PipelineGraph) -> Result<(), BuildGraphError<'_>> {
         for (name, config) in &self.0 {
-            let component = config.factory.build(&mut InjectName {
-                inner: context,
-                name,
-            });
+            let component = config.factory.build();
             graph
                 .add_named_component(component.into(), name.clone())
                 .map_err(BuildGraphError::AddComponentError)?;
@@ -370,11 +365,8 @@ impl SerializedGraph {
         Ok(())
     }
     #[inline(always)]
-    pub fn build_graph(
-        &self,
-        context: &mut dyn ProviderDyn,
-    ) -> Result<PipelineGraph, BuildGraphError<'_>> {
+    pub fn build_graph(&self) -> Result<PipelineGraph, BuildGraphError<'_>> {
         let mut graph = PipelineGraph::new();
-        self.add_to_graph(&mut graph, context).map(|_| graph)
+        self.add_to_graph(&mut graph).map(|_| graph)
     }
 }

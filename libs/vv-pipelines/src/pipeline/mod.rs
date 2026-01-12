@@ -315,11 +315,14 @@ pub mod prelude {
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
     pub use super::graph::{GraphComponentId, PipelineGraph};
     pub use super::runner::{
-        ComponentArgs, ComponentContext, InputIndex, InputTree, PipelineRunner, ProviderRef,
-        ProviderTrait, RunParams, RunnerComponentId,
+        ComponentArgs, ComponentContext, InputIndex, InputTree, PipelineRunner, RunParams,
+        RunnerComponentId,
     };
-    pub use crate::utils::LogErr;
+    #[cfg(feature = "supply")]
+    pub use super::runner::{ProviderRef, ProviderTrait};
+    #[cfg(feature = "supply")]
     pub use supply::prelude::*;
+    pub use vv_utils::utils::LogErr;
 
     /// Useful components for pipeline doctests.
     #[doc(hidden)]

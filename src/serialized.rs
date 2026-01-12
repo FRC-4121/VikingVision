@@ -1,18 +1,21 @@
-use crate::pipeline::serialized::{ComponentChannel, SerializedGraph};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(feature = "ntable")]
 use std::time::Duration;
 use vv_camera::CameraConfig;
+use vv_pipelines::pipeline::serialized::{ComponentChannel, SerializedGraph};
 use vv_vision::vision_debug::DefaultDebug;
 
+#[cfg(feature = "serde")]
 fn default_running() -> usize {
     rayon::current_num_threads().div_ceil(2)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RunConfig {
-    #[serde(default = "default_running")]
+    #[cfg_attr(feature = "serde", serde(default = "default_running"))]
     pub max_running: usize,
     pub num_threads: Option<usize>,
 }
@@ -27,8 +30,9 @@ impl Default for RunConfig {
 }
 
 #[cfg(feature = "ntable")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum NtHost {
     Host(String),
     Team(vv_ntable::team::TeamNumber),
@@ -56,14 +60,18 @@ fn default_duration() -> Duration {
 ///
 /// If the feature is disabled, this is still available, but as a stub.
 #[cfg(feature = "ntable")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NtConfig {
     pub identity: String,
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub host: NtHost,
-    #[serde(default = "default_port")]
+    #[cfg_attr(feature = "serde", serde(default = "default_port"))]
     pub port: u16,
-    #[serde(default = "default_duration", with = "humantime_serde")]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "default_duration", with = "humantime_serde")
+    )]
     pub keepalive: Duration,
 }
 
@@ -71,8 +79,27 @@ pub struct NtConfig {
 ///
 /// If the feature is disabled, this is still available, but as a stub.
 #[cfg(not(feature = "ntable"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NtConfig;
+
+#[cfg(all(feature = "serde", not(feature = "ntable")))]
+impl Serialize for NtConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_struct("NtConfig", 0)?.end()
+    }
+}
+#[cfg(all(feature = "serde", not(feature = "ntable")))]
+impl<'de> Deserialize<'de> for NtConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(NtConfig)
+    }
+}
 
 impl NtConfig {
     /// Initialize a client and store it in the global handle.
@@ -121,25 +148,25 @@ pub enum NtInitResult {
     Good,
 }
 
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CameraWithOutputs {
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub camera: CameraConfig,
     pub output: Option<ComponentChannel>,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub outputs: Vec<ComponentChannel>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ConfigFile {
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub run: RunConfig,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub debug: DefaultDebug,
-    #[cfg_attr(not(feature = "ntable"), serde(skip))]
+    #[cfg_attr(all(feature = "ntable", not(feature = "ntable")), serde(skip))]
     pub ntable: Option<NtConfig>,
-    #[serde(alias = "camera")]
+    #[cfg_attr(feature = "serde", serde(alias = "camera"))]
     pub cameras: HashMap<String, CameraWithOutputs>,
-    #[serde(alias = "component")]
+    #[cfg_attr(feature = "serde", serde(alias = "component"))]
     pub components: SerializedGraph,
 }

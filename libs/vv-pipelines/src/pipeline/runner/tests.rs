@@ -1,10 +1,90 @@
 use crate::pipeline::prelude::*;
 use crate::pipeline::runner::IntoRunParams;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
 use tracing_subscriber::util::SubscriberInitExt;
+
+struct BroadcastVec<T> {
+    _marker: PhantomData<T>,
+}
+impl<T> BroadcastVec<T> {
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+impl<T: Data + Clone> Component for BroadcastVec<T> {
+    fn inputs(&self) -> Inputs {
+        Inputs::Primary
+    }
+    fn output_kind(&self, name: &str) -> OutputKind {
+        match name {
+            "" => OutputKind::Single,
+            "elem" => OutputKind::Multiple,
+            _ => OutputKind::None,
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        let Ok(val) = context.get_as::<Vec<T>>(None).and_log_err() else {
+            return;
+        };
+        context.submit("", val.clone());
+        for elem in &*val {
+            context.submit("elem", Arc::new(elem.clone()));
+        }
+    }
+}
+
+struct CollectVecComponent<T> {
+    _marker: PhantomData<T>,
+}
+impl<T: Data + Clone> CollectVecComponent<T> {
+    const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+impl<T: Data + Clone> Component for CollectVecComponent<T> {
+    fn inputs(&self) -> Inputs {
+        Inputs::min_tree(["ref", "elem"])
+    }
+    fn output_kind(&self, name: &str) -> OutputKind {
+        match name {
+            "" | "sorted" => OutputKind::Single,
+            _ => OutputKind::None,
+        }
+    }
+    fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
+        let Ok(tree) = context.get_as::<InputTree>(None).and_log_err() else {
+            return;
+        };
+        let Some(idx) = context.input_indices().and_then(|m| m.get("elem")) else {
+            return;
+        };
+        if context.listening("sorted") {
+            let mut vec = tree
+                .indexed_iter(idx, Default::default())
+                .filter_map(|(i, r)| Some((i.downcast::<T>().ok()?.clone(), r)))
+                .collect::<Vec<_>>();
+            vec.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+            context.submit("sorted", vec.into_iter().map(|x| x.0).collect::<Vec<_>>());
+        }
+        if context.listening("") {
+            context.submit(
+                "",
+                tree.iter(idx)
+                    .filter_map(|i| i.downcast::<T>().ok().cloned())
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+}
 
 struct Cmp<T> {
     send: Sender<Option<T>>,
@@ -218,7 +298,6 @@ fn branching() {
         Unsorted2(Vec<i32>),
         Sorted2(Vec<i32>),
     }
-    use crate::components::{collect::CollectVecComponent, utils::BroadcastVec};
     let _guard = tracing_subscriber::fmt()
         .with_test_writer()
         .finish()

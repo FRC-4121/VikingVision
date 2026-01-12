@@ -1,5 +1,4 @@
 use super::{prelude::*, *};
-use crate::mutex::Mutex;
 use litemap::LiteMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
@@ -8,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::sync::{Arc, LazyLock};
 use thiserror::Error;
+use vv_utils::mutex::Mutex;
 
 /// Alias for component IDs used in a [`PipelineGraph`].
 pub type GraphComponentId = ComponentId<PipelineGraph>;

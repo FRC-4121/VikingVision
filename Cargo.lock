@@ -2712,26 +2712,15 @@ name = "viking-vision"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "disqualified",
- "humantime-serde",
- "litemap",
- "no_deadlocks",
- "papaya",
  "rayon",
  "serde",
- "smallvec",
- "smol_str 0.3.4",
- "supply",
- "thiserror 2.0.17",
- "time",
  "tracing",
  "tracing-subscriber",
- "triomphe",
- "ty-tag",
- "typetag",
  "vv-apriltag",
  "vv-camera",
  "vv-ntable",
+ "vv-pipelines",
+ "vv-utils",
  "vv-vision",
 ]
 
@@ -2810,9 +2799,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "vv-pipelines"
+version = "0.1.0"
+dependencies = [
+ "disqualified",
+ "humantime-serde",
+ "litemap",
+ "papaya",
+ "rayon",
+ "serde",
+ "smallvec",
+ "smol_str 0.3.4",
+ "supply",
+ "thiserror 2.0.17",
+ "tracing",
+ "tracing-subscriber",
+ "typetag",
+ "vv-apriltag",
+ "vv-utils",
+ "vv-vision",
+]
+
+[[package]]
 name = "vv-utils"
 version = "0.1.0"
 dependencies = [
+ "no_deadlocks",
  "serde",
  "supply",
  "ty-tag",

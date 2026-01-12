@@ -1,12 +1,14 @@
 use super::*;
 use crate::pipeline::ComponentSpecifier;
 use crate::pipeline::component::TypeMismatch;
-use crate::utils::LogErr;
 use litemap::LiteMap;
 use std::convert::Infallible;
+#[cfg(feature = "supply")]
 use std::ops::Deref;
 use std::sync::LazyLock;
+#[cfg(feature = "supply")]
 use supply::prelude::*;
+use vv_utils::utils::LogErr;
 
 /// A tree of inputs passed to a component.
 ///
@@ -235,7 +237,7 @@ pub(super) static PLACEHOLDER_DATA: LazyLock<Arc<dyn Data>> =
 ///
 /// Each component will be called with a particular [`RunId`] at most once. They are
 /// not unique between different components, and their length is not guaranteed to be the same (if a component takes multiple inputs).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunId(pub SmallVec<[u32; 2]>);
 impl Display for RunId {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -321,9 +323,11 @@ impl ComponentData {
 
 /// Context passed to a post-run callback.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CallbackContext<'r> {
     pub runner: &'r PipelineRunner,
     pub run_id: u32,
+    #[cfg(feature = "supply")]
     pub context: Context<'r>,
 }
 
@@ -354,12 +358,15 @@ impl<'r> CallbackInner<'r> for NoopCallback {
     }
 }
 
+#[cfg(feature = "supply")]
 pub type ProviderTrait<'c> = dyn for<'a> ProviderDyn<'a> + Send + Sync + 'c;
+#[cfg(feature = "supply")]
 pub type ProviderRef<'c> = &'c ProviderTrait<'c>;
 
 /// Context to be passed around between components.
 ///
 /// This dereferences to [`Provider`] and can have typed fields requested from it.
+#[cfg(feature = "supply")]
 #[derive(Default, Clone)]
 pub enum Context<'c> {
     /// No context was passed.
@@ -372,46 +379,53 @@ pub enum Context<'c> {
     /// An shared reference holds the context.
     Owned(Arc<ProviderTrait<'c>>),
 }
+#[cfg(feature = "supply")]
 impl Debug for Context<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Context").finish_non_exhaustive()
     }
 }
+#[cfg(feature = "supply")]
 impl<'c> Deref for Context<'c> {
     type Target = ProviderTrait<'c>;
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::None => &crate::utils::NoContext,
+            Self::None => &crate::NoContext,
             Self::Borrowed(p) => *p,
             Self::Owned(p) => &**p,
         }
     }
 }
+#[cfg(feature = "supply")]
 impl<'c> From<ProviderRef<'c>> for Context<'c> {
     #[inline(always)]
     fn from(value: ProviderRef<'c>) -> Self {
         Self::Borrowed(value)
     }
 }
+#[cfg(feature = "supply")]
 impl<'c> From<Arc<ProviderTrait<'c>>> for Context<'c> {
     #[inline(always)]
     fn from(value: Arc<ProviderTrait<'c>>) -> Self {
         Self::Owned(value)
     }
 }
+#[cfg(feature = "supply")]
 impl<'c, T: for<'a> ProviderDyn<'a> + Send + Sync + 'c> From<&'c T> for Context<'c> {
     #[inline(always)]
     fn from(value: &'c T) -> Self {
         Self::Borrowed(value as _)
     }
 }
+#[cfg(feature = "supply")]
 impl<'c, T: for<'a> ProviderDyn<'a> + Send + Sync + 'c> From<Arc<T>> for Context<'c> {
     #[inline(always)]
     fn from(value: Arc<T>) -> Self {
         Self::Owned(value as _)
     }
 }
+#[cfg(feature = "supply")]
 impl<'c> From<()> for Context<'c> {
     #[inline(always)]
     fn from(_value: ()) -> Self {
@@ -457,20 +471,18 @@ impl LogErr for DowncastInputError<'_> {
 
 /// Parameters for configuring a pipeline run. Controls component selection,
 /// input data, execution limits, and completion callbacks.
+#[non_exhaustive]
 pub struct RunParams<'a> {
     /// Optional callback to execute after pipeline completion
     pub callback: Option<Callback<'a>>,
-
     /// Optional limit on concurrent pipeline executions
     pub max_running: Option<usize>,
-
     /// The component to execute
     pub component: RunnerComponentId,
-
     /// Input arguments for the component
     pub args: ComponentArgs,
-
     /// Shared context for the run.
+    #[cfg(feature = "supply")]
     pub context: Context<'a>,
 }
 
@@ -483,6 +495,7 @@ impl<'a> RunParams<'a> {
             args: ComponentArgs::empty(),
             max_running: None,
             callback: None,
+            #[cfg(feature = "supply")]
             context: Context::None,
         }
     }
@@ -520,6 +533,7 @@ impl<'a> RunParams<'a> {
 
     /// Set the context for the pipeline run.
     #[inline(always)]
+    #[cfg(feature = "supply")]
     pub fn with_context(mut self, context: impl Into<Context<'a>>) -> Self {
         self.context = context.into();
         self
@@ -540,7 +554,6 @@ impl Debug for RunParams<'_> {
             .field("max_running", &self.max_running)
             .field("component", &self.component)
             .field("args", &self.args)
-            .field("context", &self.context)
             .finish()
     }
 }
@@ -614,6 +627,7 @@ impl<'a, C: ComponentSpecifier<PipelineRunner>, I: InputSpecifier>
         Ok(RunParams::new(component).with_args(args))
     }
 }
+#[cfg(feature = "supply")]
 impl<'a, C: ComponentSpecifier<PipelineRunner>, X: Into<Context<'a>>>
     IntoRunParams<'a, markers::ComponentSpecMarker> for (C, X)
 {
@@ -624,6 +638,7 @@ impl<'a, C: ComponentSpecifier<PipelineRunner>, X: Into<Context<'a>>>
             .map(|c| RunParams::new(c).with_context(self.1))
     }
 }
+#[cfg(feature = "supply")]
 impl<'a, C: ComponentSpecifier<PipelineRunner>, A: Into<ComponentArgs>, X: Into<Context<'a>>>
     IntoRunParams<'a, markers::ArgListMarker> for (C, A, X)
 {
@@ -636,6 +651,7 @@ impl<'a, C: ComponentSpecifier<PipelineRunner>, A: Into<ComponentArgs>, X: Into<
         })
     }
 }
+#[cfg(feature = "supply")]
 impl<'a, C: ComponentSpecifier<PipelineRunner>, I: InputSpecifier, X: Into<Context<'a>>>
     IntoRunParams<'a, markers::InputMapMarker> for (C, I, X)
 {
@@ -809,6 +825,7 @@ impl PipelineRunner {
             max_running: _,
             component,
             mut args,
+            #[cfg(feature = "supply")]
             context,
         } = params;
         let callback = Some(callback.unwrap_or_else(|| Arc::new(NoopCallback)));
@@ -850,6 +867,7 @@ impl PipelineRunner {
             component: data,
             input,
             callback,
+            #[cfg(feature = "supply")]
             context,
             run_id: RunId(smallvec::smallvec![run_id]),
             branch_count: Mutex::new(LiteMap::new()),

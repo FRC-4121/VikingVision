@@ -3,17 +3,21 @@
 //! See the documentation for [`Component`] for more information on implementation.
 
 use super::runner::ComponentContext;
-use crate::buffer::Buffer;
-use crate::mutex::Mutex;
 use crate::pipeline::graph::{GraphComponentId, IdResolver, PipelineGraph};
-use crate::utils::LogErr;
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
 use std::borrow::Cow;
 use std::fmt::{self, Debug, Display, Formatter};
+use std::sync::Mutex;
 use std::sync::{Arc, TryLockError};
-use supply::prelude::*;
 use thiserror::Error;
+use vv_utils::utils::LogErr;
+
+#[cfg(feature = "apriltag")]
+mod impl_apriltag;
+mod impl_utils;
+#[cfg(feature = "vision")]
+mod impl_vision;
 
 /// A pretty error for when downcasts fail.
 #[derive(Debug, Clone, Copy, Error)]
@@ -188,27 +192,6 @@ impl Data for String {
         &["len"]
     }
 }
-impl Data for Buffer<'static> {
-    fn debug(&self, f: &mut Formatter) -> fmt::Result {
-        Debug::fmt(&self, f)
-    }
-    fn clone_to_arc(&self) -> Arc<dyn Data> {
-        Arc::new(self.clone())
-    }
-    fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
-        match field {
-            "width" => Some(Cow::Borrowed(&self.width)),
-            "height" => Some(Cow::Borrowed(&self.height)),
-            "pixels" => Some(Cow::Owned(Arc::new(self.width * self.height) as _)),
-            "raw_size" => Some(Cow::Owned(Arc::new(self.data.len()) as _)),
-            "format" => Some(Cow::Owned(Arc::new(self.format.to_string()) as _)),
-            _ => None,
-        }
-    }
-    fn known_fields(&self) -> &'static [&'static str] {
-        &["width", "height", "pixels", "raw_size", "format"]
-    }
-}
 impl<T: Data + Clone> Data for Vec<T> {
     fn debug(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_list()
@@ -321,9 +304,9 @@ impl_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 /// A serializable factory that can build a component.
 ///
 /// This is useful for serialization and deserialization of components, but isn't required for their use in pipelines.
-#[typetag::serde(tag = "type")]
+#[cfg_attr(feature = "serde", typetag::serde(tag = "type"))]
 pub trait ComponentFactory {
-    fn build(&self, ctx: &mut dyn ProviderDyn) -> Box<dyn Component>;
+    fn build(&self) -> Box<dyn Component>;
 }
 
 /// What will come from an output channel.

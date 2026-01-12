@@ -29,17 +29,20 @@ pub struct ComponentContextInner<'r> {
     pub(super) run_id: RunId,
     pub(super) branch_count: Mutex<LiteMap<SmolStr, u32>>,
     /// Context to be passed in and shared between components.
+    #[cfg(feature = "supply")]
     pub context: Context<'r>,
 }
 
 impl Debug for ComponentContextInner<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ComponentContextInner")
-            .field("runner", &(&self.runner as *const _))
+        let mut s = f.debug_struct("ComponentContextInner");
+        s.field("runner", &(&self.runner as *const _))
             .field("comp_id", &self.comp_id())
             .field("run_id", &self.run_id)
-            .field("finished", &self.finished())
-            .finish_non_exhaustive()
+            .field("finished", &self.finished());
+        #[cfg(feature = "supply")]
+        s.field("context", &self.context);
+        s.finish_non_exhaustive()
     }
 }
 
@@ -509,12 +512,14 @@ impl<'r> ComponentContextInner<'r> {
     {
         let runner = self.runner;
         let callback = self.callback.clone();
+        #[cfg(feature = "supply")]
         let context = self.context.clone();
         ComponentContextInner {
             input,
             runner,
             component,
             callback,
+            #[cfg(feature = "supply")]
             context,
             run_id,
             branch_count: Mutex::new(LiteMap::new()),
@@ -588,6 +593,7 @@ impl<'r> ComponentContextInner<'r> {
             &self.run_id.0,
             true,
             &tracing::Span::current(),
+            #[cfg(feature = "supply")]
             &self.context,
             &self.callback,
             scope,
@@ -601,6 +607,7 @@ impl<'r> ComponentContextInner<'r> {
             let is_last = callback.call_if_unique(CallbackContext {
                 runner: self.runner,
                 run_id: self.run_id.0[0],
+                #[cfg(feature = "supply")]
                 context: std::mem::take(&mut self.context),
             });
             if is_last {
@@ -806,7 +813,7 @@ impl PipelineRunner {
         run_id: &[u32],
         can_extra: bool,
         parent: &tracing::Span,
-        context: &Context<'r>,
+        #[cfg(feature = "supply")] context: &Context<'r>,
         callback: &Option<Callback<'r>>,
         scope: &rayon::Scope<'s>,
     ) {
@@ -838,7 +845,7 @@ impl PipelineRunner {
                         runner: &'r PipelineRunner,
                         component: &'r ComponentData,
                         broadcast: Option<u32>,
-                        context: &Context<'r>,
+                        #[cfg(feature = "supply")] context: &Context<'r>,
                         callback: &Option<Callback<'r>>,
                         scope: &rayon::Scope<'s>,
                     ) -> bool {
@@ -866,6 +873,7 @@ impl PipelineRunner {
                                     runner,
                                     component,
                                     broadcast,
+                                    #[cfg(feature = "supply")]
                                     context,
                                     callback,
                                     scope,
@@ -896,6 +904,7 @@ impl PipelineRunner {
                                                         opt.take().unwrap(),
                                                     )),
                                                     callback: callback.clone(),
+                                                    #[cfg(feature = "supply")]
                                                     context: context.clone(),
                                                     branch_count: Mutex::new(LiteMap::new()),
                                                     run_id: RunId(
@@ -970,6 +979,7 @@ impl PipelineRunner {
                                                             opt.take().unwrap(),
                                                         )),
                                                         callback: callback.clone(),
+                                                        #[cfg(feature = "supply")]
                                                         context: context.clone(),
                                                         branch_count: Mutex::new(LiteMap::new()),
                                                         run_id: RunId(
@@ -1030,6 +1040,7 @@ impl PipelineRunner {
                         self,
                         next,
                         *broadcast,
+                        #[cfg(feature = "supply")]
                         context,
                         callback,
                         scope,
@@ -1040,7 +1051,16 @@ impl PipelineRunner {
                 }
             }
             if id.flag() {
-                self.post_propagate(next, run_id, false, parent, context, callback, scope);
+                self.post_propagate(
+                    next,
+                    run_id,
+                    false,
+                    parent,
+                    #[cfg(feature = "supply")]
+                    context,
+                    callback,
+                    scope,
+                );
             }
         }
     }

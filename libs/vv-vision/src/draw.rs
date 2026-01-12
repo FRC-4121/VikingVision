@@ -89,26 +89,6 @@ impl Display for Line {
         write!(f, "({x0}, {y0})..({x1}, {y1})")
     }
 }
-// impl Data for Line {
-//     fn debug(&self, f: &mut Formatter) -> fmt::Result {
-//         Display::fmt(self, f)
-//     }
-//     fn clone_to_arc(&self) -> Arc<dyn Data> {
-//         Arc::new(*self)
-//     }
-//     fn known_fields(&self) -> &'static [&'static str] {
-//         &["x0", "y0", "x1", "y1"]
-//     }
-//     fn field(&self, field: &str) -> Option<Cow<'_, dyn Data>> {
-//         match field {
-//             "x0" => Some(Cow::Borrowed(&self.x0)),
-//             "y0" => Some(Cow::Borrowed(&self.y0)),
-//             "x1" => Some(Cow::Borrowed(&self.x1)),
-//             "y1" => Some(Cow::Borrowed(&self.y1)),
-//             _ => None,
-//         }
-//     }
-// }
 impl Drawable for Line {
     fn draw(&self, color: &[u8], buffer: &mut Buffer) {
         let Line { x0, y0, x1, y1 } = *self;
