@@ -1,10 +1,13 @@
-use crate::buffer::Buffer;
 use crate::pipeline::prelude::*;
 use crate::pipeline::runner::RunId;
-use crate::vision::Blob;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::marker::PhantomData;
+#[cfg(all(feature = "vision", feature = "serde"))]
+use vv_vision::buffer::Buffer;
+#[cfg(all(feature = "vision", feature = "serde"))]
+use vv_vision::vision::Blob;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CollectVecComponent<T> {
@@ -56,8 +59,9 @@ impl<T: Data + Clone> Component for CollectVecComponent<T> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "CVFShim")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "CVFShim"))]
 pub struct CollectVecFactory {
     /// The inner type.
     ///
@@ -71,20 +75,22 @@ pub struct CollectVecFactory {
     /// The actual construction function.
     ///
     /// This is skipped in de/serialization, and looked up based on the type name
-    #[serde(skip)]
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub factory: fn() -> Box<dyn Component>,
 }
-#[typetag::serde(name = "collect-vec")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "collect-vec"))]
 impl ComponentFactory for CollectVecFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         (self.factory)()
     }
 }
 
+#[cfg(feature = "serde")]
 #[derive(Deserialize)]
 struct CVFShim {
     inner: String,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<CVFShim> for CollectVecFactory {
     type Error = String;
 
@@ -102,9 +108,11 @@ impl TryFrom<CVFShim> for CollectVecFactory {
             "usize" => CollectVecComponent::<usize>::new_boxed,
             "f32" => CollectVecComponent::<f32>::new_boxed,
             "f64" => CollectVecComponent::<f64>::new_boxed,
+            #[cfg(feature = "vision")]
             "blob" => CollectVecComponent::<Blob>::new_boxed,
             #[cfg(feature = "apriltag")]
             "apriltag" => CollectVecComponent::<vv_apriltag::Detection>::new_boxed,
+            #[cfg(feature = "vision")]
             "buffer" => CollectVecComponent::<Buffer>::new_boxed,
             "string" => CollectVecComponent::<String>::new_boxed,
             "[i8]" => CollectVecComponent::<Vec<i8>>::new_boxed,
@@ -119,9 +127,11 @@ impl TryFrom<CVFShim> for CollectVecFactory {
             "[usize]" => CollectVecComponent::<Vec<usize>>::new_boxed,
             "[f32]" => CollectVecComponent::<Vec<f32>>::new_boxed,
             "[f64]" => CollectVecComponent::<Vec<f64>>::new_boxed,
+            #[cfg(feature = "vision")]
             "[blob]" => CollectVecComponent::<Vec<Blob>>::new_boxed,
             #[cfg(feature = "apriltag")]
             "[apriltag]" => CollectVecComponent::<Vec<vv_apriltag::Detection>>::new_boxed,
+            #[cfg(feature = "vision")]
             "[buffer]" => CollectVecComponent::<Vec<Buffer>>::new_boxed,
             "[string]" => CollectVecComponent::<Vec<String>>::new_boxed,
             name => return Err(format!("Unrecognized type {name:?}")),
@@ -133,7 +143,8 @@ impl TryFrom<CVFShim> for CollectVecFactory {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SelectLastComponent;
 impl Component for SelectLastComponent {
     fn inputs(&self) -> Inputs {
@@ -158,9 +169,9 @@ impl Component for SelectLastComponent {
         }
     }
 }
-#[typetag::serde(name = "select-last")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "select-last"))]
 impl ComponentFactory for SelectLastComponent {
-    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }

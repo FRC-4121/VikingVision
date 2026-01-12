@@ -1,8 +1,7 @@
 #![cfg(feature = "ntable")]
 
 use crate::pipeline::prelude::*;
-use crate::pipeline::PipelineId;
-use crate::pipeline::PipelineName;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
@@ -10,6 +9,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Display;
 use vv_ntable::NtHandle;
+use vv_utils::common_types::{PipelineId, PipelineName};
 
 thread_local! {
     static CLIENT_HANDLE: Cell<*const NtHandle> = const { Cell::new(std::ptr::null()) };
@@ -335,7 +335,7 @@ impl_atip!(
 macro_rules! impl_for_geom {
     ($($name:ident)*) => {
         $(
-            impl AddToInProgress for crate::geom::$name {
+            impl AddToInProgress for vv_utils::geom::$name {
                 fn push_to(self, arr: &mut InProgressArray) {
                     match arr {
                         InProgressArray::Unset => *arr = InProgressArray::Double(self.0.to_vec()),
@@ -376,23 +376,27 @@ macro_rules! impl_for_geom {
 }
 impl_for_geom!(Vec3 Mat3 Quat EulerXYZ);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NtPrimitiveFactory {
     /// Prefix of topics for the network table.
     ///
     /// Defaults to an empty string.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub prefix: SmolStr,
     /// Remapping of input channels to NT paths.
     ///
     /// If a topic isn't in the remapping table, it publishes to the same
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "HashMap::is_empty")
+    )]
     pub remapping: HashMap<SmolStr, SmolStr>,
 }
 
-#[typetag::serde(name = "ntable")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "ntable"))]
 impl ComponentFactory for NtPrimitiveFactory {
-    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(NtPrimitiveComponent {
             nt_handle: cloned_handle(),
             prefix: self.prefix.clone(),

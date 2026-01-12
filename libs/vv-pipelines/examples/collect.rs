@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use viking_vision::components::utils::BroadcastVec;
-use viking_vision::pipeline::prelude::*;
+use vv_pipelines::components::utils::BroadcastVec;
+use vv_pipelines::pipeline::prelude::*;
 
 mod common;
 use common::*;
@@ -10,7 +10,7 @@ use common::*;
 #[allow(dead_code)]
 mod mocks {
     use std::marker::PhantomData;
-    use viking_vision::pipeline::prelude::*;
+    use vv_pipelines::pipeline::prelude::*;
     pub struct CollectVecComponent<T> {
         _marker: PhantomData<T>,
     }
@@ -59,7 +59,7 @@ fn main() -> anyhow::Result<()> {
         collect2 =
             graph.add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect2")?;
     } else {
-        use viking_vision::components::prelude::*;
+        use vv_pipelines::components::prelude::*;
         collect1 =
             graph.add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect1")?;
         collect2 =

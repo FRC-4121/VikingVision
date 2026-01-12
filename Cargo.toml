@@ -28,7 +28,6 @@ humantime-serde = { workspace = true, optional = true }
 rayon.workspace = true
 serde = { workspace = true, optional = true }
 tracing.workspace = true
-vv-apriltag = { workspace = true, optional = true }
 vv-camera = { workspace = true, features = ["supply"] }
 vv-ntable = { workspace = true, optional = true }
 vv-pipelines = { workspace = true, features = ["supply", "vision"] }
@@ -36,12 +35,14 @@ vv-utils = { workspace = true, optional = true }
 vv-vision = { workspace = true, default-features = false }
 
 [features]
-default = ["apriltag", "debug-gui", "ntable", "serde", "v4l"]
-apriltag = ["dep:vv-apriltag", "vv-pipelines/apriltag"]
+default = ["all-components", "debug-gui", "serde", "v4l"]
+all-components = ["apriltag", "ntable", "vv-pipelines/all-components"]
+apriltag = ["vv-pipelines/apriltag"]
+components = ["vv-pipelines/components"]
 debug-gui = ["vv-vision/debug-gui"]
 debug-tools = ["vv-utils/debug-tools"]
-ntable = ["dep:vv-ntable"]
-serde = ["dep:serde", "dep:humantime-serde", "vv-apriltag/serde", "vv-camera/serde", "vv-pipelines/serde", "vv-vision/serde"]
+ntable = ["dep:vv-ntable", "vv-pipelines/ntable"]
+serde = ["dep:serde", "dep:humantime-serde", "vv-camera/serde", "vv-pipelines/serde"]
 v4l = ["vv-camera/v4l", "vv-vision/v4l"]
 
 [workspace.dependencies]

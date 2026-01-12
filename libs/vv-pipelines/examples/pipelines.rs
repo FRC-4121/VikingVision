@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use viking_vision::components::utils::BroadcastVec;
-use viking_vision::pipeline::prelude::*;
+use vv_pipelines::components::utils::BroadcastVec;
+use vv_pipelines::pipeline::prelude::*;
 
 // see common.rs for more component definitions
 mod common;

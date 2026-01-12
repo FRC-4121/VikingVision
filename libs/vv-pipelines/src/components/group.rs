@@ -2,17 +2,18 @@
 //! Implementation of [`GroupComponent`], a component that acts as a group of other components.
 
 use super::ComponentIdentifier;
-use crate::mutex::Mutex;
+use crate::configure::{Configurable, Configure};
 use crate::pipeline::graph::IdResolver;
 use crate::pipeline::prelude::*;
 use crate::pipeline::serialized::ComponentChannel as NameSource;
-use crate::utils::{Configurable, Configure};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{error, warn};
+use vv_utils::mutex::Mutex;
 
 #[derive(Default)]
 struct Listener {
@@ -250,7 +251,8 @@ fn spawn_recursive<'s>(
     });
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct GroupFactory {
     pub input: SmolStr,
     pub output: Option<NameSource>,
@@ -268,9 +270,9 @@ impl From<GroupFactory> for GroupConfig {
         }
     }
 }
-#[typetag::serde(name = "group")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "group"))]
 impl ComponentFactory for GroupFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(GroupComponent::new(self.clone().into()))
     }
 }

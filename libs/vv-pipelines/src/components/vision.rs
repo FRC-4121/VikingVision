@@ -1,14 +1,20 @@
-use crate::buffer::{Buffer, PixelFormat};
-use crate::pipeline::{PipelineId, PipelineName, prelude::*};
-use crate::vision::*;
-use crate::vision_debug;
+#![cfg(feature = "vision")]
+
+use crate::pipeline::prelude::*;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
 use thiserror::Error;
+use vv_utils::common_types::{PipelineId, PipelineName};
+use vv_vision::buffer::{Buffer, PixelFormat};
+use vv_vision::vision::*;
+use vv_vision::vision_debug;
 
 /// A simple component to change the color space of a buffer.
 ///
 /// This is useful for downstream components that use [`Buffer::convert_cow`].
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ColorSpaceComponent {
     pub format: PixelFormat,
 }
@@ -35,9 +41,9 @@ impl Component for ColorSpaceComponent {
         context.submit("", buffer.convert(self.format));
     }
 }
-#[typetag::serde(name = "color-space")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "color-space"))]
 impl ComponentFactory for ColorSpaceComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
@@ -46,8 +52,9 @@ impl ComponentFactory for ColorSpaceComponent {
 ///
 /// It outputs a [`Buffer`] with the [`Gray`](PixelFormat::Gray) format, with a value of 255 for pixels within the range and 0 for pixels
 /// outside of it.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct ColorFilterComponent {
     pub filter: ColorFilter,
 }
@@ -76,26 +83,30 @@ impl Component for ColorFilterComponent {
         context.submit("", filtered);
     }
 }
-#[typetag::serde(name = "filter")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "filter"))]
 impl ComponentFactory for ColorFilterComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
 
 #[inline(always)]
+#[cfg(feature = "serde")]
 const fn max_u32() -> u32 {
     u32::MAX
 }
 #[inline(always)]
+#[cfg(feature = "serde")]
 const fn max_usize() -> usize {
     usize::MAX
 }
 #[inline(always)]
+#[cfg(feature = "serde")]
 const fn max_f32() -> f32 {
     f32::INFINITY
 }
 #[inline(always)]
+#[cfg(feature = "serde")]
 const fn one_f32() -> f32 {
     1.0
 }
@@ -104,38 +115,39 @@ const fn one_f32() -> f32 {
 ///
 /// It can output blobs either as a collected vector on the primary channel or stream individual
 /// blobs on the "elem" channel, filtered by size, pixel count, and aspect ratio constraints.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 pub struct BlobsComponent {
     /// Minimum width of blobs to emit.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub min_w: u32,
     /// Maximum width of blobs to emit.
-    #[serde(default = "max_u32")]
+    #[cfg_attr(feature = "serde", serde(default = "max_u32"))]
     pub max_w: u32,
     /// Minimum height of blobs to emit.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub min_h: u32,
     /// Maximum height of blobs to emit.
-    #[serde(default = "max_u32")]
+    #[cfg_attr(feature = "serde", serde(default = "max_u32"))]
     pub max_h: u32,
     /// Minimum pixel count of blobs to emit.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub min_px: usize,
     /// Maximum pixel count of blobs to emit.
-    #[serde(default = "max_usize")]
+    #[cfg_attr(feature = "serde", serde(default = "max_usize"))]
     pub max_px: usize,
     /// Minimum fill ratio (pixels / (width * height)) of blobs to emit.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub min_fill: f32,
     /// Maximum fill ratio (pixels / (width * height)) of blobs to emit.
-    #[serde(default = "one_f32")]
+    #[cfg_attr(feature = "serde", serde(default = "one_f32"))]
     pub max_fill: f32,
     /// Minimum aspect ratio (height / width) of blobs to emit.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub min_aspect: f32,
     /// Maximum aspect ratio (height / width) of blobs to emit.
-    #[serde(default = "max_f32")]
+    #[cfg_attr(feature = "serde", serde(default = "max_f32"))]
     pub max_aspect: f32,
 }
 impl Default for BlobsComponent {
@@ -212,25 +224,28 @@ impl Component for BlobsComponent {
         }
     }
 }
-#[typetag::serde(name = "blobs")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "blobs"))]
 impl ComponentFactory for BlobsComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
 
+#[cfg(feature = "serde")]
 #[derive(Deserialize)]
 struct FilterShim {
     width: usize,
     height: usize,
     index: usize,
 }
+#[cfg(feature = "serde")]
 #[derive(Deserialize)]
 struct BlurShim {
     width: usize,
     height: usize,
 }
 
+#[cfg(feature = "serde")]
 #[derive(Deserialize)]
 struct GaussianShim {
     sigma: f32,
@@ -238,6 +253,7 @@ struct GaussianShim {
     height: usize,
 }
 
+#[cfg(feature = "serde")]
 #[derive(Debug, Error)]
 enum FromShimError {
     #[error("window width must be odd")]
@@ -250,13 +266,15 @@ enum FromShimError {
     NonPositiveSigma,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "FilterShim")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "FilterShim"))]
 pub struct PercentileFilterComponent {
     pub width: usize,
     pub height: usize,
     pub index: usize,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<FilterShim> for PercentileFilterComponent {
     type Error = FromShimError;
 
@@ -300,19 +318,21 @@ impl Component for PercentileFilterComponent {
         context.submit("", dst);
     }
 }
-#[typetag::serde(name = "percent-filter")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "percent-filter"))]
 impl ComponentFactory for PercentileFilterComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "BlurShim")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "BlurShim"))]
 pub struct BoxBlurComponent {
     pub width: usize,
     pub height: usize,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<BlurShim> for BoxBlurComponent {
     type Error = FromShimError;
 
@@ -349,20 +369,22 @@ impl Component for BoxBlurComponent {
         context.submit("", img);
     }
 }
-#[typetag::serde(name = "box-blur")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "box-blur"))]
 impl ComponentFactory for BoxBlurComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "GaussianShim")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "GaussianShim"))]
 pub struct GaussianBlurComponent {
     pub sigma: f32,
     pub width: usize,
     pub height: usize,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<GaussianShim> for GaussianBlurComponent {
     type Error = FromShimError;
 
@@ -409,19 +431,21 @@ impl Component for GaussianBlurComponent {
         context.submit("", img);
     }
 }
-#[typetag::serde(name = "gaussian-blur")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "gaussian-blur"))]
 impl ComponentFactory for GaussianBlurComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "BlurShim")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "BlurShim"))]
 pub struct DilateFactory {
     pub width: usize,
     pub height: usize,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<BlurShim> for DilateFactory {
     type Error = FromShimError;
 
@@ -438,9 +462,9 @@ impl TryFrom<BlurShim> for DilateFactory {
         })
     }
 }
-#[typetag::serde(name = "dilate")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "dilate"))]
 impl ComponentFactory for DilateFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(PercentileFilterComponent {
             width: self.width,
             height: self.height,
@@ -449,12 +473,14 @@ impl ComponentFactory for DilateFactory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "BlurShim")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "BlurShim"))]
 pub struct ErodeFactory {
     pub width: usize,
     pub height: usize,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<BlurShim> for ErodeFactory {
     type Error = FromShimError;
 
@@ -471,9 +497,9 @@ impl TryFrom<BlurShim> for ErodeFactory {
         })
     }
 }
-#[typetag::serde(name = "erode")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "erode"))]
 impl ComponentFactory for ErodeFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(PercentileFilterComponent {
             width: self.width,
             height: self.height,
@@ -482,12 +508,14 @@ impl ComponentFactory for ErodeFactory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "BlurShim")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "BlurShim"))]
 pub struct MedianFilterFactory {
     pub width: usize,
     pub height: usize,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<BlurShim> for MedianFilterFactory {
     type Error = FromShimError;
 
@@ -504,9 +532,9 @@ impl TryFrom<BlurShim> for MedianFilterFactory {
         })
     }
 }
-#[typetag::serde(name = "median-filter")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "median-filter"))]
 impl ComponentFactory for MedianFilterFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(PercentileFilterComponent {
             width: self.width,
             height: self.height,
@@ -515,7 +543,8 @@ impl ComponentFactory for MedianFilterFactory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ResizeComponent {
     pub width: u32,
     pub height: u32,
@@ -540,18 +569,19 @@ impl Component for ResizeComponent {
         context.submit("", new);
     }
 }
-#[typetag::serde(name = "resize")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "resize"))]
 impl ComponentFactory for ResizeComponent {
-    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VisionDebugComponent {
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub mode: Option<vision_debug::DebugMode>,
-    #[serde(skip, default = "std::sync::Once::new")]
+    #[cfg_attr(feature = "serde", serde(skip, default = "std::sync::Once::new"))]
     pub logged_warning: std::sync::Once,
 }
 impl Clone for VisionDebugComponent {
@@ -593,9 +623,9 @@ impl Component for VisionDebugComponent {
         });
     }
 }
-#[typetag::serde(name = "vision-debug")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "vision-debug"))]
 impl ComponentFactory for VisionDebugComponent {
-    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(self.clone())
     }
 }

@@ -1,10 +1,9 @@
 //! Basic utility components.
 
 use super::ComponentIdentifier;
-use crate::buffer::Buffer;
-use crate::mutex::Mutex;
-use crate::pipeline::{PipelineId, prelude::*};
-use crate::utils::{Configurable, Configure, FpsCounter};
+use crate::configure::{Configurable, Configure};
+use crate::pipeline::prelude::*;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
@@ -13,14 +12,20 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use supply::{Request, prelude::*};
 use tracing::{error, info};
+use vv_utils::common_types::PipelineId;
+use vv_utils::mutex::Mutex;
+use vv_utils::utils::FpsCounter;
+use vv_vision::buffer::Buffer;
 
+#[cfg(feature = "serde")]
 const fn true_default() -> bool {
     true
 }
 /// A simple component that prints an info-level span with the information in it.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DebugComponent {
-    #[serde(default = "true_default")]
+    #[cfg_attr(feature = "serde", serde(default = "true_default"))]
     pub noisy: bool,
 }
 impl Component for DebugComponent {
@@ -37,9 +42,9 @@ impl Component for DebugComponent {
         info!(?val, allow_noisy = self.noisy, "debug");
     }
 }
-#[typetag::serde(name = "debug")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "debug"))]
 impl ComponentFactory for DebugComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }
@@ -107,13 +112,14 @@ impl Component for CloneComponent {
 }
 
 /// A factory to build a [`CloneComponent`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CloneFactory {
     pub name: String,
 }
-#[typetag::serde(name = "clone")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "clone"))]
 impl ComponentFactory for CloneFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(CloneComponent::new(self.name.clone().into()))
     }
 }
@@ -152,17 +158,19 @@ impl<T: Data + Clone> Component for WrapMutexComponent<T> {
 }
 
 /// Convenience component factory to make a `WrapMutexComponent<Buffer>`
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CanvasFactory {}
-#[typetag::serde(name = "canvas")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "canvas"))]
 impl ComponentFactory for CanvasFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(WrapMutexComponent::<Buffer>::new())
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "WMFShim")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "WMFShim"))]
 pub struct WrapMutexFactory {
     /// The inner type.
     ///
@@ -176,20 +184,22 @@ pub struct WrapMutexFactory {
     /// The actual construction function.
     ///
     /// This is skipped in de/serialization, and looked up based on the type name
-    #[serde(skip)]
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub factory: fn() -> Box<dyn Component>,
 }
-#[typetag::serde(name = "wrap-mutex")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "wrap-mutex"))]
 impl ComponentFactory for WrapMutexFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         (self.factory)()
     }
 }
 
+#[cfg(feature = "serde")]
 #[derive(Deserialize)]
 struct WMFShim {
     inner: String,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<WMFShim> for WrapMutexFactory {
     type Error = String;
 
@@ -254,15 +264,18 @@ impl DataKind for dyn Data {
 
 /// A component that sends its input data to a channel, along with context from the pipeline.
 #[allow(clippy::type_complexity)]
+#[cfg(feature = "supply")]
 pub struct ChannelComponent<T, R: for<'a> Request<l!['a], Output: 'static>> {
     kind: ChannelKind<(Arc<T>, <R as Request<l!['static]>>::Output)>,
 }
+#[cfg(feature = "supply")]
 impl<T, R: for<'a> Request<l!['a], Output: 'static>> Debug for ChannelComponent<T, R> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChannelComponent").finish_non_exhaustive()
     }
 }
 #[allow(clippy::type_complexity)]
+#[cfg(feature = "supply")]
 impl<T, R: for<'a> Request<l!['a], Output: Send + 'static>> ChannelComponent<T, R> {
     /// Create a dummy component, with no receiver.
     pub const fn dummy() -> Self {
@@ -287,6 +300,7 @@ impl<T, R: for<'a> Request<l!['a], Output: Send + 'static>> ChannelComponent<T, 
         (Self { kind }, rx)
     }
 }
+#[cfg(feature = "supply")]
 impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> Component
     for ChannelComponent<T, R>
 {
@@ -323,7 +337,7 @@ impl<T: DataKind, R: for<'a> Request<l!['a], Output: Send + 'static> + 'static> 
 /// A component that tracks the frequency that it's called at.
 #[derive(Debug)]
 pub struct FpsComponent {
-    inner: Mutex<HashMap<Option<PipelineId>, crate::utils::FpsCounter>>,
+    inner: Mutex<HashMap<Option<PipelineId>, FpsCounter>>,
     max_duration: Duration,
 }
 impl Default for FpsComponent {
@@ -391,18 +405,22 @@ const fn default_fps_dur() -> Duration {
     Duration::from_secs(10)
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FpsFactory {
-    #[serde(
-        alias = "period",
-        default = "default_fps_dur",
-        with = "humantime_serde"
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            alias = "period",
+            default = "default_fps_dur",
+            with = "humantime_serde"
+        )
     )]
     pub duration: Duration,
 }
-#[typetag::serde(name = "fps")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "fps"))]
 impl ComponentFactory for FpsFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(FpsComponent::with_max_duration(self.duration))
     }
 }
@@ -441,13 +459,15 @@ impl<T: Data + Clone> Component for BroadcastVec<T> {
 }
 
 #[inline(always)]
+#[cfg(feature = "serde")]
 const fn is_false(v: &bool) -> bool {
     !*v
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct UnpackFields {
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
     pub allow_missing: bool,
 }
 impl Component for UnpackFields {
@@ -470,9 +490,9 @@ impl Component for UnpackFields {
         }
     }
 }
-#[typetag::serde(name = "unpack")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "unpack"))]
 impl ComponentFactory for UnpackFields {
-    fn build(&self, _ctx: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(*self)
     }
 }

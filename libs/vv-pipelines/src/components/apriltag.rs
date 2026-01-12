@@ -1,11 +1,14 @@
 #![cfg(feature = "apriltag")]
 
-use crate::buffer::Buffer;
-use crate::camera::{Fov, FrameSize};
-use crate::mutex::Mutex;
 use crate::pipeline::prelude::*;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "supply")]
 use supply::ProviderExt;
+#[cfg(feature = "supply")]
+use vv_utils::common_types::{Fov, FrameSize};
+use vv_utils::mutex::Mutex;
+use vv_vision::buffer::{Buffer, PixelFormat};
 
 #[derive(Debug)]
 pub struct AprilTagComponent {
@@ -27,7 +30,7 @@ impl Component for AprilTagComponent {
         let Ok(img) = context.get_as::<Buffer>(None).and_log_err() else {
             return;
         };
-        let grayscale = img.convert_cow(crate::buffer::PixelFormat::LUMA);
+        let grayscale = img.convert_cow(PixelFormat::LUMA);
         let it = {
             let Ok(mut lock) = self.detector.lock() else {
                 tracing::warn!("poisoned mutex for detector");
@@ -61,26 +64,31 @@ impl Component for AprilTagComponent {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AprilTagFactory {
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub config: vv_apriltag::DetectorConfig,
 }
-#[typetag::serde(name = "vv_apriltag")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "apriltag"))]
 impl ComponentFactory for AprilTagFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(AprilTagComponent {
             detector: Mutex::new(vv_apriltag::Detector::from_config(&self.config)),
         })
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "spec", rename_all = "lowercase")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "spec", rename_all = "lowercase"))]
 pub enum DetectPoseComponent {
     Fixed(vv_apriltag::PoseParams),
     Infer {
-        #[serde(deserialize_with = "vv_apriltag::tag_size::deserialize")]
+        #[cfg_attr(
+            feature = "serde",
+            serde(deserialize_with = "vv_apriltag::tag_size::deserialize")
+        )]
         tag_size: f64,
     },
 }
@@ -100,6 +108,7 @@ impl Component for DetectPoseComponent {
     fn run<'s, 'r: 's>(&self, context: ComponentContext<'_, 's, 'r>) {
         let params = match *self {
             Self::Fixed(p) => p,
+            #[cfg(feature = "supply")]
             Self::Infer { tag_size } => {
                 let Some(Fov(fov)) = context.context.request::<Fov>() else {
                     tracing::error!("attempted to infer parameters for a camera without an FOV");
@@ -117,6 +126,11 @@ impl Component for DetectPoseComponent {
                     ..vv_apriltag::PoseParams::from_dimensions(width, height, fov)
                 }
             }
+            #[cfg(not(feature = "supply"))]
+            Self::Infer { .. } => {
+                tracing::error!("attempted to infer pose parameters but injection isn't enabled");
+                return;
+            }
         };
         let Ok(detection) = context.get_as::<vv_apriltag::Detection>(None).and_log_err() else {
             return;
@@ -127,9 +141,9 @@ impl Component for DetectPoseComponent {
         context.submit_if_listening("error", || pose.error);
     }
 }
-#[typetag::serde(name = "april-pose")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "april-pose"))]
 impl ComponentFactory for DetectPoseComponent {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(self.clone())
     }
 }

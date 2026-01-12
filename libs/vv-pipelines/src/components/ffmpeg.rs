@@ -1,21 +1,16 @@
-use crate::buffer::Buffer;
-use crate::buffer::PixelFormat;
-use crate::mutex::{Mutex, RwLock};
-use crate::pipeline::PipelineId;
-use crate::pipeline::PipelineName;
 use crate::pipeline::prelude::*;
-use serde::Deserialize;
-use serde::Serialize;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::io::Write;
-use std::process::Stdio;
-use std::process::{Child, ChildStdin, Command};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::PoisonError;
-use tracing::error;
-use tracing::info;
-use tracing::warn;
+use tracing::{error, info, warn};
+use vv_utils::common_types::{PipelineId, PipelineName};
+use vv_utils::mutex::{Mutex, RwLock};
+use vv_vision::buffer::{Buffer, PixelFormat};
 
 #[derive(Debug)]
 pub struct FfmpegComponent {
@@ -268,8 +263,9 @@ impl Debug for DebugCommand<'_> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "FfmpegShim")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "FfmpegShim"))]
 pub struct FfmpegFactory {
     /// The target framerate to use to encode video.
     pub fps: f64,
@@ -281,12 +277,14 @@ pub struct FfmpegFactory {
     pub ffmpeg: Cow<'static, str>,
 }
 
+#[cfg(feature = "serde")]
 #[derive(Deserialize)]
 struct FfmpegShim {
     fps: f64,
     args: Vec<String>,
     ffmpeg: Option<String>,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<FfmpegShim> for FfmpegFactory {
     type Error = time::error::InvalidFormatDescription;
 
@@ -299,9 +297,9 @@ impl TryFrom<FfmpegShim> for FfmpegFactory {
         })
     }
 }
-#[typetag::serde(name = "ffmpeg")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "ffmpeg"))]
 impl ComponentFactory for FfmpegFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         Box::new(FfmpegComponent::new(
             self.ffmpeg.clone(),
             self.args.clone(),

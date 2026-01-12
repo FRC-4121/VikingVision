@@ -1,16 +1,21 @@
-use crate::buffer::Buffer;
-use crate::draw::*;
-use crate::mutex::Mutex;
+#![cfg(feature = "vision")]
+
 use crate::pipeline::prelude::*;
-use crate::vision::{Blob, Color};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use vv_utils::mutex::Mutex;
+use vv_vision::buffer::Buffer;
+use vv_vision::draw::*;
+#[cfg(feature = "serde")]
+use vv_vision::vision::Blob;
+use vv_vision::vision::Color;
 
 pub struct DrawComponent<T> {
     pub color: Color,
     _marker: PhantomData<fn(T)>,
 }
-impl<T: Drawable> DrawComponent<T> {
+impl<T: Drawable + Data> DrawComponent<T> {
     pub const fn new(color: Color) -> Self {
         Self {
             color,
@@ -21,7 +26,7 @@ impl<T: Drawable> DrawComponent<T> {
         Box::new(Self::new(color))
     }
 }
-impl<T: Drawable> Component for DrawComponent<T> {
+impl<T: Drawable + Data> Component for DrawComponent<T> {
     fn inputs(&self) -> Inputs {
         Inputs::named(["canvas", "elem"])
     }
@@ -52,8 +57,9 @@ impl<T: Drawable> Component for DrawComponent<T> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "DrawShim")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "DrawShim"))]
 pub struct DrawFactory {
     /// The type of things to draw.
     ///
@@ -66,27 +72,29 @@ pub struct DrawFactory {
     /// The color to draw in.
     ///
     /// The image will be converted to the specified colorspace first.
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub color: Color,
     /// The actual construction function.
     ///
     /// This is skipped in de/serialization, and looked up based on the type name
-    #[serde(skip)]
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub factory: fn(Color) -> Box<dyn Component>,
 }
-#[typetag::serde(name = "draw")]
+#[cfg_attr(feature = "serde", typetag::serde(name = "draw"))]
 impl ComponentFactory for DrawFactory {
-    fn build(&self, _: &mut dyn ProviderDyn) -> Box<dyn Component> {
+    fn build(&self) -> Box<dyn Component> {
         (self.factory)(self.color)
     }
 }
 
+#[cfg(feature = "serde")]
 #[derive(Deserialize)]
 struct DrawShim {
     draw: String,
     #[serde(flatten)]
     color: Color,
 }
+#[cfg(feature = "serde")]
 impl TryFrom<DrawShim> for DrawFactory {
     type Error = String;
 
