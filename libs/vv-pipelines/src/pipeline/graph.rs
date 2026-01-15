@@ -166,8 +166,8 @@ pub enum AddDependencyError<E1, E2> {
 pub enum GenericAddDependencyError {
     #[error("Source and destination components cannot be the same")]
     SelfLoop,
-    #[error("Component {dst_id} ({dst_name:?}) is an entrypoint and can't be a destination")]
-    DestIsEntrypoint {
+    #[error("Component {dst_id} ({dst_name:?}) is an entry_point and can't be a destination")]
+    DestIsEntryPoint {
         dst_id: GraphComponentId,
         dst_name: SmolStr,
     },
@@ -311,17 +311,22 @@ impl std::ops::Index<GraphComponentId> for IdResolver {
     }
 }
 
+/// A component can't be converted to an entry point if it has inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
+#[error("Attempted to make a component with inputs an entry point")]
+pub struct HasInputs;
+
 /// Associated data for a component in the graph.
 ///
 /// More may become public if there's a need for it.
 #[derive(Clone)]
 pub struct ComponentData {
-    pub component: Arc<dyn Component>,
+    component: Arc<dyn Component>,
     name: SmolStr,
     inputs: InputKind,
     outputs: BTreeMap<SmolStr, Vec<GraphComponentChannel>>,
     in_lookup: bool,
-    is_entrypoint: bool,
+    is_entry_point: bool,
     input_count: LiteMap<GraphComponentId, usize>,
 }
 impl ComponentData {
@@ -332,17 +337,38 @@ impl ComponentData {
     pub fn is_placeholder(&self) -> bool {
         Arc::ptr_eq(&self.component, &DEFAULT_COMPONENT)
     }
-    /// Check if this component is an entrypoint.
+    /// Check if this component is an entry point.
     ///
     /// If it is, a pipeline can be started through this component.
     #[inline(always)]
-    pub fn is_entrypoint(&self) -> bool {
-        self.is_entrypoint
+    pub fn is_entry_point(&self) -> bool {
+        self.is_entry_point
     }
     /// Get the name of this component.
     #[inline(always)]
     pub fn name(&self) -> &SmolStr {
         &self.name
+    }
+    /// Get the underlying component implementation.
+    #[inline(always)]
+    pub fn component(&self) -> &Arc<dyn Component> {
+        &self.component
+    }
+    /// Check if a component has any inputs.
+    pub fn has_inputs(&self) -> bool {
+        match &self.inputs {
+            InputKind::Single(v) => v.is_empty(),
+            InputKind::Multiple { single, multi, .. } => single.is_empty() && multi.is_none(),
+        }
+    }
+    /// Set whether this component is an entry point.
+    ///
+    /// If `is_entry_point` is true, this component must not have any inputs connected.
+    pub fn set_entry_point(&mut self, is_entry_point: bool) -> Result<bool, HasInputs> {
+        if is_entry_point && self.has_inputs() {
+            return Err(HasInputs);
+        }
+        Ok(std::mem::replace(&mut self.is_entry_point, is_entry_point))
     }
 }
 impl Debug for ComponentData {
@@ -352,9 +378,33 @@ impl Debug for ComponentData {
             .field("inputs", &self.inputs)
             .field("outputs", &self.outputs)
             .field("in_lookup", &self.in_lookup)
-            .field("is_entrypoint", &self.is_entrypoint)
+            .field("is_entry_point", &self.is_entry_point)
             .field("is_placeholder", &self.is_placeholder())
             .finish_non_exhaustive()
+    }
+}
+
+pub trait IntoComponentArc {
+    fn into_component_arc(self) -> Arc<dyn Component>;
+}
+impl IntoComponentArc for Arc<dyn Component> {
+    fn into_component_arc(self) -> Arc<dyn Component> {
+        self
+    }
+}
+impl<C: Component> IntoComponentArc for Arc<C> {
+    fn into_component_arc(self) -> Arc<dyn Component> {
+        self as _
+    }
+}
+impl IntoComponentArc for Box<dyn Component> {
+    fn into_component_arc(self) -> Arc<dyn Component> {
+        self.into()
+    }
+}
+impl<C: Component> IntoComponentArc for C {
+    fn into_component_arc(self) -> Arc<dyn Component> {
+        Arc::new(self) as _
     }
 }
 
@@ -363,27 +413,32 @@ impl Debug for ComponentData {
 pub struct GraphComponentBuilder {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
-    pub is_entrypoint: bool,
+    pub is_entry_point: bool,
     pub in_lookup: bool,
 }
 impl Debug for GraphComponentBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("GraphComponentBuilder")
             .field("name", &self.name)
-            .field("is_entrypoint", &self.is_entrypoint)
+            .field("is_entry_point", &self.is_entry_point)
             .field("in_lookup", &self.in_lookup)
             .finish_non_exhaustive()
+    }
+}
+impl<C: IntoComponentArc, N: Into<SmolStr>> From<(C, N)> for GraphComponentBuilder {
+    fn from(value: (C, N)) -> Self {
+        Self::new(value.0, value.1)
     }
 }
 impl GraphComponentBuilder {
     /// Create a new in-progrss component.
     ///
-    /// It will be visible and not an entrypoint.
-    pub fn new(component: Arc<dyn Component>, name: impl Into<SmolStr>) -> Self {
+    /// It will be visible and not an entry_point.
+    pub fn new(component: impl IntoComponentArc, name: impl Into<SmolStr>) -> Self {
         Self {
-            component,
+            component: component.into_component_arc(),
             name: name.into(),
-            is_entrypoint: false,
+            is_entry_point: false,
             in_lookup: true,
         }
     }
@@ -392,10 +447,18 @@ impl GraphComponentBuilder {
         self.in_lookup = false;
         self
     }
-    pub fn entrypoint(mut self) -> Self {
-        self.is_entrypoint = true;
+    pub fn entry_point(mut self) -> Self {
+        self.is_entry_point = true;
         self
     }
+}
+
+/// A convenience function for writing `GraphComponentBuilder::new(component, name).entry_point()`
+pub fn entry_point(
+    component: impl IntoComponentArc,
+    name: impl Into<SmolStr>,
+) -> GraphComponentBuilder {
+    GraphComponentBuilder::new(component, name).entry_point()
 }
 
 /// An incomplete graph for a pipeline.
@@ -422,9 +485,13 @@ impl PipelineGraph {
     pub fn components(&self) -> &[ComponentData] {
         &self.components
     }
-    /// Access the lookup table for the graph.
-    pub fn lookup(&self) -> &HashMap<SmolStr, GraphComponentId> {
-        &self.lookup
+    /// Access the component data as a mutable slice.
+    ///
+    /// Since components are identified by their position in this slice, so swapping and replacing elements will lead
+    /// to unspecified behavior. There's no ergonomic way to prevent this usage, but APIs like [`std::mem::swap`] or
+    /// [`slice::swap`] shouldn't be used.
+    pub fn components_mut(&mut self) -> &mut [ComponentData] {
+        &mut self.components
     }
     /// Add a new component to the pipeline with a unique name.
     ///
@@ -469,7 +536,7 @@ impl PipelineGraph {
                     GraphComponentBuilder {
                         component: component.clone(),
                         name,
-                        is_entrypoint: false,
+                        is_entry_point: false,
                         in_lookup: true,
                     },
                 );
@@ -498,7 +565,7 @@ impl PipelineGraph {
             GraphComponentBuilder {
                 component: component.clone(),
                 name: name.into(),
-                is_entrypoint: false,
+                is_entry_point: false,
                 in_lookup: false,
             },
         );
@@ -509,36 +576,46 @@ impl PipelineGraph {
     ///
     /// If `builder.in_lookup` is true, this component will be inserted into the lookup table.
     /// If it's false, this function can't fail. A component can be set as an entry point to the graph,
-    /// which will allow inputs to be submitted to it. Trying to run a pipeline graph through a non-entrypoint
+    /// which will allow inputs to be submitted to it. Trying to run a pipeline graph through a non-entry point
     /// component will fail.
     pub fn add_component(
         &mut self,
-        builder: GraphComponentBuilder,
+        builder: impl Into<GraphComponentBuilder>,
     ) -> Result<GraphComponentId, DuplicateNamedComponent> {
-        let to_init = builder.component.clone();
-        let comp = if builder.in_lookup {
-            match self.lookup.entry(builder.name.clone()) {
-                Entry::Occupied(e) => {
-                    return Err(DuplicateNamedComponent {
-                        old: *e.get(),
-                        name: builder.name,
-                    });
+        fn inner(
+            this: &mut PipelineGraph,
+            builder: GraphComponentBuilder,
+        ) -> Result<GraphComponentId, DuplicateNamedComponent> {
+            let to_init = builder.component.clone();
+            let comp = if builder.in_lookup {
+                match this.lookup.entry(builder.name.clone()) {
+                    Entry::Occupied(e) => {
+                        return Err(DuplicateNamedComponent {
+                            old: *e.get(),
+                            name: builder.name,
+                        });
+                    }
+                    Entry::Vacant(e) => {
+                        let comp = PipelineGraph::add_component_impl(
+                            &mut this.components,
+                            &mut this.first_free,
+                            builder,
+                        );
+                        e.insert(comp);
+                        comp
+                    }
                 }
-                Entry::Vacant(e) => {
-                    let comp = Self::add_component_impl(
-                        &mut self.components,
-                        &mut self.first_free,
-                        builder,
-                    );
-                    e.insert(comp);
-                    comp
-                }
-            }
-        } else {
-            Self::add_component_impl(&mut self.components, &mut self.first_free, builder)
-        };
-        to_init.initialize(self, comp);
-        Ok(comp)
+            } else {
+                PipelineGraph::add_component_impl(
+                    &mut this.components,
+                    &mut this.first_free,
+                    builder,
+                )
+            };
+            to_init.initialize(this, comp);
+            Ok(comp)
+        }
+        inner(self, builder.into())
     }
     fn add_component_impl(
         components: &mut Vec<ComponentData>,
@@ -548,7 +625,7 @@ impl PipelineGraph {
         let GraphComponentBuilder {
             component,
             name,
-            is_entrypoint,
+            is_entry_point,
             in_lookup,
         } = component;
         let inputs = match component.inputs() {
@@ -584,7 +661,7 @@ impl PipelineGraph {
             inputs,
             outputs: BTreeMap::new(),
             in_lookup,
-            is_entrypoint,
+            is_entry_point,
             input_count: LiteMap::new(),
         };
         let idx = *first_free;
@@ -623,8 +700,8 @@ impl PipelineGraph {
                 .components
                 .get_disjoint_mut([s_id.index(), d_id.index()])
                 .map_err(|_| GenericAddDependencyError::SelfLoop)?;
-            if dst.is_entrypoint {
-                return Err(GenericAddDependencyError::DestIsEntrypoint {
+            if dst.is_entry_point {
+                return Err(GenericAddDependencyError::DestIsEntryPoint {
                     dst_id: d_id,
                     dst_name: dst.name.clone(),
                 });
@@ -737,9 +814,8 @@ impl PipelineGraph {
         }
         Ok(())
     }
-    fn detach_impl(&mut self, id: GraphComponentId) {
-        let comp = &mut self.components[id.index()];
-        let inputs = match &mut comp.inputs {
+    fn detach_inputs_1(component: &mut ComponentData) -> SmallVec<[GraphComponentChannel; 1]> {
+        match &mut component.inputs {
             InputKind::Single(v) => std::mem::take(v),
             InputKind::Multiple { single, multi, .. } => {
                 let mut buf = SmallVec::<[_; 1]>::new();
@@ -770,8 +846,13 @@ impl PipelineGraph {
                 }
                 v
             }
-        };
-        let outputs = std::mem::take(&mut comp.outputs);
+        }
+    }
+    fn detach_inputs_2(
+        &mut self,
+        id: GraphComponentId,
+        inputs: SmallVec<[GraphComponentChannel; 1]>,
+    ) {
         for input in inputs {
             use std::collections::btree_map::Entry;
             match self.components[input.0.index()].outputs.entry(input.1) {
@@ -785,6 +866,12 @@ impl PipelineGraph {
                 Entry::Vacant(_) => {}
             }
         }
+    }
+    fn detach_impl(&mut self, id: GraphComponentId) {
+        let comp = &mut self.components[id.index()];
+        let inputs = Self::detach_inputs_1(comp);
+        let outputs = std::mem::take(&mut comp.outputs);
+        self.detach_inputs_2(id, inputs);
         for ch in outputs.into_values().flatten() {
             let c2 = &mut self.components[ch.0.index()];
             let mut count = 0;
@@ -839,6 +926,43 @@ impl PipelineGraph {
                     e.remove();
                 }
             }
+        }
+    }
+    /// Set whether a component is an entry point.
+    ///
+    /// This returns whether the component was an entry point before, or an error if
+    /// it was set to be an entry point but the component had inputs.
+    ///
+    /// An entry point can't have inputs. If `force` is true, any inputs it has will
+    /// be removed, while if it's false, this will return an error. It's always valid to
+    /// make a component *not* an entry point.
+    pub fn set_entry_point(
+        &mut self,
+        id: GraphComponentId,
+        is_entry_point: bool,
+        force: bool,
+    ) -> Result<bool, HasInputs> {
+        let comp = &mut self.components[id.index()];
+        if is_entry_point == comp.is_entry_point {
+            return Ok(is_entry_point);
+        }
+        if is_entry_point {
+            if comp.has_inputs() {
+                if force {
+                    comp.is_entry_point = true;
+                    let inputs = Self::detach_inputs_1(comp);
+                    self.detach_inputs_2(id, inputs);
+                    Ok(false)
+                } else {
+                    Err(HasInputs)
+                }
+            } else {
+                comp.is_entry_point = true;
+                Ok(false)
+            }
+        } else {
+            comp.is_entry_point = false;
+            Ok(true)
         }
     }
     /// Remove all components from the graph.
@@ -924,7 +1048,7 @@ impl PipelineGraph {
                         ),
                         name: std::mem::replace(&mut component.name, DEFAULT_NAME.clone()),
                         dependents: HashMap::new(),
-                        is_entrypoint: component.is_entrypoint,
+                        is_entry_point: component.is_entry_point,
                         input_mode: match &input {
                             InputKind::Single(_) => runner::InputMode::Single { name: None },
                             InputKind::Multiple {

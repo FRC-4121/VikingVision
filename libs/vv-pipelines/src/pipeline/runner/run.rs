@@ -269,7 +269,7 @@ impl RunId {
 pub struct ComponentData {
     pub component: Arc<dyn Component>,
     pub name: SmolStr,
-    pub(crate) is_entrypoint: bool,
+    pub(crate) is_entry_point: bool,
     pub(crate) dependents: HashMap<SmolStr, Vec<(RunnerComponentId, InputIndex, Option<u32>)>>,
     pub(crate) input_mode: InputMode,
 }
@@ -680,11 +680,12 @@ pub enum RunErrorCause {
     /// The specified component ID does not exist
     #[error("No component {0}")]
     NoComponent(RunnerComponentId),
-
+    /// The specified component ID is not an entry point.
+    #[error("Component {0} is not an entry point")]
+    NonEntryPoint(RunnerComponentId),
     /// Too many pipelines are currently running
     #[error("Too many pipelines ({0}) were already running")]
     TooManyRunning(usize),
-
     /// The number of provided arguments doesn't match what the component expects
     #[error("Expected {expected} arguments, got {given}")]
     ArgsMismatch { expected: usize, given: usize },
@@ -795,6 +796,12 @@ impl PipelineRunner {
                 params,
             });
         };
+        if !data.is_entry_point {
+            return Err(RunErrorWithParams {
+                cause: RunErrorCause::NonEntryPoint(params.component),
+                params,
+            });
+        }
         let nargs = params.args.len();
         match &data.input_mode {
             InputMode::Single { .. } => {

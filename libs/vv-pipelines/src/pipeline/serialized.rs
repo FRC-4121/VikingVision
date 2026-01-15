@@ -1,6 +1,8 @@
 use crate::pipeline::UnknownComponentName;
 use crate::pipeline::component::ComponentFactory;
-use crate::pipeline::graph::{AddDependencyError, DuplicateNamedComponent, PipelineGraph};
+use crate::pipeline::graph::{
+    AddDependencyError, DuplicateNamedComponent, GraphComponentBuilder, PipelineGraph,
+};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
@@ -332,7 +334,7 @@ impl SerializedGraph {
         for (name, config) in &self.0 {
             let component = config.factory.build();
             graph
-                .add_named_component(component.into(), name.clone())
+                .add_component(GraphComponentBuilder::new(component, name.clone()))
                 .map_err(BuildGraphError::AddComponentError)?;
         }
         for (name, config) in &self.0 {

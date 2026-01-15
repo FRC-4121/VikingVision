@@ -35,7 +35,7 @@ impl<T: Data + Clone> Component for BroadcastVec<T> {
         };
         context.submit("", val.clone());
         for elem in &*val {
-            context.submit("elem", Arc::new(elem.clone()));
+            context.submit("elem", elem.clone());
         }
     }
 }
@@ -91,8 +91,8 @@ struct Cmp<T> {
     msg: T,
 }
 impl<T> Cmp<T> {
-    fn new(send: Sender<Option<T>>, msg: T) -> Arc<Self> {
-        Arc::new(Self { send, msg })
+    fn new(send: Sender<Option<T>>, msg: T) -> Self {
+        Self { send, msg }
     }
 }
 impl<T: Clone + Send + Sync + 'static> Component for Cmp<T> {
@@ -129,8 +129,8 @@ struct Echo<T> {
     transform: fn(Arc<dyn Data>) -> T,
 }
 impl<T> Echo<T> {
-    fn new(send: Sender<Option<T>>, transform: fn(Arc<dyn Data>) -> T) -> Arc<Self> {
-        Arc::new(Self { send, transform })
+    fn new(send: Sender<Option<T>>, transform: fn(Arc<dyn Data>) -> T) -> Self {
+        Self { send, transform }
     }
 }
 impl<T: Send + Sync + 'static> Component for Echo<T> {
@@ -174,10 +174,10 @@ fn simple() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
+        .add_component(entry_point(Cmp::new(tx.clone(), Msg2::Send), "prod"))
         .unwrap();
     let cons = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg2::Recv), "cons")
+        .add_component((Cmp::new(tx.clone(), Msg2::Recv), "cons"))
         .unwrap();
     graph.add_dependency((prod, "s1"), (cons, "in")).unwrap();
     println!("{graph:#?}");
@@ -208,10 +208,10 @@ fn duplicating() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
+        .add_component(entry_point(Cmp::new(tx.clone(), Msg2::Send), "prod"))
         .unwrap();
     let cons = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg2::Recv), "cons")
+        .add_component((Cmp::new(tx.clone(), Msg2::Recv), "cons"))
         .unwrap();
     graph.add_dependency((prod, "d1"), (cons, "in")).unwrap();
     println!("{graph:#?}");
@@ -242,15 +242,15 @@ fn graph_mutation() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let p1 = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
+        .add_component(entry_point(Cmp::new(tx.clone(), Msg2::Send), "prod"))
         .unwrap();
     let cons = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg2::Recv), "cons")
+        .add_component((Cmp::new(tx.clone(), Msg2::Recv), "cons"))
         .unwrap();
     graph.add_dependency((p1, "d2"), (cons, "in")).unwrap();
     graph.remove_component(p1).unwrap();
     let p2 = graph
-        .add_named_component(Cmp::new(tx.clone(), Msg2::Send), "prod")
+        .add_component((Cmp::new(tx.clone(), Msg2::Send), "prod"))
         .unwrap();
     graph.add_dependency((p2, "s1"), (cons, "in")).unwrap();
     println!("{graph:#?}");
@@ -305,52 +305,50 @@ fn branching() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let broadcast1 = graph
-        .add_named_component(Arc::new(BroadcastVec::<Vec<i32>>::new()), "broadcast1")
+        .add_component(entry_point(BroadcastVec::<Vec<i32>>::new(), "broadcast1"))
         .unwrap();
     let broadcast2 = graph
-        .add_named_component(Arc::new(BroadcastVec::<i32>::new()), "broadcast2")
+        .add_component((BroadcastVec::<i32>::new(), "broadcast2"))
         .unwrap();
 
     let collect1 = graph
-        .add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect1")
+        .add_component((CollectVecComponent::<i32>::new(), "collect1"))
         .unwrap();
     let collect2 = graph
-        .add_named_component(Arc::new(CollectVecComponent::<i32>::new()), "collect2")
+        .add_component((CollectVecComponent::<i32>::new(), "collect2"))
         .unwrap();
-    let print_tree = graph
-        .add_named_component(Arc::new(PrintTree), "print-tree")
-        .unwrap();
+    let print_tree = graph.add_component((PrintTree, "print-tree")).unwrap();
     let print1s = graph
-        .add_named_component(
+        .add_component((
             Echo::new(tx.clone(), |x| {
                 Message::Sorted1(x.downcast().cloned().unwrap())
             }),
             "print-1-sorted",
-        )
+        ))
         .unwrap();
     let print2s = graph
-        .add_named_component(
+        .add_component((
             Echo::new(tx.clone(), |x| {
                 Message::Sorted2(x.downcast().cloned().unwrap())
             }),
             "print-2-sorted",
-        )
+        ))
         .unwrap();
     let print1u = graph
-        .add_named_component(
+        .add_component((
             Echo::new(tx.clone(), |x| {
                 Message::Unsorted1(x.downcast().cloned().unwrap())
             }),
             "print-1-unsorted",
-        )
+        ))
         .unwrap();
     let print2u = graph
-        .add_named_component(
+        .add_component((
             Echo::new(tx.clone(), |x| {
                 Message::Unsorted2(x.downcast().cloned().unwrap())
             }),
             "print-2-unsorted",
-        )
+        ))
         .unwrap();
     graph
         .add_dependency((broadcast1, "elem"), broadcast2)

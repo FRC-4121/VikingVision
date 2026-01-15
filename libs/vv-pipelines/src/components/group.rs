@@ -76,7 +76,7 @@ impl<T>
     ) -> Option<(GroupState, Configurable<GraphComponentId, T, SecondConfig>)> {
         let input_component = match config.input {
             ComponentIdentifier::Name(name) => {
-                if let Some(&id) = graph.lookup().get(&*name) {
+                if let Some(&id) = graph.lookup.get(&*name) {
                     id
                 } else {
                     error!(name = &*name, "couldn't resolve input name");
@@ -94,7 +94,7 @@ impl<T>
         for (name, out) in config.outputs {
             let output_component = match out.component {
                 ComponentIdentifier::Name(name) => {
-                    if let Some(&id) = graph.lookup().get(&*name) {
+                    if let Some(&id) = graph.lookup.get(&*name) {
                         id
                     } else {
                         error!(name = &*name, "couldn't resolve output name");
@@ -112,6 +112,7 @@ impl<T>
                 kind = OutputKind::Multiple;
             }
             let listener = Arc::new(Listener::default());
+            #[allow(deprecated)]
             let listen_id = graph
                 .add_hidden_component(listener.clone(), format!("listener-{self_id}: {name:?}"));
             if let Err(err) =

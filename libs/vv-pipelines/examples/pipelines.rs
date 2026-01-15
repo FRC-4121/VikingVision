@@ -55,10 +55,10 @@ impl Component for CheckContains {
 fn main() -> anyhow::Result<()> {
     let _guard = setup()?;
     let mut graph = PipelineGraph::new();
-    let broadcast = graph.add_named_component(Arc::new(BroadcastVec::<i32>::new()), "broadcast")?;
-    let print = graph.add_named_component(Arc::new(Print), "print")?;
-    let print2 = graph.add_named_component(Arc::new(Print2), "print2")?;
-    let check_contains = graph.add_named_component(Arc::new(CheckContains), "check-contains")?;
+    let broadcast = graph.add_component((BroadcastVec::<i32>::new(), "broadcast"))?;
+    let print = graph.add_component((Print, "print"))?;
+    let print2 = graph.add_component((Print2, "print2"))?;
+    let check_contains = graph.add_component((CheckContains, "check-contains"))?;
     graph.add_dependency(broadcast, print)?;
     graph.add_dependency((broadcast, "elem"), print)?;
     graph.add_dependency(broadcast, (check_contains, "vec"))?;

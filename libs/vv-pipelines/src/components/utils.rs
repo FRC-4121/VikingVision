@@ -69,7 +69,7 @@ impl Configure<ComponentIdentifier, Option<Arc<dyn Component>>, &mut PipelineGra
                 component.cloned()
             }
             ComponentIdentifier::Name(name) => {
-                let id = arg.lookup().get(&*name);
+                let id = arg.lookup.get(&*name);
                 if id.is_none() {
                     error!(name = &*name, "couldn't resolve component name");
                 }
