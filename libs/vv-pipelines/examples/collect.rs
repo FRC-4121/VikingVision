@@ -73,7 +73,6 @@ fn main() -> anyhow::Result<()> {
     graph.add_dependency((collect1, "sorted"), print1s)?;
     graph.add_dependency(collect2, print2u)?;
     graph.add_dependency((collect2, "sorted"), print2s)?;
-    graph.set_entry_point(broadcast1, true, false)?;
     let (resolver, runner) = graph.compile()?;
     let broadcast = resolver
         .get(broadcast1)

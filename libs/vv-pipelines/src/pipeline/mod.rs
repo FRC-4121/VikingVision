@@ -312,7 +312,7 @@ pub struct UnknownComponentName(pub SmolStr);
 pub mod prelude {
     pub use super::ComponentId;
     pub use super::component::{Component, ComponentFactory, Data, Inputs, OutputKind};
-    pub use super::graph::{GraphComponentBuilder, GraphComponentId, PipelineGraph, entry_point};
+    pub use super::graph::{GraphComponentBuilder, GraphComponentId, PipelineGraph};
     pub use super::runner::{
         ComponentArgs, ComponentContext, InputIndex, InputTree, PipelineRunner, RunParams,
         RunnerComponentId,

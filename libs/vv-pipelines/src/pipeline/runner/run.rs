@@ -279,6 +279,7 @@ impl Debug for ComponentData {
             .field("dependents", &self.dependents)
             .field("name", &self.name)
             .field("input_mode", &self.input_mode)
+            .field("is_entry_point", &self.is_entry_point)
             .finish_non_exhaustive()
     }
 }

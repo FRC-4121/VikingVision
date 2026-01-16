@@ -174,7 +174,7 @@ fn simple() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = graph
-        .add_component(entry_point(Cmp::new(tx.clone(), Msg2::Send), "prod"))
+        .add_component((Cmp::new(tx.clone(), Msg2::Send), "prod"))
         .unwrap();
     let cons = graph
         .add_component((Cmp::new(tx.clone(), Msg2::Recv), "cons"))
@@ -208,7 +208,7 @@ fn duplicating() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let prod = graph
-        .add_component(entry_point(Cmp::new(tx.clone(), Msg2::Send), "prod"))
+        .add_component((Cmp::new(tx.clone(), Msg2::Send), "prod"))
         .unwrap();
     let cons = graph
         .add_component((Cmp::new(tx.clone(), Msg2::Recv), "cons"))
@@ -242,7 +242,7 @@ fn graph_mutation() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let p1 = graph
-        .add_component(entry_point(Cmp::new(tx.clone(), Msg2::Send), "prod"))
+        .add_component((Cmp::new(tx.clone(), Msg2::Send), "prod"))
         .unwrap();
     let cons = graph
         .add_component((Cmp::new(tx.clone(), Msg2::Recv), "cons"))
@@ -305,7 +305,7 @@ fn branching() {
     let mut graph = PipelineGraph::new();
     let (tx, rx) = channel();
     let broadcast1 = graph
-        .add_component(entry_point(BroadcastVec::<Vec<i32>>::new(), "broadcast1"))
+        .add_component((BroadcastVec::<Vec<i32>>::new(), "broadcast1"))
         .unwrap();
     let broadcast2 = graph
         .add_component((BroadcastVec::<i32>::new(), "broadcast2"))
